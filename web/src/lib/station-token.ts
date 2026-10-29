@@ -26,9 +26,28 @@ export function subscribeStationTokenRefused(listener: () => void): () => void {
   return () => { refusedListeners.delete(listener); };
 }
 
+// The member picked at a shared station (#8845): their token stands in for
+// the tablet's while they work. When it is refused (taken off the station,
+// expired), the screen goes back to Who's working?, not to "stopped".
+let crewToken: string | null = null;
+const crewRefusedListeners = new Set<() => void>();
+
+export function setStationCrewToken(token: string | null): void {
+  crewToken = token;
+}
+
+export function subscribeStationCrewRefused(listener: () => void): () => void {
+  crewRefusedListeners.add(listener);
+  return () => { crewRefusedListeners.delete(listener); };
+}
+
 /** A late refusal for an earlier token cannot stop a newly approved screen. */
 export function noteStationTokenRefused(token: string | null): void {
   if (!token || token !== override) return;
+  if (token === crewToken) {
+    for (const listener of crewRefusedListeners) listener();
+    return;
+  }
   for (const listener of refusedListeners) listener();
 }
 

@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Printer, Send, Trash2, Wrench } from "lucide-react";
-import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
+import { ModuleInstanceChooser, namedInstances } from "../components/ModuleInstanceChooser";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { usePersistedState } from "../lib/use-persisted-state";
 import { usePublishChatContext } from "../lib/chat-context";
@@ -582,8 +582,8 @@ export function MachinesPage({
            care which module is behind the tab. */
         <ContributedPageTab id={pageTab} ctx={{ slug: activeSlug, itemNoun: noun, entityIds: new Set(allRows.map((m) => m.id)) }} />
       ) : filtered.length === 0 ? (
-        !instance && allRows.length === 0 && (machineInstances.data?.items.length ?? 0) > 0 ? (
-          <ModuleInstanceChooser instances={machineInstances.data!.items} icon={Wrench} noun={noun} />
+        !instance && allRows.length === 0 && namedInstances(machineInstances.data?.items).length > 0 ? (
+          <ModuleInstanceChooser instances={namedInstances(machineInstances.data?.items)} icon={Wrench} noun={noun} />
         ) : (
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-10 text-center text-xs text-faint italic">
             {allRows.length === 0

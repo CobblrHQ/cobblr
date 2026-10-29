@@ -1000,7 +1000,9 @@ function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
       : status.reason === "operator_disabled"
         ? "An operator has turned AI off for this whole server."
         : status.reason === "not_entitled"
-          ? "This workspace's plan does not include AI."
+          ? "This workspace's plan doesn't include AI."
+          : status.reason === "not_shared"
+            ? `AI here is ${status.kept_by ?? "someone else"}'s own connection, and answers only their calls. They can share it with the workspace from their account, or you can connect your own.`
           : "Everything else still works: scanning files things by keyword, and nothing " +
             "else in the workspace depends on AI. Connecting a model adds identifying an " +
             "item from a photo, chat, and the app builder. Add a key for the whole " +
@@ -1064,8 +1066,8 @@ function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
           <span className="min-w-0">
             <span className="text-sm text-content dark:text-mortar-100">Use AI in this workspace</span>
             <span className="block text-xs text-faint dark:text-slate-400">
-              On, this workspace uses whatever AI is available - your {productName()} plan's, or a key you add below. Off, {productName()}
-              runs in basic mode here and makes no AI calls on the workspace's behalf. Either way, a member who connects
+              On, this workspace uses whatever AI is available - your {productName()} plan's, or a key you add below. Off,
+              {productName()} runs in basic mode here and makes no AI calls on the workspace's behalf. Either way, a member who connects
               their OWN personal key can still use it here.
             </span>
           </span>

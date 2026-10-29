@@ -22,6 +22,7 @@ import { recordName } from "@cobblr/platform-contract/record-name";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { PartCreate } from "./parts.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
+import { freeSlug } from "./category-writer.js";
 
 export const importRouter = Router({ mergeParams: true });
 
@@ -32,6 +33,9 @@ const ImportBody = z.object({
   // (or doesn't have those columns at all).
   default_category_id: z.string().uuid().nullable().optional(),
   default_location_id: z.string().uuid().nullable().optional(),
+  // A category the file names and the workspace has not got is made, so the
+  // import keeps it (#8870); false drops it as before, with a note per row.
+  make_categories: z.boolean().default(true),
 });
 
 type PartInput = z.infer<typeof PartCreate>;
@@ -352,12 +356,25 @@ class PlacesUnreadable extends Error {
 interface Resolved {
   category_id: string | null;
   location_id: string | null;
+  /** A category the file names that the import makes, when it has no id yet. */
+  new_category?: string;
+}
+
+/** The categories a file names that the workspace has not got, each once, in
+ *  the file's own spelling of its first mention (#8870). */
+export function categoriesToMake(rows: ReadonlyArray<{ category_name?: string | null }>, known: ReadonlySet<string>): string[] {
+  const seen = new Map<string, string>();
+  for (const r of rows) {
+    const name = r.category_name?.trim();
+    if (name && !known.has(name.toLowerCase()) && !seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+  }
+  return [...seen.values()];
 }
 
 /** Each row's category and place by name, the same for the preview and the
  *  commit. A name the workspace has no match for is said on the row, with
  *  what the import uses instead. */
-export async function resolveNames(req: Request, plan: ImportPlan, defaults: { category?: string | null; location?: string | null }): Promise<Resolved[]> {
+export async function resolveNames(req: Request, plan: ImportPlan, defaults: { category?: string | null; location?: string | null }, makeCategories = false): Promise<Resolved[]> {
   const db = tenantDb(req);
   const ctx = tenantContext(req);
   const cats = await db.selectFrom("inventory_categories").select(["id", "name"]).execute();
@@ -374,10 +391,11 @@ export async function resolveNames(req: Request, plan: ImportPlan, defaults: { c
   const instead = (fallback: string | null | undefined) => (fallback ? "the default you chose is used" : "it is left without one");
   return plan.rows.map((row) => {
     const category_id = row.category_name ? (catByName.get(row.category_name.toLowerCase()) ?? null) : null;
-    if (row.category_name && !category_id) row.warnings.push(`No category is called "${row.category_name}", so ${instead(defaults.category)}`);
+    const new_category = row.category_name && !category_id && makeCategories ? row.category_name.trim() : undefined;
+    if (row.category_name && !category_id && !new_category) row.warnings.push(`No category is called "${row.category_name}", so ${instead(defaults.category)}`);
     const location_id = row.location_name ? (locByName.get(row.location_name.toLowerCase()) ?? null) : null;
     if (row.location_name && !location_id) row.warnings.push(`No place is called "${row.location_name}", so ${instead(defaults.location)}`);
-    return { category_id: category_id ?? defaults.category ?? null, location_id: location_id ?? defaults.location ?? null };
+    return { category_id: category_id ?? (new_category ? null : defaults.category ?? null), location_id: location_id ?? defaults.location ?? null, ...(new_category ? { new_category } : {}) };
   });
 }
 
@@ -403,13 +421,16 @@ importRouter.post(
     const plan = planCsv(parsed.data.csv, ownFields);
     let resolved: Resolved[];
     try {
-      resolved = await resolveNames(req, plan, { category: parsed.data.default_category_id, location: parsed.data.default_location_id });
+      resolved = await resolveNames(req, plan, { category: parsed.data.default_category_id, location: parsed.data.default_location_id }, parsed.data.make_categories);
     } catch (e) {
       if (!(e instanceof PlacesUnreadable)) throw e;
       res.status(503).json({ error: { code: "places_unreadable", message: e.message } });
       return;
     }
-    const answer = { rows: plan.rows, errors: plan.errors, detected_headers: plan.detected_headers, unread_columns: plan.unread_columns };
+    // The categories the import makes, said before it does: the preview showed
+    // a category on every row and then dropped them all (#8870).
+    const new_categories = categoriesToMake(resolved.map((r) => ({ category_name: r.new_category })), new Set());
+    const answer = { rows: plan.rows, errors: plan.errors, detected_headers: plan.detected_headers, unread_columns: plan.unread_columns, new_categories };
 
     if (parsed.data.dry_run || plan.rows.length === 0) {
       res.json({ ...answer, committed: 0 });
@@ -455,6 +476,20 @@ importRouter.post(
 
     const CHUNK = 500;
     const inserted = await db.transaction().execute(async (trx) => {
+      const made = new Map<string, string>();
+      for (const name of new_categories) {
+        const row = await trx
+          .insertInto("inventory_categories")
+          .values({ name, slug: await freeSlug(trx, instance, name), instance, color: null, parent_id: null })
+          .onConflict((oc) => oc.doNothing())
+          .returning("id")
+          .executeTakeFirst();
+        const id = row?.id ?? (await trx.selectFrom("inventory_categories").select("id").where("name", "=", name).executeTakeFirstOrThrow()).id;
+        made.set(name.toLowerCase(), id);
+      }
+      resolved.forEach((r, i) => {
+        if (r.new_category) valueRows[i]!.category_id = made.get(r.new_category.toLowerCase()) ?? null;
+      });
       const ids: string[] = [];
       for (let i = 0; i < valueRows.length; i += CHUNK) {
         const rows = await trx

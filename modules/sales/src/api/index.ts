@@ -58,8 +58,24 @@ import { registerSalesLineHandlers } from "./line-handlers.js";
 import { registerPrepareDocumentAction } from "./prepare-document-action.js";
 import { registerSendDocumentAction } from "./send-document-action.js";
 import { registerChangeLineAction } from "./change-line-action.js";
+import { registerReturnLineAction } from "./return-line-action.js";
+import { registerUndoReturnAction } from "./undo-return-action.js";
+import { registerRecordPaymentAction } from "./record-payment-action.js";
+import { registerUndoPaymentAction } from "./undo-payment-action.js";
+import { registerHoldOrderAction } from "./hold-order-action.js";
+import { registerReleaseHoldAction } from "./release-hold-action.js";
+import { registerHoldSweep } from "../holds.js";
+import { registerSalesDashboardReads } from "../dashboard-reads.js";
 
 registerChangeLineAction();
+registerReturnLineAction();
+registerUndoReturnAction();
+registerRecordPaymentAction();
+registerUndoPaymentAction();
+registerHoldOrderAction();
+registerReleaseHoldAction();
+registerHoldSweep();
+registerSalesDashboardReads();
 
 registerSendDocumentAction();
 

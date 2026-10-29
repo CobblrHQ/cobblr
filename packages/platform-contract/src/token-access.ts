@@ -122,6 +122,10 @@ const KERNEL_WORKSPACE_WRITES: RegExp[] = [
 /** The one platform write a `change` token may make beside record routes. The
  *  invoke route refuses it the actions that change the workspace itself. */
 const CHANGE_PLATFORM_WRITES = new Set(["/actions/invoke"]);
+/** Reads sent as a POST for their body: the explanation a refusal carries,
+ *  asked ahead of it (a station's card, #8845). */
+const POST_READS = new Set(["/approval-requests/describe"]);
+const STATION_PICK = /^\/station-devices\/crew\/[a-z0-9][a-z0-9-]{0,39}\/pick$/;
 
 export type TokenAccessVerdict = { ok: true } | { ok: false; code: string; message: string };
 
@@ -164,10 +168,14 @@ export function tokenAccessAllows(
   if (rel.includes("..") || GUARDED.test(rel) || wantsSecrets(query) || CREDENTIAL_MODULE_ROUTES.some((r) => r.test(rel))) {
     return { ok: false, code: "token_access", message: accessMessage(access) };
   }
-  if (read) return { ok: true };
+  if (read || (method === "POST" && POST_READS.has(rel))) return { ok: true };
   if (KERNEL_WORKSPACE_WRITES.some((r) => r.test(rel))) return { ok: false, code: "token_access", message: accessMessage(access) };
   if (access === "look") return { ok: false, code: "token_access", message: accessMessage(access) };
   if (CHANGE_PLATFORM_WRITES.has(rel)) return { ok: true };
+  // A shared screen naming who works at it, and ending that pick (#8845): a
+  // hand-over between people, not a setting. The route lets through only
+  // that station's own token.
+  if ((method === "POST" || method === "DELETE") && STATION_PICK.test(rel)) return { ok: true };
   // A module's route is a record write only where its module says so
   // (module-write-changes.ts); one nothing names is refused.
   const mod = /^\/modules\/([a-z0-9_-]+)(\/.+)$/.exec(rel);

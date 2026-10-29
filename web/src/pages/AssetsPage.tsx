@@ -16,7 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft, ChevronRight, Loader2, Plus, Printer, Sprout, Trash2, Undo2, Wand2 } from "lucide-react";
 import { ApiError, api, getToken, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
 import { isShapeValidVin, planVinFill, type VinFill, type VinFillTarget } from "../lib/vin";
-import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
+import { ModuleInstanceChooser, namedInstances } from "../components/ModuleInstanceChooser";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
@@ -342,8 +342,8 @@ export function AssetsPage({
       {filtered.length === 0 ? (
         // The instance-chooser is a BASE-page affordance ("pick one of your asset
         // tables"); on an instance page we're already inside one, so never show it.
-        !instance && allRows.length === 0 && (assetInstances.data?.items.length ?? 0) > 0 ? (
-          <ModuleInstanceChooser instances={assetInstances.data!.items} icon={Sprout} noun="asset" />
+        !instance && allRows.length === 0 && namedInstances(assetInstances.data?.items).length > 0 ? (
+          <ModuleInstanceChooser instances={namedInstances(assetInstances.data?.items)} icon={Sprout} noun="asset" />
         ) : (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
             {allRows.length === 0

@@ -13,6 +13,7 @@
 
 export type OmniKind = "upc" | "url" | "urls" | "text" | "cobblr-qr" | "own-route";
 import { classifyScanPayload } from "../lib/scanPayload";
+import type { OwnRoute } from "../lib/openOwnRoute";
 import { looksShared, parseSharedText, type SharedProduct } from "@cobblr/platform-contract/shared-text";
 
 export interface OmniIntent {
@@ -24,6 +25,9 @@ export interface OmniIntent {
   /** For a link or links: each product with the words it came with, the
    *  title kept as its name (the one parse, @cobblr/platform-contract/shared-text). */
   products?: SharedProduct[];
+  /** For a link to a page of this instance: the page, to open with
+   *  useOpenOwnRoute, never navigate() (#8874). */
+  route?: OwnRoute;
 }
 
 /** Digits only, ignoring the spaces and dashes a printed barcode carries. */
@@ -55,7 +59,7 @@ export function classifyOmni(raw: string, ownOrigins?: readonly string[]): OmniI
   // to scrape: the same rule the camera and the typed field apply
   // (lib/scanPayload.ts). It goes where the QR goes.
   const payload = classifyScanPayload(s, ownOrigins);
-  if (payload.kind === "own-route") return { kind: "own-route", value: payload.path, action: "Open" };
+  if (payload.kind === "own-route") return { kind: "own-route", value: payload.route.href, route: payload.route, action: "Open" };
   if (payload.kind === "cobblr-qr") {
     return { kind: "cobblr-qr", value: payload.token, action: "Open" };
   }

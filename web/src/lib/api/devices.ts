@@ -2,6 +2,7 @@ import { ApiError, request } from "./client";
 import type { LiveControlPublic } from "@cobblr/platform-contract";
 import type { BridgeDiscovery } from "@cobblr/platform-contract/bridge-discovery";
 import type { ServerBridgeState } from "@cobblr/platform-contract/server-bridge";
+import type { StationCrew, StationCrewPick } from "@cobblr/platform-contract/station-screen";
 
 /** A driver package a workspace declares for its bridges. `bridgeId` null
  *  means every bridge; a value scopes it to one. */
@@ -149,4 +150,14 @@ export const devicesApi = {
   printStationQr: (slug: string, address: string) =>
     request<{ key: string; enabled: boolean; printed_at: string | null; phones: number }>("POST", `/orgs/${slug}/station-devices/qr/${address}`, {}),
   stopStationQr: (slug: string, address: string) => request<{ ok: true }>("DELETE", `/orgs/${slug}/station-devices/qr/${address}`),
+  /** Who works at a station (#8845): read by the station's screen and by an owner or admin. */
+  stationCrew: (slug: string, address: string) => request<StationCrew>("GET", `/orgs/${slug}/station-devices/crew/${address}`),
+  setStationCrew: (slug: string, address: string, body: { user_ids: string[]; pin_required: boolean; idle_minutes: number }) =>
+    request<StationCrew>("PUT", `/orgs/${slug}/station-devices/crew/${address}`, body),
+  /** The station's screen picks who's working: a token in that member's name. */
+  pickStationMember: (slug: string, address: string, userId: string, pin?: string) =>
+    request<StationCrewPick>("POST", `/orgs/${slug}/station-devices/crew/${address}/pick`, { user_id: userId, ...(pin ? { pin } : {}) }),
+  endStationPick: (slug: string, address: string) => request<{ ok: true }>("DELETE", `/orgs/${slug}/station-devices/crew/${address}/pick`),
+  myStationPin: (slug: string) => request<{ has_pin: boolean }>("GET", `/orgs/${slug}/station-devices/my-pin`),
+  setMyStationPin: (slug: string, pin: string | null) => request<{ has_pin: boolean }>("PUT", `/orgs/${slug}/station-devices/my-pin`, { pin }),
 };

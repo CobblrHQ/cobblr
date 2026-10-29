@@ -160,6 +160,7 @@ import { notePassFailure } from "./platform/pass-failures.js";
 import { seedProviderFromEnv } from "./platform/oidc.js";
 import { startBundleUpdateSweeper } from "./platform/bundle-updates.js";
 import { runBootPhase } from "./platform/boot-passes.js";
+import { runSweepsAfterListen, sweepsAfterListen } from "./platform/boot-sweep-marks.js";
 import { logAnnounceRouting } from "./platform/announce.js";
 import { postCardlessFeedback } from "./routes/feedback-card-post.js";
 import { logSignupGates } from "./platform/signup-gates.js";
@@ -1384,6 +1385,18 @@ async function boot() {
             (err as Error).message,
           );
         }
+        // The container was there when this began; a delete of it may have
+        // landed since (#4115). Asked again after the write, so either this
+        // sees it gone and puts the thing back where it was, or the delete,
+        // sweeping after it commits, finds the thing and takes it out.
+        if (ctnrKind && !(await entities.lookup(orgId, container.kind, container.id).catch(() => null))) {
+          const back = prev && !sameContainer ? { kind: prev.container_kind, id: prev.container_id } : null;
+          const restored = back
+            ? await platformSeams().placement.place({ orgId, containee, container: back, slot: prev?.slot ?? null }).then(() => true, () => false)
+            : false;
+          if (!restored) await platformSeams().placement.remove({ orgId, containee });
+          throw new Error(`placement: there is no ${(ctnrKind.display_name || container.kind).toLowerCase()} with id ${container.id} to put this in`);
+        }
         // Something moved. Placement had no events at all, which meant nothing
         // could react to a thing being put somewhere - the single most ordinary
         // physical fact the platform records. Emitted AFTER the write and the
@@ -2122,6 +2135,11 @@ async function boot() {
   // one budget, each pass's first round spread over its cadence (#3036).
   // COBBLR_SWEEP_START_AFTER_MS keeps the first round clear of boot.
   startTenantSweeps({ startAfterMs: Number(process.env.COBBLR_SWEEP_START_AFTER_MS) || 60_000 });
+  // A heal shim whose clean mark is a week old skipped the boot above; its
+  // weekly full run happens here, off the path to listen.
+  if (sweepsAfterListen().length) {
+    setTimeout(() => void runSweepsAfterListen(), Number(process.env.COBBLR_SWEEP_START_AFTER_MS) || 60_000).unref();
+  }
 
   // TEST-ONLY: fill the pre-provisioned org pool AFTER listen (so /healthz is
   // fast) and in the background — CI polls /test-support/pool-status before

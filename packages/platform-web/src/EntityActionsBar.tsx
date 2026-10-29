@@ -3,7 +3,7 @@ import { useEscapeToClose } from "./useEscapeToClose";
 import { createPortal } from "react-dom";
 import { BackdropLayer, PopoverLayer } from "./fixed-layers";
 import { groupRecordActions } from "@cobblr/platform-contract/action-groups";
-import { RecordActionProvider, RecordActionItem, RecordActionSlot, useRecordActionContributions, type RecordActionDescriptor } from "./RecordActionContributions";
+import { RecordActionProvider, RecordActionItem, RecordActionSlot, useRecordActionContributions, useShownInMenu, type RecordActionDescriptor } from "./RecordActionContributions";
 import { Modal } from "./Modal";
 import { useToast } from "./ToastContext";
 // Generic actions bar — drop onto any entity-detail page; renders
@@ -117,7 +117,7 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
   const entry = (item: RecordActionDescriptor, primary = false) => (
     <div key={item.id} className={primary ? "flex items-center gap-1" : "rounded-lg p-2 hover:bg-subtle"}>
       <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1"><RecordActionSlot id={item.id} /></div>
+        <div className="min-w-0 flex-1"><RecordActionSlot id={item.id} inMenu={!primary} /></div>
         {api.setRecordActionPin && <details className="relative shrink-0">
           <summary className="cursor-pointer list-none rounded px-2 py-1 text-muted" aria-label={`Options for ${item.label}`}>⋯</summary>
           <button type="button" className="absolute right-0 z-10 w-36 rounded-lg border border-line bg-surface p-2 text-left text-xs shadow-lg" onClick={() => void pin(item, !primary)}>{primary ? "Unpin from the bar" : "Pin to the bar"}</button>
@@ -197,10 +197,11 @@ function ActionButton({
   const go = () => run({ actionId: action.id, label: action.label, argsSchema: action.args_schema, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler });
   useRunOnce(runNow, go, onRan);
   const off = useOffWhileLent(entityKind, entityId, action.id);
+  const inMenu = useShownInMenu(action.id);
 
   return (
     <>
-      <RecordActionItem id={action.id} group={action.group ?? "more"} primary={action.primary} label={action.label} description={action.description ?? ""}><ActionDescription description={action.description || action.label}><button
+      <RecordActionItem id={action.id} group={action.group ?? "more"} primary={action.primary} label={action.label} description={action.description ?? ""} outcome={<ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={null} />}><ActionDescription description={action.description || action.label}><button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
@@ -220,7 +221,9 @@ function ActionButton({
       >
         {flash === "ok" ? "done" : flash === "err" ? "err" : pending ? "…" : action.label}
       </button></ActionDescription></RecordActionItem>
-      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={asking} />
+      {/* In an open menu or the phone's sheet the sentence is drawn there
+          (#8885); here it outlasts the menu. What a press asks stays here. */}
+      <ActionOutcome note={inMenu ? null : note} failure={inMenu ? null : failure} onDismiss={dismissFailure} asking={asking} />
     </>
   );
 }
@@ -242,9 +245,10 @@ function BindingButton({
   const go = () => run({ actionId: binding.action_id, argsSchema: binding.args_schema, binding });
   useRunOnce(runNow, go, onRan);
   const off = useOffWhileLent(entityKind, entityId, binding.action_id);
+  const inMenu = useShownInMenu(binding.action_id);
   return (
     <>
-      <RecordActionItem id={binding.action_id} group={binding.group ?? "more"} primary={binding.primary} label={binding.label} description={binding.description ?? ""}><ActionDescription description={binding.description || binding.label}><button
+      <RecordActionItem id={binding.action_id} group={binding.group ?? "more"} primary={binding.primary} label={binding.label} description={binding.description ?? ""} outcome={<ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={null} />}><ActionDescription description={binding.description || binding.label}><button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
@@ -264,7 +268,9 @@ function BindingButton({
       >
         {flash === "ok" ? "done" : flash === "err" ? "err" : pending ? "…" : binding.label}
       </button></ActionDescription></RecordActionItem>
-      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={asking} />
+      {/* In an open menu or the phone's sheet the sentence is drawn there
+          (#8885); here it outlasts the menu. What a press asks stays here. */}
+      <ActionOutcome note={inMenu ? null : note} failure={inMenu ? null : failure} onDismiss={dismissFailure} asking={asking} />
     </>
   );
 }

@@ -21,6 +21,7 @@ import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contra
 import { TermFields, termValues } from "../term-fields.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { instantFromInput } from "@cobblr/platform-contract/day";
+import { mapLimit } from "@cobblr/platform-contract/map-limit";
 
 export const schedulesRouter = Router({ mergeParams: true });
 
@@ -75,6 +76,14 @@ export const ScheduleUpdateBody = z.object({
   counter_every: Rule.counter_every,
   last_done_at: Rule.last_done_at,
 });
+
+/** How many schedules a list presents at once. Each asks the workspace
+ *  directory its zone and currency, and a page of fifty presented together held
+ *  46 of the api's 80 directory clients and starved the release run. */
+export const PRESENT_AT_ONCE = 8;
+export function presentEach(orgId: string, rows: readonly ScheduleRow[], timeZone?: string | null) {
+  return mapLimit(rows, PRESENT_AT_ONCE, (s) => present(orgId, s, timeZone));
+}
 
 /** A schedule as a record page shows it: the rule in words and where it stands. */
 export async function present(orgId: string, s: ScheduleRow, timeZone?: string | null) {
@@ -196,7 +205,7 @@ schedulesRouter.get(
       .offset(page.offset)
       .execute();
     const answer = pagedAnswer(rows, page);
-    res.json({ ...answer, items: await Promise.all(answer.items.map((r) => present(ctx.org.id, r, q.data.tz ?? null))) });
+    res.json({ ...answer, items: await presentEach(ctx.org.id, answer.items, q.data.tz ?? null) });
   }),
 );
 

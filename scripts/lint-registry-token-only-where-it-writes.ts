@@ -33,7 +33,7 @@ const WRITERS: Record<string, Record<string, string>> = {
   // Main's deploy job on light-main, never its test job: the test job can run on the test-only b550 (2026-10-20).
   "ci-main.yml": { deploy: "moves :latest to the judged commit's images (lib/registry-latest.mjs)" },
   "museum-build.yml": { build: "pushes a museum build's images" },
-  "nesting-wasm.yml": { publish: "publishes the nesting solver" },
+  "nesting-wasm-publish.yml": { publish: "publishes the nesting solver (main's half; a pull request's, nesting-wasm.yml, only builds, #8531)" },
   "registry-retention.yml": { prune: "deletes old package versions" },
   "watch.yml": { "watch-tokens": "checks that the publish token itself is still accepted" },
 };

@@ -9,6 +9,7 @@ import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import type { Kysely } from "kysely";
 import type { SalesDB } from "./db.js";
 import { orderHappened } from "./history.js";
+import { refreshHold, releaseLineHold } from "./holds.js";
 
 type Db = Kysely<SalesDB>;
 
@@ -34,6 +35,7 @@ export async function addLine(db: Db, orgId: string, userId: string | null, orde
     .returningAll()
     .executeTakeFirstOrThrow();
   await orderHappened(db, orgId, orderId, { kind: "line", detail: { change: "added", line_id: row.id, ...said(row) }, by_user: userId }, afterCommit);
+  if (!afterCommit) await refreshHold(db, orgId, userId, orderId);
   return row;
 }
 
@@ -70,6 +72,7 @@ export async function changeLine(db: Db, orgId: string, userId: string | null, o
     if (Object.keys(changed).length) {
       await orderHappened(db, orgId, orderId, { kind: "line", detail: { change: "changed", line_id: lineId, description: row.description, changed }, by_user: userId });
     }
+    await refreshHold(db, orgId, userId, orderId, true);
     return row;
   });
 }
@@ -92,9 +95,11 @@ export async function removeLine(db: Db, orgId: string, userId: string | null, l
     const before = await db.selectFrom("sales_order_items").selectAll().where("id", "=", lineId).where("order_id", "=", found.order_id).executeTakeFirst();
     if (!before) return null;
     if (Number(before.qty_fulfilled) > 0) throw new LineStockRefusal();
+    await releaseLineHold(db, orgId, userId, found.order_id, lineId);
     const row = await db.deleteFrom("sales_order_items").where("id", "=", lineId).where("order_id", "=", found.order_id).returningAll().executeTakeFirst();
     if (!row) return null;
     await orderHappened(db, orgId, row.order_id, { kind: "line", detail: { change: "removed", line_id: row.id, ...said(row) }, by_user: userId });
+    await refreshHold(db, orgId, userId, row.order_id, true);
     return row;
   });
 }

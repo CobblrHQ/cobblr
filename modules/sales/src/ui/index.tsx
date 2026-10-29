@@ -1,5 +1,7 @@
+// Registers its Home tile with platform-web's registerDashboardWidget seam when this UI bundle loads.
+import "./DashboardWidget";
 import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
-import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, useRecordEdits } from "@cobblr/platform-web";
+import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, useRecordEdits, subscribeWaitingWrites, browserOffline } from "@cobblr/platform-web";
 // sales UI — the host mounts <SalesUI /> at /sales. A list of sales orders; the
 // detail modal carries the customer, line items (each an inventory part + qty +
 // price), a running total, and the **Fulfill** button that decrements the sold
@@ -14,11 +16,14 @@ import {
   type SalesOrder, type SalesOrderStatus, type CustomerSummary, type PartOption, type FulfilDoor, type HistoryRow, type OrderSort, type Paged,
 } from "./api.js";
 import { OrderDocuments } from "./documents.js";
+import { ReturnsPanel } from "./returns.js";
+import { PaymentsPanel } from "./payments.js";
+import { HoldPanel } from "./holds.js";
+import { SalesSummary } from "./summary.js";
 import { IntakeSettings } from "./intake.js";
-import { dayHere } from "@cobblr/platform-contract/day";
 import { invoiceCsv, orderTotal } from "../invoice.js";
 import { Link } from "react-router-dom";
-import { fieldCurrency, formatUnitPrice, linesTotalWords, parseMoneyAmount } from "@cobblr/platform-contract/money";
+import { fieldCurrency, formatStoredMoney, formatUnitPrice, linesTotalWords, parseMoneyAmount } from "@cobblr/platform-contract/money";
 import { PickToLight, useUnits } from "@cobblr/platform-web";
 import type { LineAvailability } from "../availability.js";
 
@@ -93,9 +98,22 @@ export function SalesUI({ orgSlug, getToken }: Props) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<SalesOrderStatus | "">("");
   const [sort, setSort] = useState<OrderSort>("newest");
+  // One month of orders by the day they were made, "" for all (#8786).
+  const [month, setMonth] = useState("");
   const q = useSettled(search.trim());
-  const orders = usePagedList(["sales-orders", orgSlug, q, status, sort], (offset) => api.listOrders({ q, status, sort, offset, limit: PAGE }));
-  const narrowed = Boolean(q || status);
+  const orders = usePagedList(["sales-orders", orgSlug, q, status, sort, month], (offset) => api.listOrders({ q, status, sort, month, offset, limit: PAGE }));
+  const narrowed = Boolean(q || status || month);
+  const [exportingFile, setExportingFile] = useState(false);
+  const exportForAccountant = async () => {
+    setExportingFile(true);
+    try {
+      downloadBlob(await api.accountingCsv({ q, status, month }), `sales-for-accountant-${month || "all"}.csv`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExportingFile(false);
+    }
+  };
 
   const del = useMutation({
     mutationFn: (id: string) => api.deleteOrder(id),
@@ -116,6 +134,7 @@ export function SalesUI({ orgSlug, getToken }: Props) {
               <option value="">Any status</option>
               {STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
             </select>
+            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month" className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs" />
             <select value={sort} onChange={(e) => setSort(e.target.value as OrderSort)} aria-label="Sort" className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs">
               {SORTS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
@@ -123,6 +142,9 @@ export function SalesUI({ orgSlug, getToken }: Props) {
         }
         actions={
           <>
+            <button type="button" disabled={exportingFile} onClick={() => void exportForAccountant()} className={headerButton()} title="One row per order with its total, refunds and what is owed, for the orders shown">
+              Export for accountant
+            </button>
             <button type="button" onClick={() => setCustomersOpen(true)} className={headerButton()}>
               <Users size={14} /> Customers
             </button>
@@ -136,13 +158,15 @@ export function SalesUI({ orgSlug, getToken }: Props) {
         }
       />
 
+      <SalesSummary api={api} orgSlug={orgSlug} q={q} status={status} month={month} />
+
       {orders.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {orders.isError && <div className="text-sm text-red-600 dark:text-red-400">The orders could not be loaded: {orders.error instanceof Error ? orders.error.message : String(orders.error)}</div>}
       {orders.data && orders.items.length === 0 && !narrowed && (
         <div className="text-sm text-muted italic">No sales orders yet. Create one - add what you sold, then Fulfill to draw it down from stock.</div>
       )}
       {orders.data && orders.items.length === 0 && narrowed && (
-        <div className="text-sm text-muted italic">No orders match{q ? ` "${q}"` : ""}{status ? ` with status ${status}` : ""}.</div>
+        <div className="text-sm text-muted italic">No orders match{q ? ` "${q}"` : ""}{status ? ` with status ${status}` : ""}{month ? ` in ${month}` : ""}.</div>
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -255,6 +279,10 @@ function OrderCard({ order, onOpen, onDelete }: { order: SalesOrder; onOpen: () 
             <StatusPill status={order.status} />
             {order.delivered_at && <span className="text-moss-700 dark:text-moss-300">delivered {new Date(order.delivered_at).toLocaleDateString()}</span>}
             {order.order_number && order.customer_name && <span>{order.order_number}</span>}
+            {order.currency && order.status !== "cancelled" && typeof order.net_total === "number" && <span data-testid="order-card-amount" className="tabular-nums text-content dark:text-mortar-100">{formatStoredMoney(order.net_total, "amount", { currency: order.currency })}</span>}
+            {order.status !== "cancelled" && order.paid && <span className="text-moss-700 dark:text-moss-300">paid</span>}
+            {order.status !== "cancelled" && !order.paid && typeof order.owed === "number" && order.owed > 0 && <span className="text-amber-700 dark:text-amber-300">owed</span>}
+            {typeof order.refund_due === "number" && order.refund_due > 0 && <span data-testid="order-card-refund-due" className="font-medium text-ember-700 dark:text-ember-300">refund due</span>}
           </div>
         </button>
         <button title="Delete order" type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition shrink-0" aria-label="Delete order">
@@ -265,7 +293,7 @@ function OrderCard({ order, onOpen, onDelete }: { order: SalesOrder; onOpen: () 
   );
 }
 
-function NewOrderModal({ api, orgSlug, onClose, onCreated }: { api: SalesApi; orgSlug: string; onClose: () => void; onCreated: (id: string) => void }) {
+export function NewOrderModal({ api, orgSlug, onClose, onCreated }: { api: SalesApi; orgSlug: string; onClose: () => void; onCreated: (id: string) => void }) {
   const toast = useToast();
   const qc = useQueryClient();
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -301,6 +329,9 @@ function NewOrderModal({ api, orgSlug, onClose, onCreated }: { api: SalesApi; or
             ),
           },
         ]} />
+        {create.isPending && browserOffline() && (
+          <p role="status" data-testid="order-waiting" className="text-xs text-muted">No connection. This order is kept on this phone and created, once, when you are back online. Leave this open.</p>
+        )}
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded bg-subtle dark:bg-slate-800">Cancel</button>
           <button type="submit" disabled={create.isPending} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Create</button>
@@ -319,7 +350,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
     setExporting(true);
     try {
       const order = await api.getOrder(orderId);
-      downloadBlob(new Blob([invoiceCsv(order, currency)], { type: "text/csv;charset=utf-8" }), `invoice-${order.id}.csv`);
+      downloadBlob(new Blob([invoiceCsv({ ...order, ...(order.money ? { money: order.money } : {}) }, currency)], { type: "text/csv;charset=utf-8" }), `invoice-${order.id}.csv`);
     } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
     finally { setExporting(false); }
   };
@@ -338,6 +369,12 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
+  const [waitingLines, setWaitingLines] = useState(() => api.waitingLines(orderId));
+  useEffect(() => {
+    const read = () => setWaitingLines(api.waitingLines(orderId));
+    read();
+    return subscribeWaitingWrites(read);
+  }, [api, orderId]);
   const addItem = useMutation({
     mutationKey: orderWriteKey(orderId),
     mutationFn: (b: { part_id: string | null; description: string | null; qty: number; unit_price: number | null }) => api.addItem(orderId, { ...b, metadata: { currency: fieldCurrency(detail.data?.metadata, "total", currency) } }),
@@ -494,16 +531,13 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
               onCommit={(name, value) => update.mutate({ metadata: { [name]: value } })}
             />
 
-            <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-100">
-              <input type="checkbox" checked={!!d.paid} disabled={update.isPending} onChange={(e) => update.mutate({ paid: e.target.checked })} />
-              Paid
-            </label>
+            <PaymentsPanel api={api} order={d} />
+            <HoldPanel api={api} order={d} />
             {d.status === "closed" && d.auto_closed_at && <div className="text-sm text-muted flex flex-wrap items-center gap-2">
               Closed automatically after delivery.
               <button type="button" disabled={reopen.isPending} onClick={() => reopen.mutate()} className="px-3 py-1.5 rounded border border-line dark:border-slate-600">Undo</button>
             </div>}
-            {d.delivered_at && d.status === "shipped" && !d.paid && <p className="text-sm text-muted">Delivered. Mark Paid when payment is received.</p>}
-            {d.paid && <p className="text-xs text-muted">Payment date: {d.paid_at ? dayHere(new Date(d.paid_at)) : "Not recorded"}</p>}
+            {d.delivered_at && d.status === "shipped" && !d.paid && <p className="text-sm text-muted">Delivered. Record the payment when it is received.</p>}
             <OrderDocuments api={api} orderId={orderId} disabled={update.isPending || addItem.isPending || updateItem.isPending || removeItem.isPending} />
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" className={headerButton()} disabled={exporting || update.isPending || addItem.isPending || updateItem.isPending || removeItem.isPending} onClick={() => void exportOrder()}>Export CSV</button>
@@ -515,9 +549,20 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
             <div>
               <div className="flex items-baseline justify-between mb-1.5">
                 <span className="text-[10px] uppercase tracking-widest text-muted">Line items</span>
-                <span data-testid="order-total" className="text-sm font-semibold text-content dark:text-mortar-100">{linesTotalWords(orderTotal(d.items, fieldCurrency(d.metadata, "total", currency)))}</span>
+                <span data-testid="order-total" className="text-sm font-semibold text-content dark:text-mortar-100">{linesTotalWords(orderTotal([...d.items, ...waitingLines.map((w) => ({ qty: w.qty, unit_price: w.unit_price ?? null, metadata: w.metadata }))], fieldCurrency(d.metadata, "total", currency)))}</span>
               </div>
-              {d.items.length === 0 && <div className="text-sm text-muted italic">No line items yet. Add what was sold.</div>}
+              {d.items.length === 0 && waitingLines.length === 0 && <div className="text-sm text-muted italic">No line items yet. Add what was sold.</div>}
+              {waitingLines.length > 0 && (
+                <ul aria-label="Lines waiting to send" className="mb-1.5 divide-y divide-slate-100 dark:divide-slate-800 border border-dashed border-line dark:border-slate-700 rounded">
+                  {waitingLines.map((w, i) => (
+                    <li key={i} data-testid="waiting-line" className="flex flex-wrap items-center gap-x-3 px-3 py-2 text-sm">
+                      <span className="flex-1 min-w-0 text-content dark:text-mortar-100">{w.description || "Line item"}</span>
+                      <span className="text-xs text-muted tabular-nums">{w.qty} × {w.unit_price ?? "no price"}</span>
+                      <span className="text-xs text-muted">waiting to send</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
                 {d.items.map((it) => (
                   <li key={it.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 text-sm group">
@@ -606,6 +651,8 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
               </ul>
             </div>
 
+            <ReturnsPanel api={api} order={d} />
+
             {askReturned && (
               <div role="alertdialog" aria-label="Was it returned?" className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
                 <p className="text-sm text-content dark:text-mortar-100">{askReturned}</p>
@@ -617,7 +664,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
               </div>
             )}
 
-            {!fulfilled && <AddLineRow api={api} currency={fieldCurrency(d.metadata, "total", currency)} onAdd={(b) => addItem.mutateAsync(b)} />}
+            {!fulfilled && <AddLineRow api={api} currency={fieldCurrency(d.metadata, "total", currency)} onAdd={(b) => { if (!browserOffline()) return addItem.mutateAsync(b); addItem.mutate(b); return Promise.resolve(); }} />}
 
             <div className="flex items-center justify-between pt-2 border-t border-line dark:border-slate-700">
               <span className="text-xs text-muted">
@@ -1012,6 +1059,9 @@ function historyLine(h: HistoryRow): string {
     const taken = Array.isArray(d.taken) ? (d.taken as Array<{ qty: number }>).reduce((a, t) => a + Number(t.qty || 0), 0) : 0;
     return `${taken} taken from stock${d.complete ? "" : ", the rest still owed"}`;
   }
+  if (h.kind === "payment") return d.undone ? "A payment was taken back" : `Payment of ${String(d.amount ?? "")} (${String(d.method ?? "other")}) recorded`;
+  if (h.kind === "return") return d.undone ? "A return or refund was taken back" : "A return or refund was recorded";
+  if (h.kind === "hold") return d.released ? `Hold released: ${String(d.why ?? "")}` : `Stock held${d.until ? ` until ${String(d.until)}` : ""}`;
   if (h.kind === "work_order") return `Put in to make: ${String(d.qty ?? "")} with ${String(d.build_name ?? "a build")}`;
   if (h.kind === "shipped") return `Shipped${d.carrier ? ` with ${String(d.carrier)}` : ""}${d.tracking_number ? `, tracking ${String(d.tracking_number)}` : ""}`;
   if (h.kind === "email") {
@@ -1121,6 +1171,9 @@ export function AddLineRow({ api, currency, onAdd }: { api: SalesApi; currency: 
                     </button>
                   ))}
                 </div>
+              )}
+              {q.length > 0 && parts.isError && (
+                <div className="mt-1 text-xs text-muted" data-testid="no-stock-search">Can't search your stock without a connection. Add adds it as a free-text line that draws no stock.</div>
               )}
               {q.length > 0 && parts.isSuccess && parts.data.length === 0 && (
                 <div className="mt-1 text-xs text-muted" data-testid="no-stock-match">No stocked record in any collection matches. Add adds it as a free-text line that draws no stock.</div>

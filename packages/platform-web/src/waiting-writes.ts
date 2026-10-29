@@ -364,6 +364,14 @@ export function waitingWritesToSend(authorization: string | null | undefined): W
   return read().filter((w) => w.who === who && (w.page !== PAGE || (w.orphan && !w.sending)));
 }
 
+/** The creates waiting at `path` (a POST to it), this page's own included, so a
+ *  page can show what was added while the signal was gone instead of the list
+ *  as the server last had it (#8834). */
+export function waitingCreates(path: string, authorization: string | null | undefined): WaitingWrite[] {
+  const who = writerOf(authorization);
+  return read().filter((w) => w.who === who && w.method === "POST" && bare(w.path) === bare(path) && !(w.sending && w.page === PAGE));
+}
+
 /** How many writes wait for this person, this page's own included. */
 export function waitingWriteCount(authorization: string | null | undefined): number {
   const who = writerOf(authorization);

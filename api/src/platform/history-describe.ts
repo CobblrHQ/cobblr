@@ -17,6 +17,8 @@ import { formatStoredMoney, moneyStorageOf, type MoneyFieldLike, type MoneyStora
 import { platform } from "@cobblr/platform-contract";
 import { historyReferenceKind } from "./activity-references.js";
 import { historyBag } from "./record-history.js";
+import { dayForPerson } from "./person-day.js";
+import { instantAsDay } from "./instants-as-days.js";
 import { meta } from "../db/meta.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
 import { lookup as lookupEntity } from "./entities.js";
@@ -130,6 +132,8 @@ export async function describeChanges(
   orgId: string,
   slug: string,
   rows: Array<{ action: string; diff: unknown; kinds: string[] }>,
+  /** Who reads it: a moment in a date field is said as THEIR day (#8789). */
+  reader?: { userId?: string | null },
 ): Promise<SaidChange[][]> {
   const raw = rows.map((r) => changesOfRow(r.action, r.diff).filter((c) => (!notSaid(c.field) || c.custom) && !c.field.startsWith("money_currency_")));
   if (raw.every((r) => r.length === 0)) return raw.map(() => []);
@@ -194,6 +198,11 @@ export async function describeChanges(
     // A stock reading is how much, in the unit it is kept in (#6039).
     const reading = stockReadingOf(value);
     if (reading) return { text: await amountIn(reading.remaining, reading.unit) };
+    // A date field that holds a moment (a sale's paid_at) is the person's day, as their page reads it.
+    if (info?.type === "date") {
+      const day = await instantAsDay(value, (at) => dayForPerson(reader?.userId ?? null, { now: at }));
+      if (day) return { text: saidValue(day, info) };
+    }
     return { text: saidValue(value, info ?? {}) };
   };
 

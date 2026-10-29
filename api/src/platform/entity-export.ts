@@ -16,8 +16,11 @@ import { normalizeGrouping } from "@cobblr/platform-contract/grouped-list";
 
 import { toCsv } from "@cobblr/platform-contract/csv";
 import { columnLabel, isWritableCustomField, isWritableNativeField } from "@cobblr/platform-contract/record-columns";
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { quantityWithUnit, SYSTEM_VIEWER, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { currentVia } from "../lib/request-context.js";
+import { dayForPerson } from "./person-day.js";
+import { rowsInTheirDays } from "./instants-as-days.js";
 import { SecretFieldError, secretValuesForExport } from "./secret-fields.js";
 import { meta } from "../db/meta.js";
 import { hiddenFieldsFor, list, listAll, listKindsForOrg } from "./entities.js";
@@ -101,7 +104,7 @@ export async function exportColumns(
         const f = row.fields as Record<string, unknown>;
         if (f.qty === null || f.qty === undefined) return null;
         // "3 hanks", not "3 hank": the importer keeps the words beside a count.
-        return typeof f.unit === "string" && f.unit && f.unit !== "each" ? quantityWithUnit(Number(f.qty), f.unit) : f.qty;
+        return typeof f.unit === "string" && f.unit && f.unit !== "each" ? quantityWithUnit(Number(f.qty), f.unit) : quantityNumber(Number(f.qty));
       },
     });
   }
@@ -155,7 +158,10 @@ export async function exportEntitiesCsv(
   const exported = new Set<string>();
   // SYSTEM-READ: an explicitly requested owner/admin export reads encrypted values internally before writing its audited CSV.
   const readViewer = includeSecrets ? SYSTEM_VIEWER : { ...viewer, export: true };
-  const values = async (items: ResolvedEntity[]) => {
+  // A day fact stored as a moment (a sale's paid_at) is written as the person's day, as their page reads it (#8789).
+  const dateFields = record.fields.filter((f) => f.type === "date").map((f) => f.name);
+  const values = async (all: ResolvedEntity[]) => {
+    const items = await rowsInTheirDays(all, dateFields, (at) => dayForPerson(viewer.userId, { now: at }));
     if (!includeSecrets) return items;
     for (const row of items) exported.add(row.id);
     return secretValuesForExport(orgId, kind, items, viewer);

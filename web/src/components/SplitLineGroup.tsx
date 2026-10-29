@@ -25,7 +25,7 @@ import { destinationChoices, entryKey } from "../lib/scanDestination";
 import { useUndoSplit } from "../lib/useUndoSplit";
 import { cleanCandidates } from "../pages/scanQuickFile";
 import { DestinationPicker } from "./DestinationPicker";
-import { currentPicture, rowPictures } from "../lib/rowPictures";
+import { currentPicture, leadYours, rowPictures } from "../lib/rowPictures";
 import type { SplitParent } from "../lib/splitLayout";
 
 /** Where a part goes and the values it would be filed with (its card's
@@ -33,10 +33,10 @@ import type { SplitParent } from "../lib/splitLayout";
 export type SplitPartRoute = { module: string; instance: string | null; kind?: string | null; label?: string | null; fields?: Record<string, unknown> | null } | null;
 
 /** A row's current picture, fetched signed in through EntityPhoto. */
-function RowPicture({ item, size, eager }: { item: ScanInboxItem; size: number; eager?: boolean }) {
+function RowPicture({ item, size, eager, yours }: { item: ScanInboxItem; size: number; eager?: boolean; yours?: boolean }) {
   const { activeSlug } = useActiveOrg();
   const pics = rowPictures(activeSlug, item);
-  const pic = currentPicture(pics.pictures);
+  const pic = yours ? leadYours(pics.pictures) : currentPicture(pics.pictures);
   return (
     <EntityPhoto
       src={pic ? pics.src(pic, "thumb") : null}
@@ -156,7 +156,10 @@ export function SplitLineGroup({
           >
             {!parentCard &&
               (row ? (
-                <RowPicture item={row} size={56} eager />
+                // A photo split's parent shows the person's photo of the
+                // group, never the catalog picture of the one thing its first
+                // read named (fresh garlic over a shelf of jars, #8795).
+                <RowPicture item={row} size={56} eager yours={summary.how === "photo"} />
               ) : (
                 <div className="h-14 w-14 shrink-0 rounded-lg bg-surface dark:bg-slate-800 flex items-center justify-center">
                   <Scissors size={18} className="text-faint" aria-hidden />

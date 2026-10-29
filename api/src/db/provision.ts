@@ -31,6 +31,8 @@ export interface ProvisionResult {
   credentialsEncrypted: string;
   /** How many migrations were just applied. */
   migrationsApplied: number;
+  /** The template the database was copied from, or null when it was migrated in full. */
+  copiedFrom: string | null;
 }
 
 /** Postgres identifiers in CREATE statements can't be parameterised,
@@ -183,6 +185,7 @@ export async function provisionTenantDb(dbName: string, opts: { resetFirst?: boo
   // signups against the same catalog race — instead of shipping a broken org.
   const MAX_ATTEMPTS = 5;
   let migrationsApplied = 0;
+  let copiedFrom: string | null = null;
   // A copy of the template when there is one; any copy that fails for a reason
   // that is not passing contention (the template gone under an older process,
   // say) is set aside and the workspace takes the full path from a clean slate.
@@ -195,6 +198,7 @@ export async function provisionTenantDb(dbName: string, opts: { resetFirst?: boo
       if (template) {
         try {
           migrationsApplied = await cloneTemplate(template, dbName, userName, password, opts.orgId!, reset);
+          copiedFrom = template;
           break;
         } catch (err) {
           if (isTransientProvisionError(err)) throw err;
@@ -221,5 +225,5 @@ export async function provisionTenantDb(dbName: string, opts: { resetFirst?: boo
   }
 
   const credentialsEncrypted = encryptCreds(JSON.stringify({ user: userName, password }));
-  return { credentialsEncrypted, migrationsApplied };
+  return { credentialsEncrypted, migrationsApplied, copiedFrom };
 }

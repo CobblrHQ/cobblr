@@ -765,7 +765,7 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
       try {
         const db = await getTenantDb(org.id);
         const names = await nameActivityRows(org, db, { userId, role: first.role }, ref);
-        const said = await describeChanges(org.id, org.slug, ref.map((i) => ({ action: i.action, diff: i.diff, kinds: [names.get(i.id)?.kind, i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type].filter((k, n, all): k is string => !!k && all.indexOf(k) === n) }))).catch(() => ref.map(() => []));
+        const said = await describeChanges(org.id, org.slug, ref.map((i) => ({ action: i.action, diff: i.diff, kinds: [names.get(i.id)?.kind, i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type].filter((k, n, all): k is string => !!k && all.indexOf(k) === n) })), { userId: req.session!.id }).catch(() => ref.map(() => []));
         ref.forEach((i, n) => {
           const named = names.get(i.id);
           const entry = { ...i, user_id: userId, entity_title: named?.title ?? null, entity_kind: named?.kind ?? null, said: said[n] ?? [] };

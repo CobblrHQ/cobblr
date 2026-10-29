@@ -32,7 +32,7 @@ import { ladderWithoutRedirects, servedModelOf, type AiModelChoice } from "@cobb
 import { getTenantDb } from "../db/tenant.js";
 import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
-import { resolvePersonalProvider, type ResolvedPersonalProvider } from "./user-credentials.js";
+import { resolvePersonalProvider, type ResolvedPersonalProvider, aiKeptByItsOwner } from "./user-credentials.js";
 import { myAiConnection, myAiJobSteps, type MyAiJobStep } from "./ai-job-defaults.js";
 import { wrongShape } from "./ai-output-shape.js";
 import { workspaceAiJobSteps, type WorkspaceAiJobStep } from "./workspace-ai-job-steps.js";
@@ -468,7 +468,10 @@ export type AiAvailabilityReason =
   | "operator_disabled"
   | "not_entitled"
   | "no_provider"
-  | "workspace_disabled";
+  | "workspace_disabled"
+  /** Nothing serves this person, and the AI routed here is someone else's
+   *  own connection (#8855). `kept_by` names them. */
+  | "not_shared";
 /** Where an available AI call would be served from — drives honest UI copy
  *  ("provided by your plan" vs "your own key" vs a workspace provider). */
 export type AiSource = "personal" | "workspace" | "managed";
@@ -477,6 +480,23 @@ export async function checkAvailability(
   orgId: string,
   userId: string | null,
   capability: AiCapability = "chat",
+): Promise<{ available: boolean; reason: AiAvailabilityReason; source?: AiSource; kept_by?: string }> {
+  const verdict = await availabilityOf(orgId, userId, capability);
+  return verdict.available || (verdict.reason !== "not_entitled" && verdict.reason !== "no_provider") ? verdict : withKeptBy(verdict, orgId, userId);
+}
+
+/** A refusal for someone with no AI here is about the connection kept to
+ *  its owner, when there is one: not the plan, not an allowance, not "no
+ *  provider" (#8855). The availability check and the router say the same. */
+async function withKeptBy<T extends { available: boolean; reason: AiAvailabilityReason }>(verdict: T, orgId: string, userId: string | null | undefined): Promise<T | (T & { reason: "not_shared"; kept_by: string })> {
+  const kept = await aiKeptByItsOwner(orgId, userId);
+  return kept ? { ...verdict, reason: "not_shared", kept_by: kept.ownerName } : verdict;
+}
+
+async function availabilityOf(
+  orgId: string,
+  userId: string | null,
+  capability: AiCapability,
 ): Promise<{ available: boolean; reason: AiAvailabilityReason; source?: AiSource }> {
   if (!env.COBBLR_AI_ENABLED) return { available: false, reason: "operator_disabled" };
   // The person's own defaults for the job, where the workspace chose nothing
@@ -589,7 +609,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     const classified = await readPersonalDocument({ bytes: Buffer.from(req.input.image_b64, "base64"), mime: String(req.input.image_media_type || "image/jpeg") });
     if (classified.privacy === "personal") throw aiRefusal("no_provider", `This is a personal document, so it cannot use the ordinary vision job. Read it with ${PERSONAL_READER_PLACE}.`);
   }
-  const { result: r, asked: tried, current } = await askInOrder<TriedProvider, { rowId?: string; providerId?: string; model?: string; requested?: string; label?: string }, Awaited<ReturnType<typeof invokeRaw>>>({
+  const { result: r, asked: tried, current } = await askInOrderSaying(req, () => askInOrder<TriedProvider, { rowId?: string; providerId?: string; model?: string; requested?: string; label?: string }, Awaited<ReturnType<typeof invokeRaw>>>({
     max: MAX_PROVIDERS_PER_CALL,
     newCurrent: () => ({}),
     attempt: (asked, current) => invokeRaw(req, asked, current),
@@ -607,7 +627,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     mayAskAnother: (err) => mayAskAnotherProvider(err, req),
     isCandidateFailure: (err) => refusalCodeOf(err) === "provider_error",
     finish: (err, asked) => withAttempts(err, [...asked]),
-  });
+  }));
   const answered_after = tried.length ? tried.map(({ rowId: _rowId, requested: _requested, ...a }) => a) : undefined;
   if (answered_after) {
     console.warn(
@@ -622,6 +642,21 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     ...(answered_after ? { answered_after } : {}),
   };
 };
+
+/** A call that found nothing to serve this person, when the AI routed here is
+ *  someone else's own: refused as that (not_shared), the reason the
+ *  availability check gives too, so a scan's row and the banner agree (#8855). */
+async function askInOrderSaying<T>(req: { orgId: string; userId?: string | null; privacy?: string }, ask: () => Promise<T>): Promise<T> {
+  try {
+    return await ask();
+  } catch (err) {
+    const code = refusalCodeOf(err);
+    if (req.privacy === "personal" || (code !== "no_provider" && code !== "not_entitled")) throw err;
+    const kept = await aiKeptByItsOwner(req.orgId, req.userId ?? null).catch(() => null);
+    if (!kept) throw err;
+    throw aiRefusal("not_shared", `no provider available: the AI here is ${kept.ownerName}'s own connection, which answers only their calls`);
+  }
+}
 
 /** The refusal with every provider asked before it on it. */
 function withAttempts(err: unknown, tried: TriedProvider[]): unknown {

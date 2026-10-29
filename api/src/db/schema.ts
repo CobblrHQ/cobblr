@@ -1580,6 +1580,25 @@ export interface StationQrKeysTable {
   created_at: Generated<Date>;
 }
 
+/** Who works at a station (#8845): the members its tablet may act as. */
+export interface StationCrewsTable {
+  org_id: string;
+  address: string;
+  user_ids: string[];
+  pin_required: Generated<boolean>;
+  idle_minutes: Generated<number>;
+  updated_by: string | null;
+  updated_at: Generated<Date>;
+}
+
+/** A member's own station PIN in a workspace, its hash only (#8845). */
+export interface StationMemberPinsTable {
+  org_id: string;
+  user_id: string;
+  pin_hash: string;
+  updated_at: Generated<Date>;
+}
+
 export interface EdgePairingCodesTable {
   code_hash: string;
   org_id: string;
@@ -2010,6 +2029,8 @@ export interface MetaDB {
   edge_pairing_codes: EdgePairingCodesTable;
   station_device_requests: StationDeviceRequestsTable;
   station_qr_keys: StationQrKeysTable;
+  station_crews: StationCrewsTable;
+  station_member_pins: StationMemberPinsTable;
   edge_relay_jobs: EdgeRelayJobsTable;
   edge_blobs: EdgeBlobsTable;
   users: UsersTable;

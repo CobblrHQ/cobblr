@@ -35,7 +35,7 @@ const SHIM = "api/src/platform/retire-receipt-failure-placeholders.ts";
 export async function retireReceiptFailurePlaceholders(opts: { onlyOrgId?: string } = {}): Promise<{ orgsTouched: number; rowsRetired: number }> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1" && !opts.onlyOrgId) return { orgsTouched: 0, rowsRetired: 0 };
   const version = sweepVersion(retireReceiptFailurePlaceholders);
-  if (!opts.onlyOrgId && (await sweptClean(SHIM, version))) return { orgsTouched: 0, rowsRetired: 0 };
+  if (!opts.onlyOrgId && (await sweptClean(SHIM, version, () => retireReceiptFailurePlaceholders()))) return { orgsTouched: 0, rowsRetired: 0 };
 
   let q = meta
     .selectFrom("org_modules")

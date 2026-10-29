@@ -38,6 +38,12 @@ function actionFor(e: HistoryEntry): string | null {
       return `order_line_${String(e.detail?.change ?? "changed")}`;
     case "delivered":
       return "order_delivered";
+    case "hold":
+      return e.detail?.released === true ? "order_hold_released" : "order_held";
+    case "payment":
+      return e.detail?.undone === true ? "sale_payment_undone" : "sale_payment_recorded";
+    case "return":
+      return e.detail?.undone === true ? "sale_return_undone" : "sale_return_recorded";
   }
 }
 

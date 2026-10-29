@@ -300,6 +300,12 @@ export function fillSlots(text: string, values: Record<string, string>): string 
  *  template's shape with what they typed in it. Never a sentence with a blank
  *  still in it: "add a place called {name} in {parent}" was the whole offer,
  *  reply and card, for a place the person had just named (#7837). */
+/** "I can do that: <what it does>." with one stop: a computed command's
+ *  summary is already a sentence, and the offer said "Garage shelf).." (#8858). */
+export function offerReply(said: string): string {
+  return `I can do that: **${said}**${/[.!?]$/.test(said.trim()) ? "" : "."}`;
+}
+
 export function sayCommand(cmd: Pick<LearnedCommand, "pattern" | "slots" | "template">, message: string, description?: string | null): string | null {
   const values = slotValues(cmd, message);
   if (!values) return null;

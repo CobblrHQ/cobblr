@@ -15,8 +15,8 @@ export interface LineAvailability {
   make_qty: number;
 }
 
-export async function orderAvailability(orgId: string, lines: FulfilLine[], workOrders: WorkOrderView[]): Promise<LineAvailability[]> {
-  const { take, onHand } = await planFulfilment(orgId, lines);
+export async function orderAvailability(orgId: string, lines: FulfilLine[], workOrders: WorkOrderView[], heldForOthers?: ReadonlyMap<string, number>): Promise<LineAvailability[]> {
+  const { take, onHand } = await planFulfilment(orgId, lines, heldForOthers);
   const pending = new Map<string, number>();
   const planned = new Map<string, number>();
   for (const w of workOrders) {

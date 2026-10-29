@@ -856,7 +856,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           <ErrorBoundary key={location.pathname} scope="page">
             {/* A page for a module that is off offers only turning it on. */}
             <ModuleOffGate>
-              <AiNoticeGiven when={chatOpen && railTab === "cobb" && aiStatus?.reason === "not_entitled"} reason="not_entitled">
+              <AiNoticeGiven when={chatOpen && railTab === "cobb" && (aiStatus?.reason === "not_entitled" || aiStatus?.reason === "not_shared")} reason={aiStatus?.reason}>
                 {/* A page's code arriving waits here, in the page's own room:
                     with no boundary of its own, a lazy page reached the one
                     around the whole shell, and the header, the nav and every

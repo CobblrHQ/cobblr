@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Every script a Dockerfile RUNS must be shipped by the public export.
+ * Every repo file a Dockerfile names under scripts/ must be shipped by the public export.
  *
  * The export allowlist is per-file globs. A Dockerfile step is not an import, so
  * nothing connected the two: `docker/api.Dockerfile` ran
@@ -16,6 +16,12 @@
  * relative imports; this one follows Dockerfile RUN lines, and neither can see what the
  * other checks. A missing build script is invisible in-repo, because in-repo the file
  * is right there, so it needs a check rather than more care.
+ *
+ * It follows every `scripts/` path a Dockerfile line names, not only the script it runs.
+ * Matching just `node scripts/x.mjs` let `node scripts/prod-lockfile.mjs --from
+ * scripts/ci/api-image-projects.json` through: the script shipped, its data file did not,
+ * and verify-public-export was red every day from 2026-10-05 until 10-28 (ENOENT at the
+ * api image's lockfile step) with this lint green.
  *
  * PERMANENT LINT.
  */
@@ -47,10 +53,13 @@ const found = new Map<string, string>(); // script -> the Dockerfile that runs i
 
 for (const name of readdirSync(dockerDir)) {
   if (!name.endsWith("Dockerfile") && !name.includes("Dockerfile")) continue;
-  const src = readFileSync(join(dockerDir, name), "utf8");
-  // `RUN node scripts/x.mjs`, `RUN npx tsx scripts/x.ts`, with or without a leading RUN
-  // continuation, which is why this matches the invocation rather than the line start.
-  for (const m of src.matchAll(/\b(?:node|tsx)\s+(scripts\/[A-Za-z0-9._/-]+\.(?:mjs|cjs|js|ts))/g)) {
+  const src = readFileSync(join(dockerDir, name), "utf8")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  // A repo-relative path: a script it runs, a file it passes one, a COPY source. Not a path
+  // inside the image (`./scripts/…`, `/app/scripts/…`), which the lookbehind leaves out.
+  for (const m of src.matchAll(/(?<![\w./-])(scripts\/[A-Za-z0-9._/-]+\.[A-Za-z0-9]+)/g)) {
     if (!found.has(m[1]!)) found.set(m[1]!, name);
   }
 }
@@ -58,13 +67,13 @@ for (const name of readdirSync(dockerDir)) {
 const missing = [...found].filter(([script]) => !include.some((p) => matches(script, p)));
 
 if (missing.length) {
-  console.error("Dockerfile runs a script the public export does not ship:\n");
+  console.error("Dockerfile names a file the public export does not ship:\n");
   for (const [script, dockerfile] of missing) {
     console.error(`  ${script}`);
-    console.error(`    run by docker/${dockerfile}, absent from scripts/publish/manifests/core.json`);
+    console.error(`    named by docker/${dockerfile}, absent from scripts/publish/manifests/core.json`);
   }
   console.error(`
-Anyone building from the public repo gets "Cannot find module" at that step. Add it to
+Anyone building from the public repo fails at that step ("Cannot find module", ENOENT). Add it to
 \`include\` in the manifest:
 
     "${missing[0]?.[0]}",
@@ -72,4 +81,4 @@ Anyone building from the public repo gets "Cannot find module" at that step. Add
   process.exit(1);
 }
 
-console.log(`lint:export-build-scripts: OK (${found.size} Dockerfile script(s) all shipped)`);
+console.log(`lint:export-build-scripts: OK (${found.size} file(s) the Dockerfiles name, all shipped)`);

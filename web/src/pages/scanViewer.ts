@@ -13,7 +13,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ScanRowStateContext } from "@cobblr/platform-contract/scan-triage";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { mayCreateIn } from "@cobblr/platform-contract/create-capability";
+import { mayCreateIn, mayRestockIn } from "@cobblr/platform-contract/create-capability";
 import { api, type ScanMenuEntry } from "../lib/api";
 import { scanResolverTables } from "../lib/scanResolverTables";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -51,6 +51,8 @@ export function scanViewerContext({ role, caps, menu, modules, instances }: Scan
     // create gate (create-capability.ts). A member without the grant used to
     // see a green Add and learn otherwise from the 403 (#3072, #3073).
     permittedFor: (module) => mayCreateIn(module, caps ?? null),
+    // Adding to stock already there is its own grant (#8850).
+    mayRestock: (module) => mayRestockIn(module, caps ?? null),
     // A destination in an app that is off here is a table to turn on, asked
     // for, or unavailable; never a ready Add the server refuses (#3610).
     // An empty list is not an answer (a workspace always has its scan

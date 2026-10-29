@@ -199,6 +199,7 @@ export default defineModule({
       "core-scan.scan.confirmed",
       "core-scan.scan.unconfirmed",
       "core-scan.scan.broken",
+      "core-scan.scan.arrived-damaged",
       "core-scan.scan.discarded",
       "core-scan.organize.applied",
       "core-scan.putaway.session-started",

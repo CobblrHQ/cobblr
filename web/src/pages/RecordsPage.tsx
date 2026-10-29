@@ -11,7 +11,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Album, ChevronRight, Image as ImageIcon, Plus, Trash2 } from "lucide-react";
 import { ApiError, api, type RecordItem, type PlatformFieldDef } from "../lib/api";
-import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
+import { ModuleInstanceChooser, namedInstances } from "../components/ModuleInstanceChooser";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import {
@@ -203,8 +203,8 @@ export function RecordsPage({
       {filtered.length === 0 ? (
         // The instance-chooser is a BASE-page affordance ("pick one of your
         // collections"); on an instance page we're already inside one.
-        !instance && allRows.length === 0 && (recordInstances.data?.items.length ?? 0) > 0 ? (
-          <ModuleInstanceChooser instances={recordInstances.data!.items} icon={Album} noun="record" />
+        !instance && allRows.length === 0 && namedInstances(recordInstances.data?.items).length > 0 ? (
+          <ModuleInstanceChooser instances={namedInstances(recordInstances.data?.items)} icon={Album} noun="record" />
         ) : (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
             {allRows.length === 0

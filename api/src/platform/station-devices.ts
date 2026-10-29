@@ -13,11 +13,13 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { mintTokenString } from "../auth/api-tokens.js";
+import { STATION_CREW_TOKEN_SOURCE } from "./station-crews.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import {
   STATION_CODE_ALPHABET,
   STATION_CODE_LENGTH,
   STATION_REQUEST_TTL_MS,
+  STATION_TOKEN_ACCESS,
   isStationAddress,
   normalizeStationCode,
   stationAddressOfScope,
@@ -145,7 +147,7 @@ export async function claimStation(requestId: string, pollKey: unknown): Promise
       source: STATION_TOKEN_SOURCE,
       meta: { kind: "station", address: claimed.address, label },
       org_id: claimed.approved_org,
-      access: "change",
+      access: STATION_TOKEN_ACCESS,
     })
     .execute();
   return { status: "approved", token: plaintext, slug: who.slug, address: claimed.address, label };
@@ -198,6 +200,15 @@ export async function revokeStationDevice(orgId: string, tokenId: string): Promi
     .where("source", "=", STATION_TOKEN_SOURCE)
     .where("revoked_at", "is", null)
     .executeTakeFirst();
+  // The members picked on that screen stop with it (#8845).
+  await meta
+    .updateTable("api_tokens")
+    .set({ revoked_at: new Date() })
+    .where("org_id", "=", orgId)
+    .where("source", "=", STATION_CREW_TOKEN_SOURCE)
+    .where("revoked_at", "is", null)
+    .where(sql<boolean>`meta->>'device_token_id' = ${tokenId}`)
+    .execute();
   return Number(r.numUpdatedRows ?? 0) > 0;
 }
 
@@ -296,7 +307,7 @@ export async function claimStationQr(p: { slug?: unknown; address?: unknown; key
       source: STATION_QR_TOKEN_SOURCE,
       meta: { kind: "station-qr", address: p.address, label },
       org_id: row.org_id,
-      access: "change",
+      access: STATION_TOKEN_ACCESS,
     })
     .execute();
   return { ok: true, token: plaintext, slug: row.slug, address: p.address, label };

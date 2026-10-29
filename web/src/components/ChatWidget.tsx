@@ -1183,6 +1183,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           {
             role: "assistant",
             content: r.reply,
+            // The records a workspace answer names open from the reply (#8864).
+            ...(r.mentions?.length ? { refs: mergeRefs(r.mentions) } : {}),
             // A learned command is an OFFER. Basic mode answers a keystroke; it
             // must never write to the workspace on its own, however sure the
             // match is.

@@ -17,6 +17,7 @@ import type { SalesDB, SalesOrderStatus } from "./db.js";
 import { withOrderLock } from "./order-lock.js";
 import { drawStock } from "./stock-draw.js";
 import { orderHappened } from "./history.js";
+import { heldByOthers, releaseHoldUnderLock } from "./holds.js";
 
 export interface FulfilLine {
   id: string;
@@ -30,7 +31,10 @@ export interface Shortage {
   part_id: string;
   name: string;
   needed: number;
+  /** What is free to ship: on the shelf less what other orders hold. */
   on_hand: number;
+  /** What other orders hold of it (#8838). */
+  held?: number;
   /** The part's own page, from its module; null when the part is gone. */
   href: string | null;
   /** The first line that asks for it, where "Make this" plans a work order. */
@@ -99,10 +103,14 @@ async function readOnHand(orgId: string, partIds: string[]): Promise<Map<string,
 export async function planFulfilment(
   orgId: string,
   lines: FulfilLine[],
+  heldForOthers: ReadonlyMap<string, number> = new Map(),
 ): Promise<{ take: Map<string, number>; shortages: Shortage[]; onHand: Map<string, OnHand | null> }> {
   const stocked = lines.filter((l) => l.part_id && remaining(l) > 0);
   const partIds = [...new Set(lines.filter((l) => l.part_id).map((l) => l.part_id!))];
-  const onHand = await readOnHand(orgId, partIds);
+  const shelf = await readOnHand(orgId, partIds);
+  // Stock another order holds is not free to ship here (#8838).
+  const onHand = new Map<string, OnHand | null>();
+  for (const [id, info] of shelf) onHand.set(id, info ? { ...info, on_hand: Math.max(0, info.on_hand - (heldForOthers.get(id) ?? 0)) } : null);
   const left = new Map(partIds.map((id) => [id, onHand.get(id)?.on_hand ?? 0]));
   const take = new Map<string, number>();
   const needed = new Map<string, number>();
@@ -126,6 +134,7 @@ export async function planFulfilment(
         name: info?.name ?? line?.description ?? "a part that is no longer tracked",
         needed: need,
         on_hand: have,
+        ...((heldForOthers.get(id) ?? 0) > 0 ? { held: heldForOthers.get(id) } : {}),
         href: info?.href ?? null,
         line_id: line!.id,
       });
@@ -138,9 +147,10 @@ export async function planFulfilment(
 export function shortageSentence(shortages: Shortage[]): string {
   if (shortages.length === 1) {
     const s = shortages[0]!;
+    const where = s.held ? ` free (${s.held} held for other orders)` : " in stock";
     return s.on_hand === 0
-      ? `There are no ${s.name} in stock, and this order needs ${s.needed}.`
-      : `Only ${count(s.on_hand, s.name)} in stock, and this order needs ${s.needed}.`;
+      ? `There are no ${s.name}${where}, and this order needs ${s.needed}.`
+      : `Only ${count(s.on_hand, s.name)}${where}, and this order needs ${s.needed}.`;
   }
   const parts = shortages.map((s) => `${s.name} (${s.needed} needed, ${s.on_hand} in stock)`);
   return `Not enough stock to ship this order: ${parts.join(", ")}.`;
@@ -195,7 +205,8 @@ export async function fulfilOrderUnderLock(db: Kysely<SalesDB>, orgId: string, u
     qty_fulfilled: Number(r.qty_fulfilled) || 0,
   }));
 
-  const { take, shortages } = await planFulfilment(orgId, lines);
+  const others = await heldByOthers(db, lines.flatMap((l) => (l.part_id ? [l.part_id] : [])), orderId);
+  const { take, shortages } = await planFulfilment(orgId, lines, others);
   const shippable = [...take.values()].reduce((a, b) => a + b, 0);
   if (shortages.length > 0 && mode === "all") {
     return { ok: false, code: "not_enough_stock", message: shortageSentence(shortages), shortages, doors: doorsFor(shortages, shippable) };
@@ -204,6 +215,8 @@ export async function fulfilOrderUnderLock(db: Kysely<SalesDB>, orgId: string, u
     return { ok: false, code: "nothing_to_ship", message: shortageSentence(shortages), shortages, doors: doorsFor(shortages, 0) };
   }
 
+  // What this order held leaves with it: the stock goes for real, so the reservation ends first.
+  await releaseHoldUnderLock(db, orgId, userId, orderId, "it was fulfilled");
   const shipped: Array<{ line_id: string; part_id: string; qty: number }> = [];
   for (const l of lines) {
     const n = take.get(l.id) ?? 0;

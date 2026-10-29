@@ -407,10 +407,19 @@ export function makeLexicalScorer(item: FitItem): {
   // Bookshelf. A generic word cannot name a table this way either.
   const categoryNamesLabel = (label: string): boolean =>
     !!catHeadStem && !GENERIC_NOUNS.has(catHeadStem) && hitsCategoryHead(label);
+  // Two words joined before the head name what the thing is FOR, not what it
+  // is: "Machine & Tool Lubricant" is a lubricant, and a WD-40 can titled so
+  // was offered the Machines table on the word (#8925). The head itself and
+  // a word after it ("Sewing Machine and Accessory Kit") still name it.
+  const usesBeforeHead = headCandidate
+    ? [...nameCore.matchAll(new RegExp(`\\b([a-z][a-z0-9-]*)\\s*(?:&|\\+|/|\\band\\b)\\s*([a-z][a-z0-9-]*)\\s+${headCandidate}\\b`, "g"))]
+    : [];
+  const namingCore = usesBeforeHead.reduce((s, m) => s.replace(m[0], headCandidate), nameCore);
+  const namingStems = new Set(namingCore.split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem));
   const nameHas = (phrase: string): boolean => {
     const p = phrase.toLowerCase();
-    if (/\s/.test(p.trim())) return nameCore.includes(p);
-    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && nameStems.has(stem(w)));
+    if (/\s/.test(p.trim())) return namingCore.includes(p);
+    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && namingStems.has(stem(w)));
   };
 
   const scoreEntry = (entry: FitTable): LexicalEvidence => {

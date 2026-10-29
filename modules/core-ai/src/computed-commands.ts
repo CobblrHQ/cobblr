@@ -20,6 +20,7 @@ import { fitTablesFor } from "./table-fit-menu.js";
 import { pluralise, countOf } from "@cobblr/platform-contract";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { wordsOf } from "./question-text.js";
+import { STOCK_ASK, findStockTarget, stockChangeSaid } from "./stock-change.js";
 
 export interface ComputedPlan {
   /** What the confirm card says, in a sentence a person can check. */
@@ -991,6 +992,22 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
       return {
         summary: `Delete ${names.length} empty place${names.length === 1 ? "" : "s"} (${shown}${more}). Nothing is inside ${names.length === 1 ? "it" : "them"}.`,
         operations,
+      };
+    },
+  },
+  {
+    id: "add-stock",
+    // A number is what makes it a count change: "add a place called Blue bin"
+    // is another command's (#8868).
+    match: STOCK_ASK,
+    template: "add {n} {part}",
+    description: "Add to the count of one part, found by its name and, when said, its place.",
+    async plan({ wsApi, message }) {
+      const t = await findStockTarget(wsApi, message);
+      if (t?.kind !== "one") return null;
+      return {
+        summary: stockChangeSaid(t.part, t.ask.delta),
+        operations: [{ tool: "action", entity_kind: "inventory:part", entity_id: t.part.id, action_id: "inventory:adjust-stock", payload: { partId: t.part.id, delta: t.ask.delta } }],
       };
     },
   },

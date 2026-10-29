@@ -16,7 +16,8 @@ import {
   rotateStationQr,
   stationQrState,
 } from "../platform/station-devices.js";
-import { isStationAddress } from "@cobblr/platform-contract/station-screen";
+import { isStationAddress, isStationCrewScope, stationAddressOfScope } from "@cobblr/platform-contract/station-screen";
+import { endStationPick, pickStationMember, setStationCrew, setStationMemberPin, stationCrew, stationMemberHasPin } from "../platform/station-crews.js";
 
 /** The tablet's half: no session, so a per-IP limit stands in front of both. */
 export const stationPublicRouter = Router();
@@ -160,6 +161,110 @@ stationDevicesRouter.delete("/qr/:address", async (req, res, next) => {
   try {
     await disableStationQr(req.tenant!.org.id, req.params.address ?? "");
     res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// ── Who's working (#8845) ────────────────────────────────────────────────
+// The crew of a station: read by its owner or admin and by the station's own
+// screen; set by an owner or admin. The screen picks a member (a token in
+// their name) and ends the pick when it goes back to Who's working?. The
+// station-scoped token rule (auth/scopes.ts) lets a station's token reach
+// only its own address's crew read, pick and end.
+
+/** The station's own token for this address: the tablet's, or a picked member's. */
+function stationTokenFor(req: Parameters<typeof requireRole>[0], address: string): { crew: boolean } | null {
+  const scopes = req.session?.token_scopes ?? [];
+  if (!scopes.some((k) => stationAddressOfScope(k) === address)) return null;
+  return { crew: scopes.some(isStationCrewScope) };
+}
+
+stationDevicesRouter.get("/crew/:address", async (req, res, next) => {
+  const address = req.params.address ?? "";
+  if (!isStationAddress(address)) return void res.status(400).json({ error: { code: "bad_station_address", message: "That is not a station address." } });
+  if (!stationTokenFor(req, address) && !requireRole(req, res, "owner", "admin")) return;
+  try {
+    res.json(await stationCrew(req.tenant!.org.id, address));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// AI-REACH: exempt, who may act at a shared screen is a security step an owner or admin takes beside it, as approving the screen is.
+stationDevicesRouter.put("/crew/:address", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  try {
+    const body = (req.body ?? {}) as { user_ids?: unknown; pin_required?: unknown; idle_minutes?: unknown };
+    const ids = Array.isArray(body.user_ids) ? body.user_ids.filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)) : null;
+    if (!ids || ids.length !== (body.user_ids as unknown[]).length) {
+      return void res.status(400).json({ error: { code: "bad_crew", message: "Name the members by their ids." } });
+    }
+    const r = await setStationCrew({
+      orgId: req.tenant!.org.id,
+      address: req.params.address ?? "",
+      userIds: ids,
+      pinRequired: body.pin_required === true,
+      idleMinutes: body.idle_minutes === undefined ? 10 : Number(body.idle_minutes),
+      by: req.session!.id,
+    });
+    if (!r.ok) return void res.status(400).json({ error: { code: r.code, message: r.message } });
+    res.json(r.crew);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// AI-REACH: exempt, spoken by a shared screen when a person taps their own name on it; the assistant acts as the person it talks to, never as someone picked on a tablet.
+stationDevicesRouter.post("/crew/:address/pick", async (req, res, next) => {
+  const address = req.params.address ?? "";
+  const own = isStationAddress(address) ? stationTokenFor(req, address) : null;
+  if (!own || own.crew) {
+    return void res.status(403).json({ error: { code: "station_screen_only", message: "Only the station's own screen picks who's working." } });
+  }
+  try {
+    const body = (req.body ?? {}) as { user_id?: unknown; pin?: unknown };
+    const r = await pickStationMember({ orgId: req.tenant!.org.id, address, deviceTokenId: req.session!.api_token_id ?? null, userId: body.user_id, pin: body.pin });
+    if (!r.ok) return void res.status(r.status).json({ error: { code: r.code, message: r.message } });
+    res.json(r.pick);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// AI-REACH: exempt, spoken by a shared screen going back to Who's working?; it ends that screen's own pick.
+stationDevicesRouter.delete("/crew/:address/pick", async (req, res, next) => {
+  const address = req.params.address ?? "";
+  const own = isStationAddress(address) ? stationTokenFor(req, address) : null;
+  if (!own?.crew || !req.session?.api_token_id) {
+    return void res.status(403).json({ error: { code: "station_pick_only", message: "Only a picked member's station token ends its own pick." } });
+  }
+  try {
+    await endStationPick(req.tenant!.org.id, req.session.api_token_id);
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// A member's own station PIN in this workspace (#8845).
+stationDevicesRouter.get("/my-pin", async (req, res, next) => {
+  try {
+    res.json({ has_pin: await stationMemberHasPin(req.tenant!.org.id, req.session!.id) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// AI-REACH: exempt, a PIN a person types at a shared screen is theirs to choose; the assistant never sets or learns a secret.
+stationDevicesRouter.put("/my-pin", async (req, res, next) => {
+  if (req.session?.token_scopes?.length) {
+    return void res.status(403).json({ error: { code: "pin_person_only", message: "Set your station PIN signed in as yourself." } });
+  }
+  try {
+    const r = await setStationMemberPin(req.tenant!.org.id, req.session!.id, (req.body ?? {}).pin ?? null);
+    if (!r.ok) return void res.status(400).json({ error: { code: "bad_pin", message: r.message } });
+    res.json({ has_pin: r.has_pin });
   } catch (e) {
     next(e);
   }

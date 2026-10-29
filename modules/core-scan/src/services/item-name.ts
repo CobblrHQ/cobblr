@@ -79,8 +79,19 @@ export function nameWithColor(
  * CORRECT, where the longer one is visibly broken. A balanced name is untouched,
  * because most names are fine and this must not rewrite them.
  */
+/** Characters a catalog leaves in a name that nobody can see or type: bidi
+ *  marks and isolates, zero-width spaces and joiners, the byte-order mark and
+ *  the soft hyphen. go-upc's Red Heart yarn arrived as "\u200Ered Heart …",
+ *  and a record filed with it starts with a character a search cannot match
+ *  (#8853). */
+const INVISIBLES = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/gu;
+
+export function withoutInvisibles(text: string): string {
+  return text.replace(INVISIBLES, "");
+}
+
 export function tidyTruncatedName(name: string | null | undefined): string {
-  let n = (name ?? "").trim();
+  let n = withoutInvisibles(name ?? "").trim();
   if (!n) return "";
   const PAIRS: Array<[string, string]> = [["(", ")"], ["[", "]"], ["{", "}"]];
   for (const [open, close] of PAIRS) {
@@ -96,7 +107,7 @@ export function tidyTruncatedName(name: string | null | undefined): string {
  *  near, so a marketing-length catalog title commits instead of 400ing (a real
  *  dimmer's title is 206 characters - one install hit "bad request body" on Add). */
 export function clampEntityName(name: string): string {
-  const trimmed = name.trim();
+  const trimmed = withoutInvisibles(name).trim();
   if (trimmed.length <= 160) return trimmed;
   const cut = trimmed.slice(0, 160);
   const lastSpace = cut.lastIndexOf(" ");

@@ -336,11 +336,18 @@ photosRouter.post(
     const pieces = pairPieces(detection.items, observed);
 
     if (pieces.length < 2) {
+      // Only a reading the AI gave may be reported as what it saw: with none
+      // connected, or none answering, nothing looked at the photo (#8797).
       res.status(409).json({
-        error: {
-          code: "nothing_to_split",
-          message: "The AI sees one item in this photo (or couldn't segment it): nothing to split.",
-        },
+        error: detection.failed
+          ? {
+              code: "split_needs_ai",
+              message: "Splitting a photo needs an AI to find each thing in it, and none answered. Name this one, or photograph each thing on its own.",
+            }
+          : {
+              code: "nothing_to_split",
+              message: "The AI sees one item in this photo (or couldn't segment it): nothing to split.",
+            },
       });
       return;
     }

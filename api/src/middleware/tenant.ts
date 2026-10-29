@@ -7,6 +7,7 @@
 import { guestMayReadRecord } from "../platform/entities.js";
 import { describeGuestWrite } from "../platform/approvals.js";
 import { guestMayRead, guestMayWrite, guestRouteKey, portalShares } from "../auth/guest-reads.js";
+import { isStationQrScope, isStationScope } from "../auth/scopes.js";
 import { holdForAPerson, workspacePath } from "../platform/ai-held-changes.js";
 import { replayOrRecord } from "../platform/request-replays.js";
 import { GATE_PROBE_HEADER, runInGateProbe, settleGateProbe, takeGateProbe } from "../lib/gate-probe.js";
@@ -76,9 +77,13 @@ export function supportSessionRefuses(method: string, mode: string): boolean {
  *  pass so the reset page can still load its data; every mutation is blocked
  *  until the reset completes. The reset flow itself never hits this: both
  *  POST /me/password and /auth/password/reset are meta-level routes that do
- *  not go through withTenant. Pure so it's unit-testable without a DB. */
-export function blocksForPasswordReset(mustReset: boolean, method: string): boolean {
+ *  not go through withTenant. A station's token (#8845) is not that
+ *  password: the screen an owner or admin approved vouches for whoever taps
+ *  their name, so a member added with a temporary password works at it on
+ *  their first day. Pure so it's unit-testable without a DB. */
+export function blocksForPasswordReset(mustReset: boolean, method: string, tokenScopes: string[] | null = null): boolean {
   if (!mustReset) return false;
+  if (tokenScopes?.some((k) => isStationScope(k) || isStationQrScope(k))) return false;
   const m = method.toUpperCase();
   return m !== "GET" && m !== "HEAD";
 }
@@ -108,7 +113,7 @@ export async function withTenant(
   // Forced password reset is enforced HERE, not just by the client redirect:
   // a user on a temp password can read (so the shell/reset page loads) but
   // cannot mutate workspace data until they set their own password.
-  if (blocksForPasswordReset(req.session.must_reset_password, req.method)) {
+  if (blocksForPasswordReset(req.session.must_reset_password, req.method, req.session.token_scopes)) {
     res.status(403).json({
       error: { code: "must_reset_password", message: "Reset your password before continuing." },
     });

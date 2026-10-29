@@ -240,7 +240,7 @@ export function ScanResultModal({
       const extras: Record<string, unknown> = {};
       if (item.suggested_manufacturer) extras.manufacturer = item.suggested_manufacturer;
       if (opts.fields && Object.keys(opts.fields).length) extras.metadata = opts.fields;
-      return api.confirmScanItem(activeSlug, item.id, {
+      return api.confirmScanItem(activeSlug, item, {
         target_module: opts.module,
         target_kind: opts.kind,
         instance: opts.instance,

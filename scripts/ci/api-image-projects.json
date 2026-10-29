@@ -1,0 +1,11 @@
+{
+  "_why": "The workspace projects the API image ships (docker/api.Dockerfile, prod-deps stage): its node_modules is the production dependencies of exactly these. `dir/*` is each direct child of dir. One list for the Dockerfile, lint:runtime-deps-are-declared and the pre-merge install check (scripts/ci/prod-install-check.mjs).",
+  "projects": [
+    "api",
+    "packages/platform-contract",
+    "packages/platform-net",
+    "packages/workspace-tools",
+    "packages/thermal-print",
+    "modules/*"
+  ]
+}

@@ -48,6 +48,10 @@ const NAME_FIRST: Array<{ match: RegExp; life: ShelfLife }> = [
   // no category at all ("Barilla Arrabbiata" arrived with none, 2026-09-02).
   { match: /\barrabbiata\b|\bmarinara\b|\bbolognese\b|\bpesto\b|pasta sauce|tomato sauce|\bpassata\b|\bragu\b/, life: { shelf_life_days: 365, shelf_life_opened_days: 7, grace_days: 60 } },
   { match: /\bcanned\b|\btinned\b|\bcan of\b|condensed|\bbroth\b|\bstock\b|\bsoups?\b|\bchowder\b|\bbaked beans\b|\bravioli\b/, life: { shelf_life_days: 540, shelf_life_opened_days: 5, grace_days: 60 } },
+  // A dried spice names the fresh thing it was made from: "Granulated Garlic"
+  // was given garlic's 30 days and "Paprika & Pepper Season All" a bell
+  // pepper's 14, so a shelf of jars read as going off (#8793).
+  { match: /\bspices?\b|\bseasonings?\b|\bseason all\b|\bgranulated\b|\bpeppercorns?\b|\b(black|white) pepper\b|\bgrinder\b|\b(garlic|onion|celery) salt\b|\bground (ginger|cinnamon|cumin|nutmeg|cloves?|coriander|cardamom|turmeric|allspice|mustard|paprika|pepper)\b|\bpowder\b|\bdried\b/, life: { shelf_life_days: 270, grace_days: 90 } },
 ];
 
 const RULES: Array<{ match: RegExp; life: ShelfLife }> = [

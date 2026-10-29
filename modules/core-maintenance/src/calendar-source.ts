@@ -12,6 +12,7 @@ import type { CoreMaintenanceDB } from "./db.js";
 import type { CalendarEvent } from "@cobblr/platform-contract";
 import { addressWhere } from "@cobblr/platform-contract/address";
 import { dayStoredAt } from "@cobblr/platform-contract/day";
+import { reminderEventOf } from "./reminder-event.js";
 
 interface DueRow {
   id: string;
@@ -65,7 +66,7 @@ export function registerMaintenanceCalendarSource(): void {
         // Where the visit happens: the feed's LOCATION and the calendar's Where.
         ...addressWhere(r.address),
       };
-        return [ ...(due >= fromISO && due <= toISO ? [event] : []), ...(r.schedule_id && reminder >= fromISO && reminder <= toISO && reminder !== due ? [{ ...event, id: `maintenance-reminder:${r.id}`, title: `Reminder: ${r.name}`, date: reminder }] : []) ];
+        return [ ...(due >= fromISO && due <= toISO ? [event] : []), ...(r.schedule_id && reminder >= fromISO && reminder <= toISO && reminder !== due ? [reminderEventOf(event, r.id, r.name, reminder)] : []) ];
       });
     } catch (err) {
       const msg = (err as Error).message;

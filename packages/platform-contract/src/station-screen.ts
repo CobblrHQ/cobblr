@@ -7,6 +7,11 @@
 // address grammar, the code alphabet and the settings for the api, the
 // core-scan module and the web, so none of them can disagree.
 
+/** The access every token a station holds is minted at: the tablet's, a
+ *  kitchen QR's and a picked member's. What the station's screen calls must
+ *  pass this as well as its scope (#8845). */
+export const STATION_TOKEN_ACCESS = "change" as const;
+
 /** A station address: lowercase words and dashes, as typed into a URL. */
 export const STATION_ADDRESS_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
@@ -61,6 +66,53 @@ export function stationScope(address: string): string {
 export function stationAddressOfScope(scope: string): string | null {
   const m = /^station:(.+)$/.exec(scope);
   return m && isStationAddress(m[1]) ? m[1]! : null;
+}
+
+// ── Who's working (#8845) ─────────────────────────────────────────────────
+// A tablet a team shares asks who is acting. Picking a member mints a token
+// in that member's own name that reaches the same station as the tablet's,
+// so their role is what the server checks and their name is on every row the
+// station writes. The extra scope marks it as a member's, not the tablet's.
+
+/** The scope a picked member's station token carries beside stationScope. */
+export function stationCrewScope(address: string): string {
+  return `station-crew:${address}`;
+}
+
+export function isStationCrewScope(key: string): boolean {
+  return /^station-crew:[a-z0-9][a-z0-9-]{0,39}$/.test(key);
+}
+
+/** A member's station PIN: four digits, set in their own settings. */
+export const STATION_MEMBER_PIN_RE = /^\d{4}$/;
+export const STATION_CREW_IDLE_DEFAULT = 10;
+export const STATION_CREW_IDLE_MIN = 1;
+export const STATION_CREW_IDLE_MAX = 240;
+/** How long a picked member's token lives at most; the screen ends it sooner. */
+export const STATION_CREW_TOKEN_TTL_MS = 12 * 60 * 60_000;
+
+export interface StationCrewMember {
+  user_id: string;
+  name: string;
+  /** Whether they have set a station PIN in this workspace. */
+  has_pin: boolean;
+}
+
+/** Who may work at a station. No members: the station acts as the person
+ *  who approved it, as before. */
+export interface StationCrew {
+  address: string;
+  members: StationCrewMember[];
+  pin_required: boolean;
+  idle_minutes: number;
+}
+
+/** The answer to picking a member at the station. */
+export interface StationCrewPick {
+  token: string;
+  user_id: string;
+  name: string;
+  expires_at: string;
 }
 
 /** A phone that claimed a station's kitchen QR (#5353): it reaches that

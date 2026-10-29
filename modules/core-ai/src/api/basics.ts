@@ -22,8 +22,10 @@ import { matchBasics, normalize } from "../basics-match.js";
 import { CONTROL_KEYS, actReply, resolveControlAct } from "../control-context.js";
 import { COMPUTED_COMMANDS, computedCommandFor } from "../computed-commands.js";
 import { getTool, type WorkspaceApi } from "@cobblr/workspace-tools";
-import { bindCommand, deriveCommand, oneAtATimeReply, splitInstructions, type LearnedCommand, type Operation, writeOf, sayCommand } from "../learned-commands.js";
-import { readQuestionOf, MIN_PEEK_LENGTH, type KindWords } from "../live-answers.js";
+import { bindCommand, deriveCommand, oneAtATimeReply, splitInstructions, type LearnedCommand, type Operation, writeOf, sayCommand, offerReply } from "../learned-commands.js";
+import { findStockTarget, stockAskSaid } from "../stock-change.js";
+import { readQuestionOf, dueSaid, MIN_PEEK_LENGTH, type DueEvent, type KindWords } from "../live-answers.js";
+import { addDays, dayHere } from "@cobblr/platform-contract/day";
 import { countQuestionOf, phraseCountText, phraseMostOf, type KindFields, type CountResult } from "../count-answers.js";
 import { performWrite, performWrites, bulkMessage, touchedBy, type WriteOutcome } from "./chat-ledger.js";
 import { namedRecords } from "@cobblr/platform-contract/record-mentions";
@@ -153,7 +155,7 @@ basicsRouter.post(
         // Said in the person's words ("Add Aran to the yarn weight choices");
         // a command that cannot say it that way is described by what it does,
         // never by a template with its blanks still in it (#7837).
-        reply: `I can do that: **${command.summary ?? describeOps(command.operations)}**.`,
+        reply: offerReply(command.summary ?? describeOps(command.operations)),
         command: {
           id: command.id,
           template: command.template,
@@ -175,6 +177,22 @@ basicsRouter.post(
         score: 99,
         candidates: [],
         reply: oneAtATimeReply(steps),
+      });
+      return;
+    }
+    // A question about this workspace that code can answer gets that answer,
+    // the one the bubble showed while it was typed (#8864). Before the keyword
+    // rules, whose "questions about your records need AI" is untrue of it.
+    const read = await workspaceAnswer(req, parsed.data.message, { aiOn: false, guide: false, sent: true }).catch(() => null);
+    if (read) {
+      res.json({
+        matched: true,
+        intent: "from your workspace",
+        key: null,
+        score: 99,
+        candidates: [],
+        reply: read.detail ? `**${read.answer}** · ${read.detail}` : `**${read.answer}**`,
+        ...(read.mentions?.length ? { mentions: read.mentions } : {}),
       });
       return;
     }
@@ -1194,6 +1212,164 @@ async function countAnswer(
   };
 }
 
+/** A question about this workspace answered from it, with no model: the
+ *  bubble under the box while it is typed, and the reply once it is sent. One
+ *  function for both, so the reply can never say "that needs AI" about a
+ *  question the bubble just answered (#8864). */
+export interface WorkspaceAnswer {
+  answer: string;
+  detail?: string;
+  mentions?: Array<{ kind: string; id: string; label: string }>;
+  from: "workspace" | "guide";
+}
+
+async function workspaceAnswer(req: Request, message: string, opts: { aiOn: boolean; guide: boolean; sent?: boolean }): Promise<WorkspaceAnswer | null> {
+  const db = tenantDb(req);
+  const wsApi = chatWorkspaceApi(ctxOf(req));
+  // A stock change that found no single part: the command offered nothing,
+  // so say which ones fit, or that none does, rather than "use + New" (#8868).
+  // Only once sent: while it is typed, "add 10 zi" names no part yet.
+  if (opts.sent) {
+    const stock = await findStockTarget(wsApi, message).catch(() => null);
+    if (stock && stock.kind !== "one") return { ...stockAskSaid(stock), from: "workspace" };
+  }
+  const kindsRes = await wsApi.request("GET", "/entity-kinds");
+  const kindRows =
+    (kindsRes.body.items as Array<{ id: string; display_name?: string; display_name_plural?: string }> | undefined) ??
+    [];
+  const kinds: KindWords[] = kindRows.map((k) => {
+    const singular = (k.display_name ?? k.id.split(":")[1] ?? k.id).toLowerCase();
+    return { id: k.id, singular, plural: (k.display_name_plural ?? pluralise(singular)).toLowerCase() };
+  });
+
+  const q = readQuestionOf(message, kinds);
+  if (!q) {
+    // A count of a VALUE inside a kind ("how many bambus", "any deltas",
+    // "which model do I have the most of") - the questions a model got wrong
+    // by reading a partial page. Counted by the same tool the model would
+    // call, so there is one implementation and this one never samples.
+    const counted = await countAnswer(message, wsApi, kindRows, kinds).catch(() => null);
+    if (counted) return { ...counted, from: "workspace" };
+    // Not a question about their records — but it may be one Cobb can answer
+    // from the guide ("what can you do?", "where do I scan?"). Those answers
+    // are lexical and already written down, so showing one before the message
+    // is sent costs nothing and saves a whole model call. Once sent, the
+    // keyword rules answer it themselves.
+    if (!opts.guide) return null;
+    const guide = await guideAnswerFor(db, message, opts.aiOn).catch(() => null);
+    return guide ? { answer: guide, from: "guide" } : null;
+  }
+
+  try {
+    if (q.kind === "count") {
+      const label = kinds.find((k) => k.id === q.entityKind);
+      // Counted by the tool the model and the MCP server count with: the
+      // kind's own total, asked once. Counting the rows of one list page
+      // said "200 parts" for a workspace of 3,006, because the page stops
+      // at 200 whatever limit is asked for (#7816).
+      const counted = await countRecords(wsApi, q.entityKind);
+      if (!counted) return null;
+      const n = counted.total;
+      // A record can stand for several identical things (one entry for five
+      // printers). "How many printers" is the things; the entries go beside.
+      if (counted.units !== undefined && counted.units !== n) {
+        const thingNoun = counted.units === 1 ? label?.singular : label?.plural;
+        if (thingNoun) return { answer: `${counted.units} ${thingNoun}`, detail: `in ${n} ${n === 1 ? "entry" : "entries"}`, from: "workspace" };
+      }
+      // No word for the thing, no answer. readQuestionOf only matches a noun
+      // it found in this workspace's own kinds, so this cannot normally
+      // happen — and inventing a generic noun to fill the gap would put a
+      // number next to a word the user never used.
+      const noun = n === 1 ? label?.singular : label?.plural;
+      if (!noun) return null;
+      return { answer: `${n} ${noun}`, detail: "in this workspace", from: "workspace" };
+    }
+    if (q.kind === "attention") {
+      const r = await wsApi.request("GET", "/attention");
+      const items = ((r.body as { items?: unknown[] }).items ?? []) as unknown[];
+      return {
+        answer: items.length === 0 ? "Nothing needs you" : `${items.length} thing${items.length === 1 ? "" : "s"} need you`,
+        detail: items.length ? "open the dashboard to see them" : "nothing waiting",
+        from: "workspace",
+      };
+    }
+    if (q.kind === "due") {
+      // The calendar every module feeds: maintenance, tasks, expiry dates and
+      // every deadline-shaped date field, the same events the dashboard's Up
+      // next reads (#8867).
+      const today = dayHere();
+      const r = await wsApi.request("GET", `/calendar/events?from=${today}&to=${addDays(today, q.days)}`);
+      const items = (r.body as { items?: DueEvent[] }).items;
+      if (!Array.isArray(items)) return null;
+      return { ...dueSaid(items, q, today), from: "workspace" };
+    }
+    if (q.kind === "where") {
+      const r = await wsApi.request(
+        "GET",
+        `/modules/core-search/search?q=${encodeURIComponent(q.name)}`,
+      );
+      const hits = ((r.body as { items?: SearchHit[] }).items ?? []).slice(0, 3);
+      if (hits.length === 0) return null;
+      // One hit answers; several is a list, not an answer, so it says how
+      // many rather than picking one. Either way the names it shows are the
+      // records it found, so the bubble can open them (mentions, as a chat
+      // reply carries them).
+      const found = hits.flatMap((h) => (h.kind && h.id && h.title ? [{ kind: h.kind, id: h.id, label: h.title }] : []));
+      const answer = whereSaid(q.name, hits);
+      const named = namedRecords(`${answer.answer}\n${answer.detail}`, found).named;
+      return { ...answer, ...(named.length ? { mentions: named } : {}), from: "workspace" };
+    }
+    // low-stock: the module owns the definition of "low", so ask it — and a
+    // workspace without inventory has no answer here rather than a zero,
+    // which would read as "nothing is low" when nothing is even tracked.
+    // `low_stock` is the filter the parts route reads; `low` (what this asked
+    // for until 2026-09-13) is no filter at all, so "what is low" counted
+    // every part in the workspace and named the first three of them.
+    const r = await wsApi.request("GET", "/modules/inventory/parts?low_stock=true&limit=50");
+    const items = (r.body as { items?: Array<{ id?: string; name?: string }> }).items;
+    if (!Array.isArray(items)) return null;
+    const shown = items.slice(0, 3);
+    const detail = shown.map((i) => i.name).filter(Boolean).join(", ") || "nothing to reorder";
+    // The parts it lists open from the bubble: a name with nothing to press
+    // was the whole complaint (see mentions.ts).
+    const low = shown.flatMap((i) => (i.id && i.name ? [{ kind: "inventory:part", id: i.id, label: i.name }] : []));
+    const named = namedRecords(detail, low).named;
+    return {
+      answer: items.length === 0 ? "Nothing is low" : `${items.length} low on stock`,
+      detail,
+      ...(named.length ? { mentions: named } : {}),
+      from: "workspace",
+    };
+  } catch {
+    // A read that fails is not an answer. Say nothing and let the AI have it.
+    return null;
+  }
+}
+
+/** One search hit as the where answer reads it. */
+export interface SearchHit {
+  kind?: string;
+  id?: string;
+  title?: string;
+  subtitle?: string;
+  /** Where it is, every step up ("Garage shelf, in Garage"), from placement. */
+  where?: string;
+}
+
+/** "Where is the table saw" answered with where it is. The hit's subtitle is
+ *  the record's own summary ("functional"), which answered a where-question
+ *  with the saw's state (#8865); its `where` is the place. */
+export function whereSaid(name: string, hits: readonly SearchHit[]): { answer: string; detail: string } {
+  if (hits.length === 1) {
+    const h = hits[0]!;
+    return { answer: h.title ?? name, detail: h.where ? `in ${h.where}` : "no place recorded for it yet" };
+  }
+  return {
+    answer: `${countOf(hits.length, "thing")} match "${name}"`,
+    detail: hits.map((h) => (h.title ? (h.where ? `${h.title} (in ${h.where})` : h.title) : null)).filter(Boolean).join(", "),
+  };
+}
+
 // POST /basics/peek — answer a question that is still being typed.
 //
 // A READ is safe to just do: nothing is written, nothing needs confirming, and
@@ -1229,130 +1405,11 @@ basicsRouter.post(
       res.json({ answer: null });
       return;
     }
-
-    const db = tenantDb(req);
-    const wsApi = chatWorkspaceApi(ctxOf(req));
-    const kindsRes = await wsApi.request("GET", "/entity-kinds");
-    const kindRows =
-      (kindsRes.body.items as Array<{ id: string; display_name?: string; display_name_plural?: string }> | undefined) ??
-      [];
-    const kinds: KindWords[] = kindRows.map((k) => {
-      const singular = (k.display_name ?? k.id.split(":")[1] ?? k.id).toLowerCase();
-      return { id: k.id, singular, plural: (k.display_name_plural ?? pluralise(singular)).toLowerCase() };
-    });
-
-    const q = readQuestionOf(body.data.message, kinds);
-    if (!q) {
-      // A count of a VALUE inside a kind ("how many bambus", "any deltas",
-      // "which model do I have the most of") - the questions a model got wrong
-      // by reading a partial page. Counted by the same tool the model would
-      // call, so there is one implementation and this one never samples.
-      const counted = await countAnswer(body.data.message, wsApi, kindRows, kinds).catch(() => null);
-      if (counted) {
-        res.json({ ...counted, from: "workspace" });
-        return;
-      }
-      // Not a question about their records — but it may be one Cobb can answer
-      // from the guide ("what can you do?", "where do I scan?"). Those answers
-      // are lexical and already written down, so showing one before the message
-      // is sent costs nothing and saves a whole model call.
-      const guide = await guideAnswerFor(db, body.data.message, !!body.data.ai_on).catch(() => null);
-      res.json(guide ? { answer: guide, from: "guide" } : { answer: null });
+    const found = await workspaceAnswer(req, body.data.message, { aiOn: !!body.data.ai_on, guide: true });
+    if (!found) {
+      res.json({ answer: null });
       return;
     }
-
-    try {
-      if (q.kind === "count") {
-        const label = kinds.find((k) => k.id === q.entityKind);
-        // Counted by the tool the model and the MCP server count with: the
-        // kind's own total, asked once. Counting the rows of one list page
-        // said "200 parts" for a workspace of 3,006, because the page stops
-        // at 200 whatever limit is asked for (#7816).
-        const counted = await countRecords(wsApi, q.entityKind);
-        if (!counted) {
-          res.json({ answer: null });
-          return;
-        }
-        const n = counted.total;
-        // A record can stand for several identical things (one entry for five
-        // printers). "How many printers" is the things; the entries go beside.
-        if (counted.units !== undefined && counted.units !== n) {
-          const thingNoun = counted.units === 1 ? label?.singular : label?.plural;
-          if (thingNoun) {
-            res.json({ answer: `${counted.units} ${thingNoun}`, detail: `in ${n} ${n === 1 ? "entry" : "entries"}` });
-            return;
-          }
-        }
-        // No word for the thing, no answer. readQuestionOf only matches a noun
-        // it found in this workspace's own kinds, so this cannot normally
-        // happen — and inventing a generic noun to fill the gap would put a
-        // number next to a word the user never used.
-        const noun = n === 1 ? label?.singular : label?.plural;
-        if (!noun) {
-          res.json({ answer: null });
-          return;
-        }
-        res.json({ answer: `${n} ${noun}`, detail: "in this workspace" });
-        return;
-      }
-      if (q.kind === "attention") {
-        const r = await wsApi.request("GET", "/attention");
-        const items = ((r.body as { items?: unknown[] }).items ?? []) as unknown[];
-        res.json({
-          answer: items.length === 0 ? "Nothing needs you" : `${items.length} thing${items.length === 1 ? "" : "s"} need you`,
-          detail: items.length ? "open the dashboard to see them" : "nothing waiting",
-        });
-        return;
-      }
-      if (q.kind === "where") {
-        const r = await wsApi.request(
-          "GET",
-          `/modules/core-search/search?q=${encodeURIComponent(q.name)}`,
-        );
-        const hits = ((r.body as { items?: Array<{ kind?: string; id?: string; title?: string; subtitle?: string }> }).items ?? []).slice(0, 3);
-        if (hits.length === 0) {
-          res.json({ answer: null });
-          return;
-        }
-        // One hit answers; several is a list, not an answer, so it says how
-        // many rather than picking one. Either way the names it shows are the
-        // records it found, so the bubble can open them (mentions, as a chat
-        // reply carries them).
-        const found = hits.flatMap((h) => (h.kind && h.id && h.title ? [{ kind: h.kind, id: h.id, label: h.title }] : []));
-        const answer =
-          hits.length === 1
-            ? { answer: hits[0]!.title ?? q.name, detail: hits[0]!.subtitle ?? "found in your workspace" }
-            : { answer: `${countOf(hits.length, "thing")} match "${q.name}"`, detail: hits.map((h) => h.title).filter(Boolean).join(", ") };
-        const named = namedRecords(`${answer.answer}\n${answer.detail}`, found).named;
-        res.json({ ...answer, ...(named.length ? { mentions: named } : {}) });
-        return;
-      }
-      // low-stock: the module owns the definition of "low", so ask it — and a
-      // workspace without inventory has no answer here rather than a zero,
-      // which would read as "nothing is low" when nothing is even tracked.
-      // `low_stock` is the filter the parts route reads; `low` (what this asked
-      // for until 2026-09-13) is no filter at all, so "what is low" counted
-      // every part in the workspace and named the first three of them.
-      const r = await wsApi.request("GET", "/modules/inventory/parts?low_stock=true&limit=50");
-      const items = (r.body as { items?: Array<{ id?: string; name?: string }> }).items;
-      if (!Array.isArray(items)) {
-        res.json({ answer: null });
-        return;
-      }
-      const shown = items.slice(0, 3);
-      const detail = shown.map((i) => i.name).filter(Boolean).join(", ") || "nothing to reorder";
-      // The parts it lists open from the bubble: a name with nothing to press
-      // was the whole complaint (see mentions.ts).
-      const low = shown.flatMap((i) => (i.id && i.name ? [{ kind: "inventory:part", id: i.id, label: i.name }] : []));
-      const named = namedRecords(detail, low).named;
-      res.json({
-        answer: items.length === 0 ? "Nothing is low" : `${items.length} low on stock`,
-        detail,
-        ...(named.length ? { mentions: named } : {}),
-      });
-    } catch {
-      // A read that fails is not an answer. Say nothing and let the AI have it.
-      res.json({ answer: null });
-    }
+    res.json(found.from === "guide" ? { answer: found.answer, from: found.from } : found);
   }),
 );

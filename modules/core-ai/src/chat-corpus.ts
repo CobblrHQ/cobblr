@@ -342,9 +342,12 @@ const RAW_CORPUS: CorpusCase[] = [
   ]),
   // A module's own create action counts as creating the record.
   // Three spools of a filament the workspace already stocks is a stock
-  // adjustment as much as a create; both are right.
-  ...ph("write", neverOffer, "action:inventory:create-item|action:inventory:adjust-stock|create:record", [
+  // adjustment as much as a create; both are right. With no AI, "add N
+  // <thing>" is the stock command (#8868): it offers +N only when one part
+  // fits the words, and otherwise says which fit or that none does.
+  ...ph("write", command, "action:inventory:create-item|action:inventory:adjust-stock|create:record", [
     "add 3 spools of black PLA",
+    "add 10 zip ties to the garage shelf",
   ]),
   ...ph("write", neverOffer, "update", [
     "mark the birdhouse task done",

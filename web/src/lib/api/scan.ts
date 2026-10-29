@@ -4,6 +4,7 @@ import type { ProviderReason } from "@cobblr/platform-contract/provider-reason";
 import type { ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import type { SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import { filed, idsThatFitAUrl, lookupInBody, request, upload } from "./client";
+import { EDITED_FROM_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
 import type { PersonalDocumentRead } from "@cobblr/platform-contract/personal-documents";
 import type { StationActionRun, StationLookup, StationMove, StationRecordNow, StationSettings, StationStockOp } from "@cobblr/platform-contract/station-screen";
 import type { ScanCountReason } from "@cobblr/platform-contract/scan-count";
@@ -339,6 +340,20 @@ export interface ScanCatalogCandidate {
   catalog: string;
   external_id: string;
   basis: "part-number" | "name" | "ai";
+}
+
+/** The row a filing is made from, as the surface last read it (#8849). A
+ *  filing that names the row's name or count says what they were, so one
+ *  made from a card someone else's edit never reached is refused with who
+ *  changed what, never written over their change. */
+export type ScanShown = Pick<ScanInboxItem, "id" | "suggested_name" | "quantity">;
+
+/** The header a filing carries: the shown values of the fields it writes. */
+export function filedFromHeader(shown: ScanShown, body: { name?: string; quantity?: number }): Record<string, string> | undefined {
+  const opened: Record<string, unknown> = {};
+  if (body.name !== undefined) opened.name = shown.suggested_name ?? null;
+  if (body.quantity !== undefined) opened.quantity = shown.quantity ?? null;
+  return Object.keys(opened).length ? { [EDITED_FROM_HEADER]: encodeEditedFrom(opened) } : undefined;
 }
 
 export interface ScanInboxItem {
@@ -1260,7 +1275,7 @@ export const scanApi = {
     ),
   confirmScanItem: (
     slug: string,
-    id: string,
+    shown: ScanShown,
     body: {
       target_module?: string;
       target_kind?: string;
@@ -1287,11 +1302,14 @@ export const scanApi = {
       ran_out?: boolean;
       /** A catalog entry picked at confirm (#6888): filed bound to it. */
       catalog_entry_id?: string;
+      /** The rows filed together in this selection: a record one of them
+       *  just made is never asked about as "you already have it". */
+      filed_with?: string[];
     },
   ) =>
     filed(
       slug,
-      request<{ item: ScanInboxItem; created: { id: string }; ran_out?: ScanRanOutAnswer }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm`, body),
+      request<{ item: ScanInboxItem; created: { id: string }; ran_out?: ScanRanOutAnswer }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${shown.id}/confirm`, body, filedFromHeader(shown, body)),
       (r) => ({ filed: [{ item: r.item, createdId: r.created?.id ?? null }] }),
     ),
   /** Paired-scan: the scanned product IS the active bin itself — write the
@@ -1352,6 +1370,14 @@ export const scanApi = {
     filed(
       slug,
       request<{ item: ScanInboxItem; entry_id: string; record: { kind: string; id: string; instance: string | null; title: string } }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/broken`, note ? { note } : {}),
+      (r) => ({ filed: [{ item: r.item, createdId: null }] }),
+    ),
+  /** It came in a delivery damaged (#8854): settled without adding it to
+   *  stock, marked for the owner. Undo is unconfirmScanItem. */
+  markScanArrivedDamaged: (slug: string, id: string, note?: string | null) =>
+    filed(
+      slug,
+      request<{ item: ScanInboxItem }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/arrived-damaged`, note ? { note } : {}),
       (r) => ({ filed: [{ item: r.item, createdId: null }] }),
     ),
   unconfirmScanItem: (slug: string, id: string) =>

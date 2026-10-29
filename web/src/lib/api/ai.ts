@@ -9,7 +9,9 @@ import type { AiProviderDef } from "./integrations";
 
 export interface AiStatus {
   available: boolean;
-  reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider" | "workspace_disabled";
+  reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider" | "workspace_disabled" | "not_shared";
+  /** With not_shared: whose own connection the AI here is (#8855). */
+  kept_by?: string;
   /** When available, where the call would be served from — drives honest copy. */
   source?: "personal" | "workspace" | "managed";
   /** A SEPARATE axis: this person's photo or barcode can be identified here,
@@ -108,6 +110,9 @@ export interface BasicAnswer {
   /** Present when a learned command fits: an offer to RUN it, which the chat
    *  turns into a confirm rather than doing on its own. */
   command?: BasicCommandOffer;
+  /** The records a workspace answer names ("where is the table saw"), so the
+   *  reply opens them as the bubble did. */
+  mentions?: Array<{ kind: string; id: string; label: string; href?: string; open_label?: string }>;
   /** Present when a control word (yes / again / undo / stop) resolved against
    *  the prior turn: the act the chat should execute through the ordinary
    *  endpoints. See modules/core-ai/src/control-context.ts. */

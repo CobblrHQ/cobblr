@@ -31,6 +31,9 @@ import {
   STATION_CAMERAS,
   type StationAction,
   type StationCamera as StationCameraSetting,
+  type StationCrew,
+  type StationCrewMember,
+  type StationCrewPick,
   type StationLens,
   type StationLookup,
   type StationRecord,
@@ -61,7 +64,7 @@ import {
   stationScanOf,
   type QueuedMove,
 } from "../lib/station-screen";
-import { lastStation, readStationToken, rememberStation, saveStationToken, subscribeStationTokenRefused, readStationQrToken, saveStationQrToken, setStationTokenOverride } from "../lib/station-token";
+import { lastStation, readStationToken, rememberStation, saveStationToken, subscribeStationTokenRefused, readStationQrToken, saveStationQrToken, setStationCrewToken, setStationTokenOverride, subscribeStationCrewRefused } from "../lib/station-token";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** A request that never reached the server (no network), as opposed to one
@@ -203,7 +206,188 @@ function DeviceStation({ slug, address, token, kiosk, onForget }: { slug: string
     return () => setStationTokenOverride(null);
   }, [token]);
   if (!ready) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
-  return <StationLoader slug={slug} address={address} kiosk={kiosk} device onForget={onForget} />;
+  return (
+    <CrewGate slug={slug} address={address} deviceToken={token} kiosk={kiosk}>
+      {(worker) => <StationLoader slug={slug} address={address} kiosk={kiosk} device worker={worker} onForget={onForget} />}
+    </CrewGate>
+  );
+}
+
+/** Who is acting at the station, shown in its header with a way to hand over. */
+interface Worker {
+  name: string;
+  onSwitch: () => void;
+  /** Their changes still waiting to send: the hand-over waits for them, so they go out in this person's name. */
+  ending: boolean;
+}
+
+/** A station a team shares asks "Who's working?" (#8845). Picking a member
+ *  makes their own token the station's, so every row it writes is theirs and
+ *  their role is what the server checks. It goes back to Who's working?
+ *  after the station's quiet minutes, when the screen wakes from sleep, and
+ *  when someone presses Switch, but never while that person's changes are
+ *  still waiting to send. A station that names nobody acts as before. */
+function CrewGate({ slug, address, deviceToken, kiosk, children }: { slug: string; address: string; deviceToken: string; kiosk: boolean; children: (worker: Worker | null) => ReactNode }) {
+  // The last crew this tablet heard of is kept on it: a tablet that cannot
+  // reach the server still asks for the right names, and never writes as
+  // its approver because the answer did not arrive.
+  const crew = useQuery({ queryKey: ["station-crew", slug, address, "screen"], queryFn: () => crewOf(slug, address), retry: false, refetchInterval: 60_000 });
+  const [pick, setPick] = useState<StationCrewPick | null>(null);
+  const [ending, setEnding] = useState(false);
+  const touched = useRef(Date.now());
+
+  const drop = useCallback(() => {
+    setStationTokenOverride(deviceToken);
+    setStationCrewToken(null);
+    setPick(null);
+    setEnding(false);
+  }, [deviceToken]);
+
+  const end = useCallback(() => {
+    if (!pick) return;
+    if (loadQueue(slug, address, Date.now()).length > 0) {
+      setEnding(true);
+      return;
+    }
+    void api.endStationPick(slug, address).catch(() => undefined).finally(drop);
+  }, [pick, slug, address, drop]);
+
+  // A hand-over that waited for changes to send goes ahead once they have.
+  useEffect(() => {
+    if (!ending) return;
+    const t = window.setInterval(end, 2_000);
+    return () => window.clearInterval(t);
+  }, [ending, end]);
+
+  useEffect(() => subscribeStationCrewRefused(drop), [drop]);
+
+  useEffect(() => {
+    if (!pick) return;
+    const touch = () => void (touched.current = Date.now());
+    const minutes = crew.data?.idle_minutes ?? 10;
+    const idle = window.setInterval(() => {
+      if (Date.now() - touched.current > minutes * 60_000) end();
+    }, 15_000);
+    const woke = () => {
+      if (document.visibilityState === "visible") end();
+    };
+    window.addEventListener("pointerdown", touch, true);
+    window.addEventListener("keydown", touch, true);
+    document.addEventListener("visibilitychange", woke);
+    return () => {
+      window.clearInterval(idle);
+      window.removeEventListener("pointerdown", touch, true);
+      window.removeEventListener("keydown", touch, true);
+      document.removeEventListener("visibilitychange", woke);
+    };
+  }, [pick, crew.data?.idle_minutes, end]);
+
+  if (crew.isPending) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
+  const members = crew.data?.members ?? [];
+  if (!members.length) return <>{children(null)}</>;
+  if (!pick) {
+    return (
+      <WhoIsWorking
+        slug={slug}
+        address={address}
+        kiosk={kiosk}
+        crew={crew.data!}
+        onPicked={(p) => {
+          touched.current = Date.now();
+          setStationTokenOverride(p.token);
+          setStationCrewToken(p.token);
+          setPick(p);
+        }}
+      />
+    );
+  }
+  return <>{children({ name: pick.name, onSwitch: end, ending })}</>;
+}
+
+const crewKey = (slug: string, address: string) => `cobblr.station.crew.${slug}.${address}`;
+
+async function crewOf(slug: string, address: string): Promise<StationCrew> {
+  try {
+    const crew = await api.stationCrew(slug, address);
+    try {
+      localStorage.setItem(crewKey(slug, address), JSON.stringify(crew));
+    } catch {
+      // Nothing kept: offline, this tablet acts as before until it hears again.
+    }
+    return crew;
+  } catch (e) {
+    try {
+      const kept = JSON.parse(localStorage.getItem(crewKey(slug, address)) ?? "null") as StationCrew | null;
+      if (kept && Array.isArray(kept.members)) return kept;
+    } catch {
+      // Unreadable: as if nothing were kept.
+    }
+    if (e instanceof ApiError) throw e;
+    return { address, members: [], pin_required: false, idle_minutes: 10 };
+  }
+}
+
+/** The station's first screen when a team shares it: each member's name as a
+ *  big button, and their four-digit PIN when the station asks for one. */
+function WhoIsWorking({ slug, address, kiosk, crew, onPicked }: { slug: string; address: string; kiosk: boolean; crew: StationCrew; onPicked: (p: StationCrewPick) => void }) {
+  const [asking, setAsking] = useState<StationCrewMember | null>(null);
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const choose = async (m: StationCrewMember, typed?: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      onPicked(await api.pickStationMember(slug, address, m.user_id, typed));
+    } catch (e) {
+      setPin("");
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const press = (k: string) => {
+    if (!asking) return;
+    const next = k === "back" ? pin.slice(0, -1) : (pin + k).slice(0, 4);
+    setPin(next);
+    if (next.length === 4) void choose(asking, next);
+  };
+  return (
+    <Shell kiosk={kiosk} large>
+      <main id={MAIN_ID} tabIndex={-1} className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-6 px-4 pb-[calc(var(--inset-bottom)+24px)] pt-[calc(var(--top-edge)+24px)] outline-none">
+        <h1 className="text-center text-4xl font-semibold">Who's working?</h1>
+        <p className="text-center text-lg text-muted">Tap your name. What you do here is recorded to you.</p>
+        {error && <p role="alert" className="text-center text-lg font-medium text-red-700 dark:text-red-300">{error}</p>}
+        {asking ? (
+          <div className="mx-auto flex w-full max-w-sm flex-col gap-4">
+            <div className="text-center text-2xl font-semibold">{asking.name}, your PIN</div>
+            <div className="rounded-xl bg-black/5 py-4 text-center text-5xl font-bold tracking-[0.5em] dark:bg-white/10" data-testid="station-crew-pin" aria-label={`${pin.length} of 4 digits`}>
+              {"•".repeat(pin.length) || "\u00a0"}
+            </div>
+            <div className="grid grid-cols-3 gap-[12px]">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "cancel", "0", "back"].map((k) =>
+                k === "cancel" ? (
+                  <BigButton key={k} tone="plain" onClick={() => { setAsking(null); setPin(""); setError(null); }}>Back</BigButton>
+                ) : (
+                  <BigButton key={k} tone="plain" disabled={busy} onClick={() => press(k)} label={k === "back" ? "Delete a digit" : undefined}>
+                    {k === "back" ? "⌫" : k}
+                  </BigButton>
+                ),
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-[16px] sm:grid-cols-3">
+            {crew.members.map((m) => (
+              <BigButton key={m.user_id} tone="plain" disabled={busy} onClick={() => (crew.pin_required ? setAsking(m) : void choose(m))}>
+                {m.name}
+              </BigButton>
+            ))}
+          </div>
+        )}
+      </main>
+    </Shell>
+  );
 }
 
 /** No device token: a signed-in member opens it as themselves; anyone else
@@ -318,7 +502,7 @@ function ApprovalView({ slug, address, onApproved }: { slug: string; address: st
 
 // ── The station ────────────────────────────────────────────────────────────
 
-function StationLoader({ slug, address, kiosk, device, qr, personRole, onForget }: { slug: string; address: string; kiosk: boolean; device: boolean; qr?: boolean; personRole?: OrgMembership["role"]; onForget: () => void }) {
+function StationLoader({ slug, address, kiosk, device, qr, personRole, worker, onForget }: { slug: string; address: string; kiosk: boolean; device: boolean; qr?: boolean; personRole?: OrgMembership["role"]; worker?: Worker | null; onForget: () => void }) {
   const [stopped, setStopped] = useState(false);
   useEffect(() => {
     if (!device) return;
@@ -347,7 +531,7 @@ function StationLoader({ slug, address, kiosk, device, qr, personRole, onForget 
       {/* The workspace's own platform context: the inbox card a new thing
           shows needs it, and the station is drawn outside the shell. */}
       <WorkspacePlatformWeb orgSlug={slug} role={org.role} appMode={false}>
-        <Station slug={slug} address={address} kiosk={kiosk} device={device} qr={qr} label={screen.data.label} settings={screen.data.settings} hasPin={screen.data.has_pin} onForget={onForget} />
+        <Station slug={slug} address={address} kiosk={kiosk} device={device} qr={qr} label={screen.data.label} settings={screen.data.settings} hasPin={screen.data.has_pin} worker={worker ?? null} onForget={onForget} />
       </WorkspacePlatformWeb>
     </FixedActiveOrgProvider>
   );
@@ -387,7 +571,7 @@ function waitingLast(q: QueuedMove[]): LastMove | null {
   return m ? { request_id: m.request_id, words: moveWords(m.op, m.value), status: "waiting", at: m.at, of: { kind: m.kind, id: m.entity_id, title: m.title } } : null;
 }
 
-function Station(props: { slug: string; address: string; kiosk: boolean; device: boolean; qr?: boolean; label: string; settings: StationSettings; hasPin: boolean; onForget: () => void }) {
+function Station(props: { slug: string; address: string; kiosk: boolean; device: boolean; qr?: boolean; label: string; settings: StationSettings; hasPin: boolean; worker: Worker | null; onForget: () => void }) {
   const { slug, address, settings } = props;
   const qc = useQueryClient();
   const [view, setView] = useState<View>({ kind: "ready" });
@@ -805,6 +989,20 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
             </div>
           </div>
           <div className="flex max-w-full flex-wrap items-center gap-[8px]">
+            {props.worker && (
+              // Who is acting, on every screen of the station (#8845).
+              <span className="inline-flex max-w-full items-center gap-[8px] rounded-full bg-cobble-50 pl-[12px] text-base font-medium text-content dark:bg-slate-800 dark:text-mortar-100" data-testid="station-worker">
+                <span className="truncate">{props.worker.name} is working</span>
+                <button
+                  type="button"
+                  onClick={props.worker.onSwitch}
+                  disabled={props.worker.ending}
+                  className="min-h-[44px] rounded-full border border-line bg-surface px-[14px] text-base font-semibold hover:border-cobble-400 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900"
+                >
+                  {props.worker.ending ? "Sending their changes…" : "Switch"}
+                </button>
+              </span>
+            )}
             {queue.length > 0 && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200" data-testid="station-waiting">
                 <WifiOff size={14} /> {queue.length} waiting to sync

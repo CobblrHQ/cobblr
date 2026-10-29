@@ -23,7 +23,9 @@ import { useTheme } from "../theme/ThemeContext";
 import { useThemeToggle } from "../theme/useThemeToggle";
 import { UpdateBadge } from "./UpdateBadge";
 const GrowModal = lazy(() => import("./GrowModal").then((m) => ({ default: m.GrowModal })));
-import { PairPhoneButton } from "./PairPhoneButton";
+import { deferredPiece } from "../lib/lazy-preload";
+// Drawn only in the open menu (#4945).
+const PairPhoneButton = deferredPiece(() => import("./PairPhoneButton").then((m) => ({ default: m.PairPhoneButton })));
 import { api, isFocused, setFocused } from "../lib/api";
 import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";

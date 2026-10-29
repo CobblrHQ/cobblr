@@ -311,6 +311,9 @@ function stationScopeAllows(key: string, method: string, rel: string): boolean {
   const address = STATION_SCOPE_RE.exec(key)?.[1];
   if (!address) return false;
   if (new RegExp(`^${ORG}/modules/core-scan/stations/screens/${address}(/[a-z0-9-]+)*$`).test(rel)) return true;
+  // Who's working at this station (#8845): its crew, and the pick and its end.
+  if (method === "GET" && new RegExp(`^${ORG}/station-devices/crew/${address}$`).test(rel)) return true;
+  if ((method === "POST" || method === "DELETE") && new RegExp(`^${ORG}/station-devices/crew/${address}/pick$`).test(rel)) return true;
   return STATION_SHARED.some(([m, re]) => m === method && re.test(rel));
 }
 

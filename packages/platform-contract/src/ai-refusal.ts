@@ -19,6 +19,9 @@ export const AI_REFUSAL_CODES = [
   "workspace_disabled",
   /** A provider exists but the plan's allowance refused the call. */
   "not_entitled",
+  /** Nothing serves this person, and the AI routed here is someone else's
+   *  own connection, which answers only their calls (#8855). */
+  "not_shared",
   /** Replay mode with nothing to replay: a call that may not spend. */
   "replay_only",
   /** The provider was asked and failed. */
@@ -111,6 +114,8 @@ export function classifyAiFailure(err: unknown, opts: { hadUser: boolean }): AiF
         return opts.hadUser ? "no-provider" : "background";
       case "not_entitled":
         return "not-entitled";
+      case "not_shared":
+        return opts.hadUser ? "not-shared" : "background";
       case "provider_error":
         return "provider-error";
     }

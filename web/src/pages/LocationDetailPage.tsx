@@ -25,7 +25,8 @@ import { FloorPlan } from "../components/FloorPlan";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { DuplicatePlaceNotice, duplicatePlaceOf } from "../components/DuplicatePlaceNotice";
 import { hasOwnLayout, readRect } from "../lib/floorplanGeometry";
-import { pinnedFirst } from "../lib/placeItems";
+import { childrenOf, pinnedFirst } from "../lib/placeItems";
+import { placeMoveUndo } from "../lib/place-move-undo";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { deleteDialogMessage, deletedSentence, restoredSentence } from "../lib/placeDelete";
@@ -80,7 +81,7 @@ export function LocationDetailPage() {
 
   // Children of this location.
   const children = useMemo(() => {
-    return (allLocations.data?.items ?? []).filter((l) => l.parent_id === id);
+    return childrenOf(id ?? "", allLocations.data?.items ?? []);
   }, [allLocations.data, id]);
 
   // Every kind this workspace has that can carry a location, from the registry.
@@ -205,8 +206,24 @@ export function LocationDetailPage() {
 
   if (!id) return <Navigate to="/locations" replace />;
   if (location.isLoading || asking) return <div className="text-sm text-faint">loading…</div>;
-  if (location.error)
-    return <div className="text-sm text-ember-500">{(location.error as Error).message}</div>;
+  if (location.error) {
+    // An old label for a place that is gone says what happened to it, and
+    // where its things went when it was merged into another (#8884).
+    const gone = location.error instanceof ApiError && location.error.code === "place_deleted"
+      ? (location.error.details as { merged_into?: { kind: string; id: string; name: string } | null } | undefined)
+      : undefined;
+    if (!gone) return <div className="text-sm text-ember-500">{(location.error as Error).message}</div>;
+    const into = gone.merged_into;
+    return (
+      <div className="space-y-2 text-sm text-content">
+        <p>{(location.error as Error).message}</p>
+        <p className="flex flex-wrap gap-x-4 gap-y-1">
+          {into?.kind === "core-locations:location" && <Link className="underline" to={`/locations/${into.id}`}>Open {into.name}</Link>}
+          <Link className="underline" to="/configuration/recently-deleted?kind=core-locations:location">Recently deleted</Link>
+        </p>
+      </div>
+    );
+  }
   if (!location.data) return null;
   const l = location.data;
 
@@ -637,11 +654,28 @@ function EditLocationModal({
       });
       return api.updateLocation(activeSlug, location.id, edit);
     },
-    onSuccess: () => {
-      toast.success("Location updated.");
-      void qc.invalidateQueries({ queryKey: ["location", activeSlug, location.id] });
-      void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+    onSuccess: (saved) => {
+      const refresh = () => {
+        void qc.invalidateQueries({ queryKey: ["location", activeSlug, location.id] });
+        void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
+        void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+      };
+      refresh();
+      const moved = placeMoveUndo(location, saved, new Map((places.data?.items ?? []).map((p) => [p.id, p.name])));
+      if (moved) {
+        toast.action(moved.sentence, {
+          actionLabel: "Undo",
+          onAction: async () => {
+            try {
+              await api.updateLocation(activeSlug, location.id, moved.back);
+              refresh();
+              toast.success(`${saved.name} is back where it was.`);
+            } catch (e) {
+              toast.error(e instanceof ApiError ? e.message : String(e));
+            }
+          },
+        });
+      } else toast.success("Location updated.");
       onClose();
     },
     onError: (e) => {

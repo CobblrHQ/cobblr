@@ -10,6 +10,8 @@ interface InvoiceOrder {
   paid?: boolean;
   metadata?: Record<string, unknown>;
   availability?: Array<Pick<LineAvailability, "line_id" | "unit">>;
+  /** What came back and was refunded (returns.ts orderMoney), so the file nets them: the invoice itself stays as issued. */
+  money?: { refunded: number; net_total: number };
   items: Array<{ id?: string; description: string | null; qty: string | number; unit_price: string | number | null; metadata?: Record<string, unknown> }>;
 }
 
@@ -32,7 +34,7 @@ function invoice(order: InvoiceOrder, fallbackCurrency: string) {
     return { description: it.description || "Item", qty, unit: it.id ? units.get(it.id)?.trim() || "" : "", price, total: price === null ? null : roundMoneyAmount(qty * price, currency) };
   });
   const sum = orderTotal(order.items, currency);
-  return { unpriced: sum.unpriced, total: sum.complete ? sum.amount : null, reference: order.order_number || order.id, customer: order.customer_name || "Not recorded", date: order.order_date?.slice(0, 10) || "Not recorded", currency, payment, lines };
+  return { unpriced: sum.unpriced, total: sum.complete ? sum.amount : null, reference: order.order_number || order.id, customer: order.customer_name || "Not recorded", date: order.order_date?.slice(0, 10) || "Not recorded", dateOrBlank: order.order_date?.slice(0, 10) || "", currency, payment, lines };
 }
 
 const escape = (value: unknown) => String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -61,9 +63,12 @@ ${d.total === null ? `<p>${d.unpriced === 1 ? "1 line has" : `${d.unpriced} line
 
 export function invoiceCsv(order: InvoiceOrder, fallbackCurrency: string): string {
   const d = invoice(order, fallbackCurrency);
-  const common = [d.reference, d.customer, d.date, d.payment];
-  return toCsv(["Order reference", "Customer", "Order date", "Payment status", "Line", "Description", "Quantity", "Unit", "Unit price", "Line total", "Currency", "Order total"],
-    d.lines.length ? d.lines.map((it, i) => [...common, i + 1, it.description, it.qty, it.unit, it.price, it.total, d.currency, d.total]) : [[...common, null, null, null, null, null, null, d.currency, d.total]]);
+  // A date column holds a date or nothing: the page says "Not recorded", a file an accounting tool reads does not.
+  const common = [d.reference, d.customer, d.dateOrBlank, d.payment];
+  // Refunded and the net are the order's, repeated per line like its total: count them once per order (#8790).
+  const nets = [order.money?.refunded ?? 0, order.money ? order.money.net_total : d.total];
+  return toCsv(["Order reference", "Customer", "Order date", "Payment status", "Line", "Description", "Quantity", "Unit", "Unit price", "Line total", "Currency", "Order total", "Refunded", "Net total"],
+    d.lines.length ? d.lines.map((it, i) => [...common, i + 1, it.description, it.qty, it.unit, it.price, it.total, d.currency, d.total, ...nets]) : [[...common, null, null, null, null, null, null, d.currency, d.total, ...nets]]);
 }
 
 export interface DocumentOptions {

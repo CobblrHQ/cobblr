@@ -183,8 +183,8 @@ export function DriverPackages({ slug, hasBridge }: { slug: string; hasBridge: b
           {/* The hash is not paperwork: it is what pins the version, so a source
               that changes under you is refused rather than installed. */}
           <div className="text-[10px] text-faint">
-            The hash pins this exact build. If the source changes without the version changing, {productName()}
-            refuses it instead of installing it.
+            The hash pins this exact build. If the source changes without the version changing,
+            {productName()} refuses it instead of installing it.
           </div>
           <div className="flex items-center gap-2">
             <button

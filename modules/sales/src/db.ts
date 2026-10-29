@@ -35,6 +35,10 @@ export interface SalesOrdersTable {
   status: SalesOrderStatus;
   paid: Generated<boolean>;
   paid_at: ColumnType<Date | null, undefined, undefined>;
+  /** When the order began holding its lines' stock, or null (#8838). */
+  held_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  /** The day the hold lets go, or null for no end. */
+  hold_until: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   auto_closed_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
   auto_close_undone: Generated<boolean>;
   order_date: ColumnType<string | null, string | null | undefined, string | null | undefined>;
@@ -78,13 +82,50 @@ export interface SalesOrderItemsTable {
   qty: ColumnType<string, number, number>;
   /** How many of this line have left stock so far; the rest is still owed. */
   qty_fulfilled: ColumnType<string, string | undefined, string | undefined>;
+  /** How many of the fulfilled quantity the customer has sent back (#8790); never more than was fulfilled. */
+  qty_returned: ColumnType<string, string | undefined, string | undefined>;
   unit_price: ColumnType<string | null, number | null | undefined, number | null | undefined>;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
 
-export type SalesHistoryKind = "status" | "stock" | "shipped" | "email" | "work_order" | "line" | "delivered";
+/** A customer's return and/or the refund for it (#8790). */
+export interface SalesReturnsTable {
+  id: Generated<string>;
+  order_id: string;
+  line_id: string | null;
+  qty: ColumnType<string | null, number | null | undefined, number | null | undefined>;
+  /** How many actually went back on the shelf (a line with no part puts none). */
+  restocked: ColumnType<string, number | undefined, number | undefined>;
+  refund_amount: ColumnType<string | null, number | null | undefined, number | null | undefined>;
+  reason: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+/** Stock a draft order holds for its customer, per line (#8838). */
+export interface SalesHoldsTable {
+  id: Generated<string>;
+  order_id: string;
+  line_id: string;
+  part_id: string;
+  qty: ColumnType<string, number, number>;
+  created_at: Generated<Date>;
+}
+
+/** One payment on an order (#8838). */
+export interface SalesPaymentsTable {
+  id: Generated<string>;
+  order_id: string;
+  amount: ColumnType<string, number, number>;
+  method: string;
+  paid_on: ColumnType<string, string | undefined, string | undefined>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+export type SalesHistoryKind = "status" | "stock" | "shipped" | "email" | "work_order" | "line" | "delivered" | "return" | "payment" | "hold";
 
 export interface SalesOrderHistoryTable {
   id: Generated<string>;
@@ -115,6 +156,9 @@ export interface SalesDB {
   sales_customers: SalesCustomersTable;
   sales_orders: SalesOrdersTable;
   sales_order_items: SalesOrderItemsTable;
+  sales_returns: SalesReturnsTable;
+  sales_payments: SalesPaymentsTable;
+  sales_holds: SalesHoldsTable;
   sales_order_history: SalesOrderHistoryTable;
   sales_settings: SalesSettingsTable;
 }

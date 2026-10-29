@@ -89,6 +89,7 @@ import { ScanScopeChip } from "../components/ScanScopeChip";
 import { setScanScope } from "../lib/scanScope";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { clearScanSession, isSessionFresh, readScanSession, writeScanSession, type ScanSession } from "../lib/scanSession";
+import { useOpenOwnRoute } from "../lib/openOwnRoute";
 
 // BarcodeDetector type — not in lib.dom.d.ts as of TS 5.7. Local shim.
 interface BarcodeDetectorCtor {
@@ -142,6 +143,7 @@ export function ScanCameraPage() {
   // Preserve the instance-scan target (?into=…) so the modal + return keep it.
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
+  const openOwnRoute = useOpenOwnRoute();
   const location = useLocation();
   const backToScan = `/scan${params.toString() ? `?${params}` : ""}`;
 
@@ -1250,7 +1252,7 @@ export function ScanCameraPage() {
       // link): open it, as the phone's own camera would. Only a link that is
       // not a page here (the site, the sandbox, the API) is ignored above.
       if (payload.kind === "own-route") {
-        navigate(payload.path);
+        openOwnRoute(payload.route);
         return;
       }
 
@@ -2939,7 +2941,7 @@ export function ScanCameraPage() {
           <NfcScanButton
             ownOrigins={scanOrigins}
             onCobblrQr={(token) => routeQr(token, { freeze: phaseRef.current === "scanning" })}
-            onOpenPath={(path) => navigate(path)}
+            onOpenRoute={openOwnRoute}
           />
         )}
         {!(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
@@ -2951,7 +2953,7 @@ export function ScanCameraPage() {
               setPhase("result");
             }}
             onCobblrQr={(token) => routeQr(token, { freeze: phaseRef.current === "scanning" })}
-            onOpenPath={(path) => navigate(path)}
+            onOpenRoute={openOwnRoute}
           />
         )}
 

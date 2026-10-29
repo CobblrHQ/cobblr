@@ -40,19 +40,22 @@ interface Props {
 export function BulkActionBar({ count, actions, onClear, onAskCobb, records }: Props) {
   const { cobbIcon: Cobb } = usePlatformWeb();
   const actionsRef = useRef<HTMLDivElement>(null);
-  const iconsOnly = useIconsBesidePanel(actionsRef, count > 0);
+  const { iconsOnly, besidePanel } = useIconsBesidePanel(actionsRef, count > 0);
   const [sendOpen, setSendOpen] = useState(false);
   if (count === 0 && !sendOpen) return null;
   return (
-    /* ONE line, always, clear of the floating chat button, and the CLOSE never
-       moves.
+    /* Clear of the floating chat button, and the CLOSE never moves.
        On a phone this grew to nearly the full width and every label broke in
        half ("2 / selected", "Print / labels", "Ask / Cobb"), and the right end
-       ran under the chat bubble in the corner.
-       The scroll is on the MIDDLE only. Wrapping the whole bar in overflow-x
-       put the X inside the scrolling region, so on a narrow screen the one
-       control that gets you out could scroll off the edge. The count and the X
-       are pinned; only the actions between them slide. */
+       ran under the chat bubble in the corner. Each action keeps its words on
+       one line; the actions wrap BETWEEN each other onto more rows.
+       They used to slide sideways in one row, with no scrollbar: on a phone
+       that held 735 px of buttons in 265 px, and Move to, Print labels and
+       Delete sat past the screen's edge with nothing to say they were there
+       (#8880). Only beside a desk's side panel do they keep to one row, where
+       they turn to icons when the words do not fit (#4531).
+       The count and the X are pinned outside the actions, so the one control
+       that gets you out is never pushed off. */
     <FloatingChrome
       style={count === 0 ? {display: "none"} : undefined}
       anchor="corner"
@@ -62,7 +65,7 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb, records }: P
       // one), centred in what the panel leaves; it used to hide with every
       // overlay, so the selection seemed to vanish (#4531).
       yields="covering"
-      className={(iconsOnly ? "fc-bar-icons " : "") + "left-[calc((100vw-var(--side-panel-w,0px))/2)] -translate-x-1/2 z-50 sm:[--bulk-bar-lift:1rem] flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg whitespace-nowrap max-w-[calc(100vw-var(--side-panel-w,0px)-1.5rem)]"}
+      className={(iconsOnly ? "fc-bar-icons " : "") + "left-[calc((100vw-var(--side-panel-w,0px))/2)] -translate-x-1/2 z-50 sm:[--bulk-bar-lift:1rem] flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-3xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg whitespace-nowrap w-max max-w-[calc(100vw-var(--side-panel-w,0px)-1.5rem)]"}
       data-icons-only={iconsOnly || undefined}
     >
       {/* Just the number on a phone. "2 selected" spends a third of the bar
@@ -73,12 +76,13 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb, records }: P
         <span className="hidden sm:inline fc-bar-words"> selected</span>
       </span>
       <span className="shrink-0 text-faint dark:text-slate-600">·</span>
-      {/* The actions keep their size and the middle scrolls: shrunk to a
-          finger's 44 px, "Send 2 to…", "Set field…" and "What's still here?"
-          drew their words over their neighbours on a phone (#7601). */}
-      <div ref={actionsRef} className="flex min-w-0 items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar [&>*]:shrink-0">
-        {records && <SendRecords kind={records.kind} ids={records.ids} onDone={onClear} onOpenChange={setSendOpen} />}
+      {/* The actions keep their size: shrunk to a finger's 44 px, "Send 2
+          to…", "Set field…" and "What's still here?" drew their words over
+          their neighbours on a phone (#7601). The page's own actions come
+          first, so what a person ticked rows for leads the bar. */}
+      <div ref={actionsRef} data-testid="bulk-actions" className={"flex min-w-0 items-center gap-1 sm:gap-2 [&>*]:shrink-0 " + (besidePanel ? "overflow-x-auto no-scrollbar" : "flex-wrap")}>
         {actions}
+        {records && <SendRecords kind={records.kind} ids={records.ids} onDone={onClear} onOpenChange={setSendOpen} />}
         {onAskCobb && (
           <button
             type="button"
@@ -122,8 +126,9 @@ const NAMED_HERE = "data-fc-named";
  *  so the bar does not flicker between the two at the edge. Each icon action
  *  is named while its words are hidden (aria-label, and a tooltip when it has
  *  none of its own), and those names leave again with the icons. */
-function useIconsBesidePanel(ref: RefObject<HTMLDivElement | null>, shown: boolean): boolean {
+function useIconsBesidePanel(ref: RefObject<HTMLDivElement | null>, shown: boolean): { iconsOnly: boolean; besidePanel: boolean } {
   const [iconsOnly, setIconsOnly] = useState(false);
+  const [besidePanel, setBesidePanel] = useState(false);
   const now = useRef(false);
   const needs = useRef(0);
   const check = useRef(() => {});
@@ -132,6 +137,7 @@ function useIconsBesidePanel(ref: RefObject<HTMLDivElement | null>, shown: boole
     const bar = el?.parentElement;
     if (!el || !bar) return;
     const panel = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side-panel-w")) || 0;
+    setBesidePanel(panel > 0);
     let next: boolean;
     if (panel <= 0) next = false;
     else if (!now.current) {
@@ -189,5 +195,5 @@ function useIconsBesidePanel(ref: RefObject<HTMLDivElement | null>, shown: boole
     };
   });
 
-  return iconsOnly;
+  return { iconsOnly, besidePanel };
 }

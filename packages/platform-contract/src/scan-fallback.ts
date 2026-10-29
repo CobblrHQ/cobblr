@@ -20,6 +20,8 @@ export type AiFallback =
   | "background"
   /** A provider exists but the plan's allowance refused the call. */
   | "not-entitled"
+  /** The AI routed here is another person's own, answering only them. */
+  | "not-shared"
   /** The provider was asked and failed. */
   | "provider-error"
   /** Asked, and no usable answer came back in time. */
@@ -58,7 +60,9 @@ export function fallbackHint(why: AiFallback, reason?: ProviderErrorReason): str
     case "background":
       return "Routed without your personal AI. Retry with AI to use it.";
     case "not-entitled":
-      return "Matched by keywords: the AI allowance is used up for now.";
+      return "Matched by keywords: this workspace's plan doesn't include AI.";
+    case "not-shared":
+      return "Matched by keywords: the AI here answers only its owner.";
     case "provider-error":
       return "Matched by keywords: the AI errored. Retry with AI.";
     case "no-answer":
@@ -79,13 +83,20 @@ export const RETIRED_FALLBACK_HINTS: readonly string[] = [
   "The AI allowance for this workspace is used up for now, so this was matched by keywords.",
   "The AI errored on this one, so it was matched by keywords. Retry with AI.",
   "The AI did not answer in time, so this was matched by keywords. Retry with AI.",
+  "Matched by keywords: the AI allowance is used up for now.",
 ];
 
 /** The card's one line beside the keyword match, and whether a retry helps.
  *  `why` is the reason the RECORD carries; with none, the line says what is
  *  true (it matched by keywords) and claims no cause (#4933). */
-export function fallbackChip(why: AiFallback | null | undefined, reason?: ProviderErrorReason): { text: string; retry: boolean; connect: boolean } {
+export function fallbackChip(why: AiFallback | null | undefined, reason?: ProviderErrorReason, now?: { aiNow?: boolean }): { text: string; retry: boolean; connect: boolean } {
   if (!why) return { text: "Matched by keywords, not by the AI.", retry: true, connect: false };
+  // The row kept why it had no AI when it was scanned. Once this person has
+  // AI here, that reason is the past: a row still read "no AI provider is
+  // connected. Connect" beside a connected one (#8855).
+  if (now?.aiNow && (why === "no-provider" || why === "not-entitled" || why === "not-shared" || why === "background")) {
+    return { text: "Matched by keywords before AI was set up here.", retry: true, connect: false };
+  }
   const own = why === "provider-error" ? providerErrorWords(reason) : null;
   if (own) return { text: own.chip, retry: own.retry, connect: false };
   switch (why) {
@@ -93,8 +104,15 @@ export function fallbackChip(why: AiFallback | null | undefined, reason?: Provid
       return { text: "Matched by keywords: no AI provider is connected.", retry: false, connect: true };
     case "background":
       return { text: "Routed without your personal AI.", retry: true, connect: false };
+    // The banner's own words for the same refusal (AiStatusNotice): a no-AI
+    // workspace was told its allowance was used up, beside a banner saying
+    // its plan has none (#8875). A person's own model is the remedy.
     case "not-entitled":
-      return { text: "Matched by keywords: the AI allowance is used up for now.", retry: false, connect: false };
+      return { text: "Matched by keywords: this workspace's plan doesn't include AI.", retry: false, connect: true };
+    // Someone connected AI "Just me" (#8855). Not the plan, not an allowance:
+    // they can share it with the workspace, or this person brings their own.
+    case "not-shared":
+      return { text: "Matched by keywords: the AI here answers only its owner.", retry: false, connect: true };
     case "provider-error":
       return { text: "Matched by keywords: the AI errored.", retry: true, connect: false };
     case "no-answer":
@@ -119,7 +137,9 @@ export type IdentifyFailureCode =
   /** The model answered, and the answer could not be read. */
   | "no_answer"
   /** The model looked and saw nothing it could name as one item. */
-  | "no_item";
+  | "no_item"
+  /** The model named nothing, and the photo is out of focus (#8796). */
+  | "blurry";
 
 export interface IdentifyFailure {
   code: IdentifyFailureCode;
@@ -151,6 +171,9 @@ export function identifyFailureWords(f: IdentifyFailure): { sentence: string; de
   if (f.hosted === "allowance") {
     return { sentence: "Photo identify is used up for today here.", detail: "Name it yourself, or identify it again tomorrow.", retry: false, connect: false };
   }
+  if (f.code === "blurry") {
+    return { sentence: "This photo is too blurry to read.", detail: "Take it again, closer and steadier, or name it yourself.", retry: false, connect: false };
+  }
   if (f.code === "no_item") {
     return { sentence: "The AI saw no single item to name in this photo.", detail: "Name it yourself, or read it as a receipt if that is what it is.", retry: false, connect: false };
   }
@@ -168,7 +191,9 @@ export function identifyFailureWords(f: IdentifyFailure): { sentence: string; de
     case "background":
       return { sentence: "Couldn't identify this photo: it ran without your personal AI.", detail: "Identify it again to use it.", retry: true, connect: false };
     case "not-entitled":
-      return { sentence: "Couldn't identify this photo: the AI allowance is used up for now.", detail: "Identify it again later, or name it yourself.", retry: true, connect: false };
+      return { sentence: "Couldn't identify this photo: the plan doesn't include AI.", detail: "Connect your own AI under Account to read photos, or name it yourself.", retry: false, connect: true };
+    case "not-shared":
+      return { sentence: "Couldn't identify this photo: the AI here answers only its owner.", detail: "Ask them to share it with the workspace, or connect your own under Account.", retry: false, connect: true };
     case "provider-error":
       switch (f.ai_reason) {
         case "invalid_key":

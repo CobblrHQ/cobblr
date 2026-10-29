@@ -35,7 +35,7 @@ import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode
 import { Link } from "react-router-dom";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StationNewFace } from "./StationNewFace";
-import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
+import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, PackageX, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
 import { } from "../components/ScanImportModal";
 import { suggestedPlace } from "../lib/sessionPlaceSuggestion";
 import { } from "../components/ExportInboxModal";
@@ -107,6 +107,7 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { } from "../lib/scanPayload";
+import { ARRIVED_DAMAGED_LABEL } from "@cobblr/platform-contract/scan-arrived-damaged";
 import { scanPurpose, scanReviewAction, needsScanReview, scanRebuy, scanLooksFineResolves, scanDoubt, scanDoubtSuspect, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanReceiptAlreadyIn, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
 import { SCAN_UNDO_ACTIONS, scanCombinedCount } from "@cobblr/platform-contract/scan-recovery";
 import { ScanReceiptUnread } from "../components/ScanReceiptUnread";
@@ -859,6 +860,30 @@ export function InboxCard({
   )?.photo_mismatch;
   const photoSuggestedName = photoMismatch?.correct_name?.trim() || "";
 
+  // It came in the delivery damaged (#8854): not stock, and marked so for
+  // the owner checking the delivery. Undo inline, as Discard does.
+  const isArrival = item.status === "pending" && scanPurpose(item) === "arrival";
+  const arrivedDamaged = useMutation({
+    mutationFn: () => api.markScanArrivedDamaged(activeSlug, item.id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+      const label = item.suggested_name?.trim() || (item.barcode_text ? `barcode ${item.barcode_text}` : "It");
+      toast.action(`${label}: arrived damaged, not added to stock`, {
+        actionLabel: "Undo",
+        duration: 7000,
+        onAction: async () => {
+          try {
+            await api.unconfirmScanItem(activeSlug, item.id);
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : "Couldn't take the mark back - send it back from Recently committed");
+            return;
+          }
+          void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+        },
+      });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't mark it as arrived damaged"),
+  });
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item.id),
     onSuccess: () => {
@@ -2541,6 +2566,7 @@ export function InboxCard({
       if (hasLocations && toolBin) actions.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
       if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: BOX_STATE_EFFECT["item-in-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
+      if (isArrival) actions.push({ label: ARRIVED_DAMAGED_LABEL, hint: "Not added to stock; marked for whoever checks the delivery", busy: arrivedDamaged.isPending, onClick: () => arrivedDamaged.mutate() });
       // "Put it where suggested" lives beside the Location field now (#3074).
     }
     return (
@@ -2735,6 +2761,7 @@ export function InboxCard({
       if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
       if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: BOX_STATE_EFFECT["item-in-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
       if (looksFineResolves) more.push({ label: "Looks fine", hint: "A person looked; stop flagging it", busy: markReviewed.isPending, onClick: () => markReviewed.mutate() });
+      if (isArrival) more.push({ label: ARRIVED_DAMAGED_LABEL, hint: "Not added to stock; marked for whoever checks the delivery", busy: arrivedDamaged.isPending, onClick: () => arrivedDamaged.mutate() });
       more.push({ label: "Discard", hint: "Recoverable from Recently deleted", busy: discard.isPending, danger: true, onClick: () => discard.mutate() });
     }
     return (
@@ -2785,7 +2812,7 @@ export function InboxCard({
                       // asked again, connect when there is no provider to ask
                       // (a Retry on "no AI provider is connected" was a button
                       // that could only fail the same way).
-                      const chip = fallbackChip(topCand?.ai_fallback ?? null, topCand?.ai_fallback_reason);
+                      const chip = fallbackChip(topCand?.ai_fallback ?? null, topCand?.ai_fallback_reason, { aiNow: !!cardAiStatus && aiReach(cardAiStatus).chat });
                       return { text: chip.text, recovery: chip.retry ? ("retry" as const) : chip.connect ? ("connect" as const) : null, connectHref: `/w/${activeSlug}/ai` };
                     })()
                   : matchFailed
@@ -3030,6 +3057,15 @@ export function InboxCard({
                   <>
                     {" "}
                     <button type="button" className="underline hover:text-content" onClick={(e) => { e.stopPropagation(); asReceipt.mutate(); }} disabled={asReceipt.isPending} data-testid="nameless-read-as-receipt">
+                      {namelessSays.actionLabel}
+                    </button>
+                    :
+                  </>
+                )}
+                {namelessSays.action === "retake" && (
+                  <>
+                    {" "}
+                    <button type="button" className="underline hover:text-content" onClick={(e) => { e.stopPropagation(); setCaptureSheet("add"); }} disabled={addPhoto.isPending} data-testid="nameless-retake">
                       {namelessSays.actionLabel}
                     </button>
                     :
@@ -3817,13 +3853,13 @@ export function InboxCard({
             >
               <Sparkles size={11} className="shrink-0" />
               <span>
-                {fallbackChip(topCand?.ai_fallback ?? null, topCand?.ai_fallback_reason).text}
+                {fallbackChip(topCand?.ai_fallback ?? null, topCand?.ai_fallback_reason, { aiNow: !!cardAiStatus && aiReach(cardAiStatus).chat }).text}
                 {/* The consequence, in the row's own terms: the name is the
                     receipt's or the code's and still files; what is missing
                     is the read (the table's fields, a picture). */}
                 {dest && !expanded && <span className="text-amber-600/80 dark:text-amber-400/80"> Files into {dest.label} with nothing read.</span>}
               </span>
-              {fallbackChip(topCand?.ai_fallback ?? null, topCand?.ai_fallback_reason).retry && (
+              {fallbackChip(topCand?.ai_fallback ?? null, topCand?.ai_fallback_reason, { aiNow: !!cardAiStatus && aiReach(cardAiStatus).chat }).retry && (
                 <button
                   type="button"
                   onClick={() => rerun.mutate(undefined)}
@@ -3970,6 +4006,13 @@ export function InboxCard({
                     hint="Look for this item in the current lists"
                     disabled={rematch.isPending}
                     onClick={() => { close(); rematch.mutate(); }}
+                  />}
+                  {item.status === "pending" && isArrival && <MenuItem
+                    icon={<PackageX size={14} />}
+                    label={ARRIVED_DAMAGED_LABEL}
+                    hint="Not added to stock; marked for whoever checks the delivery"
+                    disabled={arrivedDamaged.isPending}
+                    onClick={() => { close(); arrivedDamaged.mutate(); }}
                   />}
                   <MenuItem
                     icon={<Camera size={14} />}
@@ -5379,7 +5422,7 @@ function ConfirmForm({
       // installs the bundle + its table, committing nothing), then we file THIS
       // item into it with the EDITED values — same commit path as any table.
       const entryInstance = await resolveInstanceForFiling(activeSlug, willInstall, entry.instance);
-      const confirmed = await api.confirmScanItem(activeSlug, item.id, {
+      const confirmed = await api.confirmScanItem(activeSlug, item, {
         target_module: entry.module,
         target_kind: baseKind(entry.module),
         instance: entryInstance,

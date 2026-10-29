@@ -43,14 +43,15 @@ export async function finishProvisioning(orgId: string, ownerId: string | null, 
   if (org.db_credentials_encrypted) return;
   const { provisionTenantDb } = await import("../db/provision.js");
   const startedAt = performance.now();
-  const { credentialsEncrypted, migrationsApplied } = await provisionTenantDb(org.db_name, { ...opts, orgId });
+  const { credentialsEncrypted, migrationsApplied, copiedFrom } = await provisionTenantDb(org.db_name, { ...opts, orgId });
   const databaseMs = Math.round(performance.now() - startedAt);
   await meta
     .updateTable("orgs")
     .set({ db_credentials_encrypted: credentialsEncrypted, updated_at: new Date() })
     .where("id", "=", orgId)
     .execute();
-  console.log(`[org-provision] ${org.db_name} for org ${orgId} (${migrationsApplied} migrations, ${databaseMs}ms)`);
+  // CI counts these words (scripts/ci/pool-demand.mjs templateLine): copied from the template or migrated in full.
+  console.log(`[org-provision] ${org.db_name} for org ${orgId} (${migrationsApplied} migrations, ${copiedFrom ? "copied from the template" : "migrated in full"}, ${databaseMs}ms)`);
   const activity = await import("./activity.js");
   try {
     await activity.log({

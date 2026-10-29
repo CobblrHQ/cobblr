@@ -7,6 +7,11 @@ import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 import { orderTotal } from "../invoice.js";
+import { moneyOfOrders, orderMoney, recordReturn, undoReturn } from "../returns.js";
+import { recordPayment, syncPaid, undoPayment } from "../payments.js";
+import { heldByOthers, holdOrder, releaseHold } from "../holds.js";
+import { accountingCsv, summarise } from "../summary.js";
+import { arrivedEverywhere } from "@cobblr/platform-contract/day";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -112,8 +117,29 @@ const OrderList = z.object({
   status: Status.optional(),
   paid: z.enum(["true", "false"]).optional(),
   customer_id: z.string().uuid().optional(),
+  /** One month of orders by the day they were made, YYYY-MM (#8786). */
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
   sort: z.enum(Object.keys(ORDER_SORTS) as [keyof typeof ORDER_SORTS, ...Array<keyof typeof ORDER_SORTS>]).optional(),
 });
+
+/** The orders a list, its summary and its accountant's export all mean by the same filters, so their totals agree. */
+function matchingOrders(req: import("express").Request, f: z.infer<typeof OrderList>) {
+  let q = tenantDb(req).selectFrom("sales_orders").selectAll().where("instance", "=", instanceOf(req));
+  if (f.q) {
+    const like = `%${likeEscape(f.q)}%`;
+    q = q.where((eb) => eb.or([eb("customer_name", "ilike", like), eb("order_number", "ilike", like), eb("notes", "ilike", like)]));
+  }
+  if (f.status) q = q.where("status", "=", f.status);
+  if (f.paid) q = q.where("paid", "=", f.paid === "true");
+  if (f.customer_id) q = q.where("customer_id", "=", f.customer_id);
+  if (f.month) {
+    const [y, m] = f.month.split("-").map(Number) as [number, number];
+    const first = `${f.month}-01`;
+    const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+    q = q.where("order_date", ">=", first as never).where("order_date", "<", next as never);
+  }
+  return q;
+}
 
 /** A page of orders and how many match: search over the customer, the order
  *  number and the notes, one status, paid or not, one customer, and an order. */
@@ -123,14 +149,7 @@ ordersRouter.get(
     const f = OrderList.safeParse(req.query);
     if (!f.success) return badBody(res, f.error);
     const page = readListPage(req.query);
-    let q = tenantDb(req).selectFrom("sales_orders").selectAll().where("instance", "=", instanceOf(req));
-    if (f.data.q) {
-      const like = `%${likeEscape(f.data.q)}%`;
-      q = q.where((eb) => eb.or([eb("customer_name", "ilike", like), eb("order_number", "ilike", like), eb("notes", "ilike", like)]));
-    }
-    if (f.data.status) q = q.where("status", "=", f.data.status);
-    if (f.data.paid) q = q.where("paid", "=", f.data.paid === "true");
-    if (f.data.customer_id) q = q.where("customer_id", "=", f.data.customer_id);
+    let q = matchingOrders(req, f.data);
     for (const [col, dir] of ORDER_SORTS[f.data.sort ?? "newest"]) q = q.orderBy(sql`${sql.ref(col)} ${sql.raw(dir)} nulls last`);
     const rows = await q
       .orderBy("id")
@@ -141,11 +160,73 @@ ordersRouter.get(
     // Each order's total, the same sum its own page shows, from one read of the page's lines.
     const lines = rows.length ? await tenantDb(req).selectFrom("sales_order_items").select(["order_id", "qty", "unit_price", "metadata"]).where("order_id", "in", rows.map((r) => r.id)).execute() : [];
     const shop = await platform().money.currency(tenantContext(req).org.id);
+    const money = await moneyOfOrders(tenantDb(req), rows, shop);
     const withTotals = rows.map((r) => {
       const sum = orderTotal(lines.filter((l) => l.order_id === r.id), fieldCurrency(r.metadata, "total", shop));
-      return { ...r, total: sum.amount, other_currency_totals: sum.other, unpriced_lines: sum.unpriced };
+      const m = money.get(r.id)!;
+      return { ...r, total: sum.amount, other_currency_totals: sum.other, unpriced_lines: sum.unpriced, currency: m.currency, net_total: m.net_total, refunded: m.refunded, refund_due: m.refund_due, owed: m.owed, kept: m.kept };
     });
     res.json(pagedAnswer(withTotals, page));
+  }),
+);
+
+/** What a month of orders came to: sold, received, refunded, owed to the shop and owed back, per currency (#8786). Same filters and same figures as the list and the file. */
+// AI-REACH: a read of figures the order list and its page already carry
+ordersRouter.get(
+  "/summary",
+  asyncHandler(async (req, res) => {
+    const f = OrderList.safeParse(req.query);
+    if (!f.success) return badBody(res, f.error);
+    // Every matching order, never a cut: a total over a part of the month would be wrong.
+    const rows = await matchingOrders(req, f.data).orderBy("id").execute();
+    const money = await moneyOfOrders(tenantDb(req), rows, await platform().money.currency(tenantContext(req).org.id));
+    res.json({ month: f.data.month ?? null, orders: rows.length, by_currency: summarise(rows.map((r) => ({ status: r.status, paid: r.paid, money: money.get(r.id)! }))) });
+  }),
+);
+
+/** Who owes the shop, and how much: every order with something still to pay, oldest first, and the sum per currency (#8838). It is the summary's owed, listed. */
+// AI-REACH: a read of figures the order list and its page already carry
+ordersRouter.get(
+  "/owed",
+  asyncHandler(async (req, res) => {
+    const rows = await matchingOrders(req, {}).where("status", "!=", "cancelled").orderBy(sql`order_date asc nulls first`).orderBy("created_at").orderBy("id").execute();
+    const money = await moneyOfOrders(tenantDb(req), rows, await platform().money.currency(tenantContext(req).org.id));
+    const items = rows.flatMap((r) => {
+      const m = money.get(r.id)!;
+      return m.owed > 0 ? [{ id: r.id, order_number: r.order_number, customer_name: r.customer_name, order_date: r.order_date, status: r.status, currency: m.currency, owed: m.owed, state: m.state }] : [];
+    });
+    const by_currency = summarise(rows.map((r) => ({ status: r.status, paid: r.paid, money: money.get(r.id)! }))).filter((s) => s.owed > 0).map((s) => ({ currency: s.currency, owed: s.owed, orders: items.filter((i) => i.currency === s.currency).length }));
+    res.json({ by_currency, items });
+  }),
+);
+
+/** The accountant's file: one row per order with the same figures (#8787). */
+// AI-REACH: a file of what the order list already reads, for the person to download
+ordersRouter.get(
+  "/accounting.csv",
+  asyncHandler(async (req, res) => {
+    const f = OrderList.safeParse(req.query);
+    if (!f.success) return badBody(res, f.error);
+    const rows = await matchingOrders(req, f.data).orderBy(sql`order_date asc nulls last`).orderBy("created_at").orderBy("id").execute();
+    const money = await moneyOfOrders(tenantDb(req), rows, await platform().money.currency(tenantContext(req).org.id));
+    const lastPaid = new Map<string, string>();
+    if (rows.length) {
+      for (const p of await tenantDb(req).selectFrom("sales_payments").select(["order_id", sql<string>`max(paid_on)::text`.as("day")]).where("order_id", "in", rows.map((r) => r.id)).groupBy("order_id").execute()) lastPaid.set(p.order_id, p.day);
+    }
+    const orders = await Promise.all(
+      rows.map(async (r) => ({
+        order_number: r.order_number,
+        order_date: r.order_date,
+        customer_name: r.customer_name,
+        status: r.status,
+        paid: r.paid,
+        paid_on: lastPaid.get(r.id) ?? null,
+        money: money.get(r.id)!,
+      })),
+    );
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="sales-for-accountant-${f.data.month ?? arrivedEverywhere(new Date())}.csv"`);
+    res.send(accountingCsv(orders));
   }),
 );
 
@@ -168,8 +249,12 @@ ordersRouter.get(
     // What is being made for it, and how many of each are made so far.
     const makes = await makeIdsByWorkOrder(db, order.id);
     const work_orders = (await workOrdersFor(tenantContext(req).org.id, order.id)).map((w) => ({ ...w, make_id: makes.get(w.id) ?? null }));
-    const availability = await orderAvailability(tenantContext(req).org.id, items.map((it) => ({ ...it, qty: Number(it.qty), qty_fulfilled: Number(it.qty_fulfilled) })), work_orders);
-    res.json({ ...order, items, total: sum.amount, other_currency_totals: sum.other, unpriced_lines: sum.unpriced, work_orders, availability });
+    const availability = await orderAvailability(tenantContext(req).org.id, items.map((it) => ({ ...it, qty: Number(it.qty), qty_fulfilled: Number(it.qty_fulfilled) })), work_orders, await heldByOthers(db, items.flatMap((it) => (it.part_id ? [it.part_id] : [])), order.id));
+    const returns = await db.selectFrom("sales_returns").selectAll().where("order_id", "=", order.id).orderBy("created_at").execute();
+    const shop = await platform().money.currency(tenantContext(req).org.id);
+    const payments = await db.selectFrom("sales_payments").selectAll().where("order_id", "=", order.id).orderBy("paid_on").orderBy("created_at").execute();
+    const money = orderMoney(order, items, returns.map((r) => Number(r.refund_amount ?? 0)), shop, payments.map((p) => Number(p.amount)));
+    res.json({ ...order, items, total: sum.amount, other_currency_totals: sum.other, unpriced_lines: sum.unpriced, work_orders, availability, returns, payments, money });
   }),
 );
 
@@ -187,6 +272,8 @@ ordersRouter.post(
       .insertInto("sales_orders")
       .values({
         ...parsed.data,
+        // An order starts on the day it was made, in the person's own day (#8788).
+        order_date: parsed.data.order_date ?? (await platform().accounts.dayFor(sessionUser(req)?.id ?? null)),
         customer_name: customerName,
         instance: instanceOf(req),
         order_number: parsed.data.order_number?.trim() || (await nextOrderNumber(db, instanceOf(req))),
@@ -242,6 +329,38 @@ ordersRouter.patch(
       }
       delete (parsed.data as { status?: unknown }).status;
     }
+    // Paid is read from the payments (#8838): ticking it records what is still owed as one
+    // payment, and unticking takes the payments back, so the flag never disagrees with them.
+    if (parsed.data.paid !== undefined) {
+      const id = req.params.id!;
+      const paid = parsed.data.paid;
+      delete (parsed.data as { paid?: unknown }).paid;
+      const shop = await platform().money.currency(ctx.org.id);
+      const userId = sessionUser(req)?.id ?? null;
+      if (paid) {
+        const full = await db.selectFrom("sales_orders").select(["id", "status", "paid", "metadata"]).where("id", "=", id).executeTakeFirstOrThrow();
+        const m = (await moneyOfOrders(db, [full], shop)).get(id)!;
+        if (m.owed > 0) {
+          const r = await recordPayment(db, ctx.org.id, userId, id, { amount: m.owed }, shop, await platform().accounts.dayFor(userId));
+          if (!r.ok) {
+            res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+            return;
+          }
+        } else if (m.state !== "paid") {
+          await db.updateTable("sales_orders").set({ paid: true } as never).where("id", "=", id).execute();
+        }
+      } else {
+        for (const p of await db.selectFrom("sales_payments").select(["id"]).where("order_id", "=", id).execute()) {
+          const r = await undoPayment(db, ctx.org.id, userId, id, p.id, shop);
+          if (!r.ok) {
+            res.status(409).json({ error: { code: r.code, message: r.message } });
+            return;
+          }
+        }
+        await db.updateTable("sales_orders").set({ paid: false } as never).where("id", "=", id).execute();
+      }
+      await closeDeliveredOrder(db, ctx.org.id, id);
+    }
     if (parsed.data.status && SHIPPED.includes(parsed.data.status) && !SHIPPED.includes(before.status)) {
       const owed = await db
         .selectFrom("sales_order_items")
@@ -286,7 +405,6 @@ ordersRouter.patch(
       diff: parsed.data as Record<string, unknown>,
       before,
     });
-    if (parsed.data.paid !== undefined) await closeDeliveredOrder(db, ctx.org.id, row.id);
     res.json(await db.selectFrom("sales_orders").selectAll().where("id", "=", row.id).executeTakeFirstOrThrow());
   }),
 );
@@ -340,6 +458,135 @@ ordersRouter.post(
       return;
     }
     res.json(r);
+  }),
+);
+
+// A customer's return and/or refund (#8790), and taking it back.
+const ReturnBody = z.object({
+  line_id: z.string().uuid().nullish(),
+  qty: z.number().positive().max(1_000_000).nullish(),
+  refund_amount: z.number().nonnegative().max(100_000_000).nullish(),
+  reason: z.string().max(500).nullish(),
+});
+// AI-REACH: action sales:return-line
+ordersRouter.post(
+  "/:id/returns",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "sales:return-line"))) return;
+    const body = ReturnBody.safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    if (!(await orderHere(req))) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
+    const ctx = tenantContext(req);
+    const r = await recordReturn(tenantDb(req), ctx.org.id, sessionUser(req)?.id ?? null, req.params.id!, body.data, await platform().money.currency(ctx.org.id));
+    if (!r.ok) {
+      res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.status(201).json(r);
+  }),
+);
+// AI-REACH: action sales:undo-return
+ordersRouter.delete(
+  "/:id/returns/:returnId",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "sales:undo-return"))) return;
+    if (!(await orderHere(req))) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
+    const r = await undoReturn(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, req.params.returnId!);
+    if (!r.ok) {
+      res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.json({ ok: true });
+  }),
+);
+
+const PaymentBody = z.object({
+  amount: z.number().positive().max(100_000_000),
+  method: z.string().max(40).nullish(),
+  paid_on: z.string().nullish(),
+});
+// AI-REACH: action sales:record-payment
+ordersRouter.post(
+  "/:id/payments",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "sales:record-payment"))) return;
+    const body = PaymentBody.safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    if (!(await orderHere(req))) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
+    const ctx = tenantContext(req);
+    const userId = sessionUser(req)?.id ?? null;
+    const r = await recordPayment(tenantDb(req), ctx.org.id, userId, req.params.id!, body.data, await platform().money.currency(ctx.org.id), await platform().accounts.dayFor(userId));
+    if (!r.ok) {
+      res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    await closeDeliveredOrder(tenantDb(req), ctx.org.id, req.params.id!);
+    res.status(201).json(r);
+  }),
+);
+// AI-REACH: action sales:undo-payment
+ordersRouter.delete(
+  "/:id/payments/:paymentId",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "sales:undo-payment"))) return;
+    if (!(await orderHere(req))) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
+    const ctx = tenantContext(req);
+    const r = await undoPayment(tenantDb(req), ctx.org.id, sessionUser(req)?.id ?? null, req.params.id!, req.params.paymentId!, await platform().money.currency(ctx.org.id));
+    if (!r.ok) {
+      res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.json({ ok: true });
+  }),
+);
+
+const HoldBody = z.object({ until: z.string().nullish() });
+// AI-REACH: action sales:hold-order
+ordersRouter.post(
+  "/:id/hold",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "sales:hold-order"))) return;
+    const body = HoldBody.safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    if (!(await orderHere(req))) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
+    const r = await holdOrder(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, body.data);
+    if (!r.ok) {
+      res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.status(201).json(r);
+  }),
+);
+// AI-REACH: action sales:release-hold
+ordersRouter.delete(
+  "/:id/hold",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "sales:release-hold"))) return;
+    if (!(await orderHere(req))) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
+    const r = await releaseHold(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, "it was released");
+    if (!r.ok) {
+      res.status(404).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.json({ ok: true, released: r.released });
   }),
 );
 

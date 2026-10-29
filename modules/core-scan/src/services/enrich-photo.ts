@@ -57,6 +57,7 @@ import { noReceiptShape, scoreReceiptShape, type ReceiptShape } from "./receipt-
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
+import { photoTooBlurry } from "./photo-blur.js";
 import { toPhotoIdentity, receiptAsIdentity, HOSTED_QUEUED_WORDS, type HostedAnswer, type HostedQueued } from "./hosted-identify.js";
 import { identifyWhyFor } from "./operator-services.js";
 
@@ -570,6 +571,12 @@ export interface AnsweredBy {
   after: Array<{ label: string; model?: string; reason: string }>;
 }
 
+/** The AI named nothing: say whether the photo was out of focus, which the
+ *  pixels can tell, so the row asks for it again instead (#8796). */
+async function nothingNamed(imageB64: string, reason: string): Promise<IdentifyFailure> {
+  return (await photoTooBlurry(Buffer.from(imageB64, "base64"))) ? { code: "blurry", reason: `${reason}; the photo is out of focus` } : { code: "no_item", reason };
+}
+
 /** The identity alone, for callers that only want a name (the barcode
  *  path's last resort, the eval harness). */
 export async function identifyImage(opts: IdentifyImageOpts): Promise<PhotoIdentity | null> {
@@ -629,7 +636,7 @@ export async function identifyPhoto({
     }
     if (hosted?.kind === "receipt") return { identity: receiptAsIdentity() };
     if (hosted?.kind === "person" || hosted?.kind === "unidentifiable") {
-      return { identity: null, failure: { code: "no_item", reason: `hosted identify: ${hosted.kind}` } };
+      return { identity: null, failure: await nothingNamed(imageB64, `hosted identify: ${hosted.kind}`) };
     }
   }
   let parsed: Record<string, unknown> | null = null;
@@ -681,7 +688,7 @@ export async function identifyPhoto({
     return { identity: null, failure: { code: "no_answer", ai: "no-answer", reason: "reply was not JSON" }, ...(hostedJob ? { hostedJob } : {}) };
   }
   const identity = parseIdentityReply(parsed) ?? (await namedFromLabel(parsed?.name, imageB64, (name) => parseIdentityReply({ ...parsed, name })));
-  if (!identity) return { identity: null, failure: { code: "no_item", reason: "no name in the reply" }, ...(hostedJob ? { hostedJob } : {}) };
+  if (!identity) return { identity: null, failure: await nothingNamed(imageB64, "no name in the reply"), ...(hostedJob ? { hostedJob } : {}) };
   return { identity, ...(answeredBy ? { answeredBy } : {}) };
 }
 

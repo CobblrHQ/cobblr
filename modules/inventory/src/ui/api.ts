@@ -289,6 +289,8 @@ export interface ImportResponse {
   detected_headers: Record<string, string | null>;
   /** Columns of the file the import does not read, and why. */
   unread_columns?: { header: string; reason: string }[];
+  /** Categories the file names that the import makes (#8870). */
+  new_categories?: string[];
   committed: number;
   ids?: string[];
 }
@@ -841,6 +843,7 @@ export class InventoryApi {
     dry_run?: boolean;
     default_category_id?: string | null;
     default_location_id?: string | null;
+    make_categories?: boolean;
   }) =>
     // Through partsBase, so a Bookshelf's Import lands on the bookshelf.
     this.partsRequest<ImportResponse>("POST", "/import", b);

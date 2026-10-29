@@ -163,7 +163,7 @@ export async function moveEverything(
   }
 
   let deleted = false;
-  if (opts.thenDelete) deleted = !!(await deletePlace(orgId, fromId, opts.userId ?? null));
+  if (opts.thenDelete) deleted = !!(await deletePlace(orgId, fromId, opts.userId ?? null, { kind: to.kind ?? LOCATION, id: to.id, name: to.name }));
 
   if (!holder) void platform().events.emit("core-locations.location.updated", { orgId, locationId: toId });
   if (!deleted) void platform().events.emit("core-locations.location.updated", { orgId, locationId: fromId });

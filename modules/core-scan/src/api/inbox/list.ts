@@ -12,7 +12,7 @@ import { z } from "zod";
 import { pendingPurchaseOf } from "../../services/receipt-purchase.js";
 import { platform, countOf } from "@cobblr/platform-contract";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
-import { matchesScanFacet, SCAN_TRIAGE_FACETS, type ScanTriageFacet, type ScanTriageRow, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, type StoredDestination, scanRebuy, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
+import { matchesScanFacet, SCAN_TRIAGE_FACETS, type ScanTriageFacet, type ScanTriageRow, DESTINATION_KEY, KEEP_SEPARATE_KEY, SCANNED_TOO_KEY, scanKeepSeparateStamp, type StoredDestination, scanRebuy, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../../db.js";
 import { withResolvedOffers } from "../../services/resolve-offers.js";
 import { asyncHandler, badBody, requireRole } from "../util.js";
@@ -601,6 +601,8 @@ listRouter.patch(
         // (services/label-quantity.ts, #3729).
         if (parsed.data.quantity !== undefined) {
           meta[FIELD_PROVENANCE_KEY] = { ...fieldProvenanceOf(meta), quantity: { by: "person", from: "edit", at: new Date().toISOString() } };
+          // A count set by hand answers "two of them, or one scanned twice?" (#8851).
+          delete meta[SCANNED_TOO_KEY];
         }
         if (parsed.data.keep_separate !== undefined) {
           const stamp = parsed.data.keep_separate ? scanKeepSeparateStamp(meta, new Date().toISOString()) : null;
@@ -660,7 +662,7 @@ listRouter.patch(
       ...(parsed.data.category !== undefined ? (["category"] as const) : []),
       ...(parsed.data.destination !== undefined ? (["table"] as const) : []),
     ];
-    if (changed.length) await appendScanHistory(db, id, { action: "edit", by: sessionUser(req)?.id ?? null, changed });
+    if (changed.length) await appendScanHistory(db, id, { action: "edit", by: sessionUser(req)?.id ?? null, by_name: sessionUser(req)?.display_name ?? null, changed });
     // An inline rename of a barcode item ALSO propagates to the Barcode
     // Intelligence DB — the resolver's name was wrong and the human's is truth,
     // so the next scan of this UPC (any workspace) gets the fix. Mirrors the
@@ -801,7 +803,7 @@ listRouter.post("/inbox/file-selected", asyncHandler(async (req, res) => {
     const held = already.get(id);
     if (held) throw new Error(held);
     const response = await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
-      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...target, ...(catalog_entries?.[id] ? { catalog_entry_id: catalog_entries[id] } : {}) }),
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...target, filed_with: ids, ...(catalog_entries?.[id] ? { catalog_entry_id: catalog_entries[id] } : {}) }),
     });
     const body = await response.json() as { error?: { message?: string }; item?: { target_kind?: string | null }; created?: { id?: string; name?: unknown; title?: unknown } };
     if (!response.ok) throw new Error(body.error?.message || "It could not be added");

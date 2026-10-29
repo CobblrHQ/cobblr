@@ -697,6 +697,16 @@ export function completeApp(app: Application): void {
         });
         return;
       }
+      // A thing saved into a place that is not there, or that was deleted as
+      // it was saved: the location sync refuses it (migrate-location-to-placement.ts).
+      // A place made inside one deleted just before: the parent key refuses it.
+      const pg = err as { code?: string; hint?: string; constraint?: string };
+      if (pg.code === "23503" && (pg.hint === "place_gone" || pg.constraint === "core_locations_locations_parent_id_fkey")) {
+        res.status(409).json({
+          error: { code: "place_gone", message: "That place is no longer there. Choose another place for it." },
+        });
+        return;
+      }
       // A write naming a field the kind does not have (entity-metadata.ts):
       // the caller's mistake, said with the names they could have meant.
       if (err instanceof SecretFieldError || err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError || err instanceof ListReadError || err instanceof FieldNotReadableError || err instanceof GuestScopeError) {

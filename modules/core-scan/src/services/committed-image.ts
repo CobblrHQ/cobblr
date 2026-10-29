@@ -35,6 +35,18 @@ export function itemPhotos(
   return userPhotoFileIds.filter((id) => !frames.has(id));
 }
 
+/** The group photo an uncut split piece still carries as its own.
+ *
+ *  A piece the split could not cut out keeps the whole group shot, which
+ *  shows every piece: four spice jars filed from one shelf photo each wore
+ *  the shelf, while each inbox row had shown its own jar (#8794). Like a
+ *  barcode frame it is not a picture OF this item, so it stays in the
+ *  gallery and never becomes the record's photo. */
+export function uncutGroupShot(row: { image_file_id: string | null; suggested_metadata?: unknown }): string | null {
+  const m = (row.suggested_metadata ?? {}) as { split_from?: unknown; crop?: unknown };
+  return typeof m.split_from === "string" && m.split_from && m.crop !== "ok" ? row.image_file_id : null;
+}
+
 /** Which image a COMMIT should stamp, given everything the scan carries.
  *
  *  Extracted from the confirm handler because it was inline there, and inline is

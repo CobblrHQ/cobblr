@@ -4,13 +4,14 @@
 // A station is an address (/station/<workspace>/pantry). Opening it on a
 // tablet shows a six-character code; approving the code here gives that tablet
 // a token that reaches only that station. The tablet's QR opens this tab with
-// the code filled in.
+// the code filled in. A station a team shares names who works at it (#8845):
+// the tablet then asks "Who's working?" and records each change to them.
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { Copy, Monitor } from "lucide-react";
-import { MutationError, useToast } from "@cobblr/platform-web";
+import { MutationError, NumberStepper, useToast } from "@cobblr/platform-web";
 import { DEFAULT_STATION_ADDRESS, isStationAddress, normalizeStationCode } from "@cobblr/platform-contract/station-screen";
 import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -142,6 +143,7 @@ export function StationDevicesPanel() {
                   <div className="text-sm text-muted">
                     /station/{slug}/{d.address} · approved by {d.approved_by} · {d.last_used_at ? `last used ${new Date(d.last_used_at).toLocaleString()}` : "not used yet"}
                   </div>
+                  <StationCrewEditor slug={slug} address={d.address} />
                 </div>
                 <button
                   type="button"
@@ -158,6 +160,87 @@ export function StationDevicesPanel() {
         )}
         <MutationError mutation={revoke} className="mt-2" />
       </section>
+    </div>
+  );
+}
+
+/** Who works at a station (#8845). Nobody named: the screen acts as the
+ *  person who approved it. Anyone named: it asks "Who's working?" first, and
+ *  each change is recorded to the member picked. */
+function StationCrewEditor({ slug, address }: { slug: string; address: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const crew = useQuery({ queryKey: ["station-crew", slug, address], queryFn: () => api.stationCrew(slug, address) });
+  const members = useQuery({ queryKey: ["members", slug], queryFn: () => api.listMembers(slug), select: (r) => r.items, enabled: open });
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const [pinRequired, setPinRequired] = useState<boolean | null>(null);
+  const [idle, setIdle] = useState<number | null>(null);
+  const chosen = picked ?? new Set(crew.data?.members.map((m) => m.user_id) ?? []);
+  const pin = pinRequired ?? crew.data?.pin_required ?? false;
+  const minutes = idle ?? crew.data?.idle_minutes ?? 10;
+  const save = useMutation({
+    mutationFn: () => api.setStationCrew(slug, address, { user_ids: [...chosen], pin_required: pin, idle_minutes: minutes }),
+    onSuccess: (r) => {
+      toast.success(r.members.length ? `The ${address} station asks who's working.` : `The ${address} station acts as the person who approved it.`);
+      setPicked(null);
+      setPinRequired(null);
+      setIdle(null);
+      qc.setQueryData(["station-crew", slug, address], r);
+    },
+  });
+  const named = crew.data?.members ?? [];
+  return (
+    <div className="mt-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted">
+          {named.length ? `Who's working: ${named.map((m) => m.name).join(", ")}${crew.data?.pin_required ? ", with their PIN" : ""}` : "Acts as the person who approved it"}
+        </span>
+        <button type="button" onClick={() => setOpen((v) => !v)} className="min-h-[44px] rounded-lg border border-line px-3 dark:border-slate-600" aria-expanded={open}>
+          {open ? "Done" : "Who works here"}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-2 space-y-3 rounded-lg border border-line p-3 dark:border-slate-700">
+          <p className="text-muted">The screen asks "Who's working?" and records each change to the person picked. Each person can do only what their own role allows.</p>
+          {members.isLoading ? (
+            <p className="text-muted">Loading…</p>
+          ) : (
+            <fieldset className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+              <legend className="sr-only">Members who work at this station</legend>
+              {(members.data ?? []).map((m) => (
+                <label key={m.user_id} className="flex min-h-[44px] items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={chosen.has(m.user_id)}
+                    onChange={(e) => {
+                      const next = new Set(chosen);
+                      if (e.target.checked) next.add(m.user_id);
+                      else next.delete(m.user_id);
+                      setPicked(next);
+                    }}
+                  />
+                  <span className="min-w-0 truncate">{m.display_name || m.email}</span>
+                  <span className="text-muted">{m.role}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
+          <label className="flex min-h-[44px] items-center gap-2">
+            <input type="checkbox" checked={pin} onChange={(e) => setPinRequired(e.target.checked)} />
+            Ask for each person's 4-digit PIN (each sets their own in their settings)
+          </label>
+          <label className="flex min-h-[44px] flex-wrap items-center gap-2">
+            Back to Who's working? after
+            <NumberStepper value={minutes} onChange={setIdle} min={1} max={240} label="Minutes with no touch before the station asks again" />
+            minutes with no touch, and whenever the screen wakes
+          </label>
+          <button type="button" onClick={() => save.mutate()} disabled={save.isPending} className="min-h-[44px] rounded-lg bg-cobble-600 px-4 font-medium text-white disabled:opacity-40">
+            {save.isPending ? "Saving…" : "Save"}
+          </button>
+          <MutationError mutation={save} />
+        </div>
+      )}
     </div>
   );
 }

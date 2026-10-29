@@ -43,7 +43,7 @@ import { cropToFirstUnit } from "./unit-profile.js";
 import type { UnitSide } from "./rank-photo.js";
 import { enqueueRetryLookup, retryNote } from "./retry-lookup.js";
 import { rejectionNote, type RejectedRequest, type RejectionReason } from "./enrich-feedback.js";
-import { tidyTruncatedName } from "./item-name.js";
+import { tidyTruncatedName, withoutInvisibles } from "./item-name.js";
 import { BARCODE_NS } from "./barcode-cache.js";
 import { findDecoder } from "./identifier-registry.js";
 import { registerBuiltinDecoders } from "./vin-decode.js";
@@ -227,7 +227,7 @@ export function consumerBrand(brand: string | null | undefined): string {
 export function withBrandPrefix(name: string | null, brand: string | null): string | null {
   const n = tidyTruncatedName(name);
   const b = consumerBrand(brand);
-  if (!n || !b) return name;
+  if (!n || !b) return name === null ? null : withoutInvisibles(name);
   const nl = n.toLowerCase();
   if (nl.includes(b.toLowerCase())) return n;
   const bw = b.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);

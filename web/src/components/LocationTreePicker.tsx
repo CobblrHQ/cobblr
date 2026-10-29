@@ -338,11 +338,16 @@ export function LocationTreePicker({
             if (e.relatedTarget && !panelRef.current?.contains(e.relatedTarget as Node)) close();
           }}
           className="z-[61] flex flex-col overflow-hidden rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl"
+          // Sized by the roomier side of the field, and opened above it when
+          // that is the side: sized by the room below alone, a field low in a
+          // phone's form got 200 px, pushed up over itself, and its list
+          // showed one place of three (#8878).
+          flipAbove={rect.top}
           style={{
             top: rect.bottom + 4,
             left: Math.max(8, Math.min(rect.left, window.innerWidth - 296)),
             width: Math.max(rect.width, 288),
-            maxHeight: Math.max(200, Math.min(window.innerHeight - rect.bottom - 16, 400)),
+            maxHeight: Math.min(400, Math.max(200, window.innerHeight - rect.bottom - 20, rect.top - 20)),
           }}
         >
           <div className="border-b border-line dark:border-slate-800 p-2">

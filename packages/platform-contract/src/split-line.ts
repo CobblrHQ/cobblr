@@ -198,6 +198,14 @@ export function withoutStoreCopySuffix(name: string): string {
   return name.replace(/^(.* \/ [^/]*?[A-Za-z]{3})-[1-9]$/, "$1");
 }
 
+/** What a split's parent is called. A photo split's parent is the photo of
+ *  several things, and its first read named only one of them: a shelf of four
+ *  spice jars stayed "Garlic" over its four parts (#8795). Every other split
+ *  keeps its line's own name. */
+export function splitParentName(parent: { ai_notes?: string | null; suggested_metadata?: unknown }, ownName: string | null): string | null {
+  return splitHowOf(parent) === "photo" ? "Group photo" : ownName;
+}
+
 /** A part's own words in one case on the screen (#6527: "light apricot",
  *  "Purple", "grass green" side by side). Each word that starts with a
  *  lower-case letter gets a capital; a stored value is never rewritten, and

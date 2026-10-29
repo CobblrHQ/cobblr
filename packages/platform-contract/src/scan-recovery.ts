@@ -8,6 +8,8 @@
 // row offers. Every refusal in core-scan that names an action takes its words
 // from SCAN_UNDO_ACTIONS; a test holds that each of those labels is on screen.
 
+import { agoWords } from "@cobblr/platform-contract/edited-from";
+
 /** The labels of the actions a refusal may send someone to. The buttons
  *  render these same strings. */
 export const SCAN_UNDO_ACTIONS = {
@@ -52,6 +54,22 @@ export function scanCombinedCount(meta: Record<string, unknown> | null | undefin
   return Number.isFinite(n) && n >= 2 ? n : 0;
 }
 
+/** Who filed a row, kept on it so the person who presses Add second is told
+ *  who beat them to it, never a bare "already confirmed" (#8852). */
+export const FILED_BY_KEY = "filed_by";
+
+export interface ScanFiledBy {
+  by: string | null;
+  by_name: string;
+  at: string;
+}
+
+export function scanFiledBy(meta: Record<string, unknown> | null | undefined): ScanFiledBy | null {
+  const v = meta?.[FILED_BY_KEY] as Partial<ScanFiledBy> | undefined;
+  if (!v || typeof v !== "object" || typeof v.at !== "string" || Number.isNaN(Date.parse(v.at))) return null;
+  return { by: typeof v.by === "string" ? v.by : null, by_name: typeof v.by_name === "string" && v.by_name ? v.by_name : "Someone", at: v.at };
+}
+
 /** Why a scan row may not be filed (Confirm, File into a bin, the
  *  dashboard's Add), or null when it may: the ONE rule filing and Restore
  *  share (#7144). A row already filed is done. A discarded row is not
@@ -59,8 +77,11 @@ export function scanCombinedCount(meta: Record<string, unknown> | null | undefin
  *  split that was undone, holds nothing of its own (its quantity lives in
  *  the row that absorbed it, and filing it counted it twice); any other
  *  deleted scan is restored first, so filing it is a choice made in view. */
-export function scanFilingRefusal(row: { status: string; suggested_metadata?: unknown }): { code: string; message: string } | null {
-  if (row.status === "resolved") return { code: "already_resolved", message: "This item was already confirmed." };
+export function scanFilingRefusal(row: { status: string; suggested_metadata?: unknown }, now = Date.now()): { code: string; message: string } | null {
+  if (row.status === "resolved") {
+    const by = scanFiledBy((row.suggested_metadata ?? null) as Record<string, unknown> | null);
+    return { code: "already_resolved", message: by ? `${by.by_name} filed this ${agoWords(new Date(by.at), now)}.` : "This item was already confirmed." };
+  }
   if (row.status === "discarded") {
     const elsewhere = scanRestoreRefusal(scanDeletedRecovery((row.suggested_metadata ?? null) as Record<string, unknown> | null));
     if (elsewhere) return { code: "contents_elsewhere", message: elsewhere };

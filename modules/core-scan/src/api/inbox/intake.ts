@@ -19,7 +19,7 @@ import { z } from "zod";
 import { platform, countOf } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { BundleInstaller, fileThroughConfirm } from "../../services/file-through-confirm.js";
-import { SCAN_PURPOSES, type ScanResolverTable, DESTINATION_KEY, type StoredDestination } from "@cobblr/platform-contract/scan-triage";
+import { SCAN_PURPOSES, type ScanResolverTable, DESTINATION_KEY, SCANNED_TOO_KEY, type StoredDestination } from "@cobblr/platform-contract/scan-triage";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../../db.js";
 import { asyncHandler, badBody, requireRole } from "../util.js";
 import { noteScanCaptured } from "../../services/activation.js";
@@ -173,7 +173,7 @@ intakeRouter.post(
       const relinkTarget = hasPhoto
         ? await db
             .selectFrom("core_scan_inbox_items")
-            .select(["id", "suggested_name", "image_file_id"])
+            .select(["id", "suggested_name", "image_file_id", "created_by_user_id"])
             .where("status", "=", "pending")
             .where("barcode_text", "=", body.barcode)
           .where(sql<string>`coalesce(suggested_metadata->>'scan_purpose', 'arrival')`, "=", body.purpose)
@@ -192,7 +192,7 @@ intakeRouter.post(
         relinkTarget ??
         (await db
           .selectFrom("core_scan_inbox_items")
-          .select(["id", "suggested_name", "image_file_id"])
+          .select(["id", "suggested_name", "image_file_id", "created_by_user_id"])
           .where("status", "=", "pending")
           .where("barcode_text", "=", body.barcode)
           .where(sql<string>`coalesce(suggested_metadata->>'scan_purpose', 'arrival')`, "=", body.purpose)
@@ -202,10 +202,17 @@ intakeRouter.post(
         // Attach this scan's photo to the entry if it didn't have one (the re-scan
         // is "more info" for the same item, not a duplicate).
         const attachPhoto = hasPhoto && !existing.image_file_id;
+        // Another person's scan of a code already waiting is as likely the
+        // same item as a second one: two people unpacking one box (#8851).
+        // The count still goes up, and the row asks which it was.
+        const someoneElse = body.purpose === "arrival" && !!existing.created_by_user_id && existing.created_by_user_id !== session.id;
         const bumped = await db
           .updateTable("core_scan_inbox_items")
           .set({
             quantity: body.purpose === "arrival" ? sql`quantity + 1` : sql`quantity`,
+            ...(someoneElse
+              ? { suggested_metadata: mergeMeta({ [SCANNED_TOO_KEY]: { by: session.id, by_name: session.display_name ?? null, at: new Date().toISOString() } }, ["reviewed"]) as never }
+              : {}),
             ...(attachPhoto ? { image_file_id: body.image_file_id } : {}),
             // Move the item into the session it was just re-scanned in, and stamp
             // the area if this scan carried one — so it groups with the scans

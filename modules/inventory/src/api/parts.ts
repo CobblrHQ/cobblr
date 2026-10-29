@@ -18,7 +18,8 @@ import { sql, type Kysely, type RawBuilder } from "kysely";
 import { csvCell } from "@cobblr/platform-contract/csv";
 import { daysUntilField, platform, stockDisclosureFromConfig, unreadableFieldsOf, type FilterPredicate } from "@cobblr/platform-contract";
 import { asMeasure } from "@cobblr/platform-contract/measure";
-import { formatMoneyPlain, moneyStorageOf, storedCents } from "@cobblr/platform-contract/money";
+import { formatMoneyPlain, moneyStorageOf, roundMoneyAmount, storedCents } from "@cobblr/platform-contract/money";
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { readsValues, refreshMeasureReadings } from "../measure-readings.js";
 import { floorDelta } from "../stock-floor.js";
 import { applyPartFilters, applyPartSearch, applyPartSort } from "./part-query.js";
@@ -480,7 +481,18 @@ partsRouter.get("/dashboard", asyncHandler(async (req, res) => {
     onHand: onHandCount(Number(p.qty), units.get(p.id) ?? []),
     assigned: Number(p.assigned_qty ?? 0), minQty: Number(p.min_qty),
   })).length;
-  res.json({ total: total.total, low });
+  // Nothing on the shelf is not "stocked" whether or not a minimum was set.
+  const empty = await listSelect(db).where("p.instance", "=", instance)
+    .where("p.archived", "=", false).where("p.min_qty", "is", null)
+    .where("p.approximate_qty", "is", null).where(sql<boolean>`p.qty <= 0`).execute();
+  const emptyUnits = await openUnitsFor(db, empty.map((p) => p.id));
+  const out = empty.filter((p) => onHandCount(Number(p.qty), emptyUnits.get(p.id) ?? []) - Number(p.assigned_qty ?? 0) <= 0).length;
+  // What the stock cost: each part's cost times what is on hand, for the parts that have a cost (#8791).
+  const worth = await db.selectFrom("inventory_parts")
+    .select([sql<string | null>`sum(cost * qty)::text`.as("sum"), sql<number>`count(cost)::int`.as("costed")])
+    .where("instance", "=", instance).where("archived", "=", false).where("cost", "is not", null).where(sql<boolean>`qty > 0`).executeTakeFirstOrThrow();
+  const currency = await platform().money.currency(tenantContext(req).org.id);
+  res.json({ total: total.total, low, out, stock_value: worth.sum === null ? null : roundMoneyAmount(Number(worth.sum), currency), currency });
 }));
 
 partsRouter.get(
@@ -908,7 +920,8 @@ partsRouter.get(
         r.asset_id != null ? String(r.asset_id) : "",
         r.name,
         r.description ?? "",
-        r.qty,
+        // A count as a number, not the column's nine decimals: "36", not "36.000000000" (#8791).
+        quantityNumber(Number(r.qty)),
         r.approximate_qty ?? "",
         r.unit,
         r.cost ?? "",

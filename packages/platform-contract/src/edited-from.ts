@@ -13,6 +13,17 @@
 // when. A field nobody touched since goes through, so two people changing
 // different fields of one record both keep theirs.
 
+/** How long ago a change was, as a refusal says it: "a moment ago",
+ *  "3 minutes ago", "an hour ago". */
+export function agoWords(at: Date, now = Date.now()): string {
+  const minutes = Math.round((now - at.getTime()) / 60_000);
+  if (minutes < 1) return "a moment ago";
+  if (minutes === 1) return "a minute ago";
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.round(minutes / 60);
+  return hours === 1 ? "an hour ago" : `${hours} hours ago`;
+}
+
 /** The header that carries the values a save's fields had when its form opened. */
 export const EDITED_FROM_HEADER = "x-cobblr-edited-from";
 

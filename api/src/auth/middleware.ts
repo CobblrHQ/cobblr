@@ -14,6 +14,8 @@ import { errors as joseErrors } from "jose";
 import { resolveApiToken } from "./api-tokens.js";
 import { tokenAccessAllows, type TokenAccess } from "./token-access.js";
 import { isStationQrScope, isStationScope, tokenScopeAllows } from "./scopes.js";
+import { isStationCrewScope, stationAddressOfScope } from "@cobblr/platform-contract/station-screen";
+import { stationHasCrew } from "../platform/station-crews.js";
 import { runWithActor, runVia, type Via } from "../lib/request-context.js";
 import { linkOrigin } from "../platform/link-origin.js";
 import { env } from "../env.js";
@@ -559,6 +561,16 @@ export async function requireAuth(
         : tokenAccessAllows({ access: tokenGrant.access, orgSlug: tokenGrant.orgSlug }, req.method, req.originalUrl);
       if (!verdict.ok) {
         res.status(403).json({ error: { code: verdict.code, message: verdict.message } });
+        return;
+      }
+    }
+    // A station that names who works at it writes only as the member picked
+    // (#8845): the tablet's own token, its approver's, may read and pick,
+    // and nothing else, so a shift's rows never fall back to the approver.
+    if (tokenScopes && tokenGrant?.orgId && req.method !== "GET" && !tokenScopes.some(isStationCrewScope)) {
+      const address = tokenScopes.map(stationAddressOfScope).find((a): a is string => !!a);
+      if (address && !/\/station-devices\/crew\/[^/]+\/pick$/.test(req.originalUrl.split("?")[0]!) && (await stationHasCrew(tokenGrant.orgId, address))) {
+        res.status(409).json({ error: { code: "station_who_first", message: "Pick who's working first." } });
         return;
       }
     }

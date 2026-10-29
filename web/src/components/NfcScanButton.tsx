@@ -2,11 +2,12 @@ import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { createNfcReader, isWebNfcAvailable, nfcFailure, nfcUrl } from "@cobblr/platform-web";
 import { typedVerdict } from "../lib/scanPayload";
+import type { OwnRoute } from "../lib/openOwnRoute";
 
-export function NfcScanButton({ onCobblrQr, onOpenPath, ownOrigins }: {
+export function NfcScanButton({ onCobblrQr, onOpenRoute, ownOrigins }: {
   ownOrigins?: readonly string[];
   onCobblrQr: (token: string) => void;
-  onOpenPath: (path: string) => void;
+  onOpenRoute: (route: OwnRoute) => void;
 }) {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +32,7 @@ export function NfcScanButton({ onCobblrQr, onOpenPath, ownOrigins }: {
         const url = nfcUrl(event.message.records);
         const verdict = url ? typedVerdict(url, ownOrigins) : null;
         if (verdict?.action === "route-qr") { stop(); onCobblrQr(verdict.token); }
-        else if (verdict?.action === "open") { stop(); onOpenPath(verdict.path); }
+        else if (verdict?.action === "open") { stop(); onOpenRoute(verdict.route); }
         else setError(`This tag has no ${productName()} label link. Try another tag.`);
       };
       await reader.scan({ signal: controller.signal });

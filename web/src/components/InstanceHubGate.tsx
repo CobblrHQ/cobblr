@@ -19,7 +19,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { LucideIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { ModuleInstanceChooser } from "./ModuleInstanceChooser";
+import { ModuleInstanceChooser, namedInstances } from "./ModuleInstanceChooser";
 
 export function InstanceHubGate({
   module,
@@ -48,7 +48,7 @@ export function InstanceHubGate({
   if (!atBase) return <>{children}</>;
 
   const items = q.data?.items ?? [];
-  const named = items.filter((i) => !i.is_default);
+  const named = namedInstances(items);
   const def = items.find((i) => i.is_default);
   const showHub = named.length > 0 && (def?.item_count ?? 0) === 0;
 

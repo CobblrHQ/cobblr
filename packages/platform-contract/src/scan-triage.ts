@@ -69,6 +69,7 @@ import {
   SPLIT_GROUP_DOUBT,
   SPLIT_SIBLINGS_DOUBT,
   THROTTLED_SENTENCE,
+  SCANNED_TOO_SENTENCE,
   UNTRUSTED_DOUBT,
   classifiedCodeOf,
   fillSentence,
@@ -170,6 +171,8 @@ const STALE_MS = SCAN_STALE_DAYS * 24 * 60 * 60 * 1000;
 
 interface TriageMeta {
   scan_purpose?: ScanPurpose;
+  /** Another person's scan of this code while it waited (#8851). */
+  scanned_too?: { by?: string | null; by_name?: string | null; at?: string };
   /** "store-code": a shop's own label, classified at insert; nothing to look
    *  up, so the reason is known before any lookup runs (#3017). */
   code_type?: string;
@@ -340,6 +343,18 @@ export function scanPurposeReview(row: ScanTriageRow): string | null {
   }
 }
 
+/** A second person's scan of this pending code (#8851): kept on the row by
+ *  the intake, and answered by setting the count or by Looks fine. */
+export const SCANNED_TOO_KEY = "scanned_too";
+
+/** Who else scanned this row's code while it waited, or null. */
+export function scanScannedToo(row: ScanTriageRow): { by_name: string } | null {
+  const v = metaOf(row).scanned_too as { by_name?: unknown } | undefined;
+  if (!v || typeof v !== "object") return null;
+  const name = typeof v.by_name === "string" ? v.by_name.trim().split(/\s+/)[0] : "";
+  return { by_name: name || "Someone else" };
+}
+
 export function needsScanReview(row: ScanTriageRow): boolean {
   if (scanPurposeReview(row)) return true;
   if (!isPending(row)) return false;
@@ -353,6 +368,7 @@ export function needsScanReview(row: ScanTriageRow): boolean {
   return (
     !!meta.low_trust ||
     !!meta.rate_limited ||
+    scanScannedToo(row) !== null ||
     (confidence != null && !Number.isNaN(confidence) && confidence < SCAN_REVIEW_CONFIDENCE) ||
     scanSourceConflict(row) !== null ||
     scanCheckFields(row) !== null ||
@@ -514,6 +530,8 @@ export function scanReviewReason(
   // Before "no name": a receipt whose read failed is not an unnamed item.
   if (scanReceiptReadFailed(row)) return RECEIPT_UNREAD_SENTENCE;
   if (!isNamed(row)) return classifiedCodeOf(meta)?.note ?? NO_NAME_SENTENCE;
+  const scannedToo = scanScannedToo(row);
+  if (scannedToo) return fillSentence(SCANNED_TOO_SENTENCE, { who: scannedToo.by_name });
   if (meta.rate_limited) return THROTTLED_SENTENCE;
   // A row nothing tried to read (no provider here) was not one the AI could
   // not read: the reason it is flagged is the next one down (#3233).
@@ -1077,6 +1095,9 @@ export interface ScanRowStateContext extends ScanDestinationContext {
    *  blocks. Once a plain `permitted` boolean that nothing in the product
    *  set, so the blocked state never rendered (#3126). */
   permittedFor?: (module: string | null) => boolean | null | undefined;
+  /** Whether this person may add to a record already in the module (a
+   *  restock), which is a different grant from creating one (#8850). */
+  mayRestock?: (module: string | null) => boolean | null | undefined;
   /** The person may install a bundle or turn on a module (the role).
    *  Default true. */
   canInstall?: boolean;
@@ -1409,7 +1430,11 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
   if (purpose) return review(purpose);
   // No grant makes a table in an app this deployment lacks: another table is
   // the only next step, for a person with or without the permission.
-  if (permitted === false) return moduleOff === "absent" && destination ? review(fillSentence(UNAVAILABLE_SENTENCE, { table: destination.label })) : blocked(BLOCKED_SENTENCE);
+  // Adding to a record already on the shelf makes nothing: a member restocks
+  // without the create permission, as the server lets them (#8850). Only a
+  // new record, or a new place of one, waits on the grant.
+  const restocks = permitted === false && ctx.mayRestock?.(destination?.module ?? null) === true && !meta.reviewed && scanRebuy(row, ctx).kind === "adds" && !!destination?.updates && !destination.updates.new_place;
+  if (permitted === false && !restocks) return moduleOff === "absent" && destination ? review(fillSentence(UNAVAILABLE_SENTENCE, { table: destination.label })) : blocked(BLOCKED_SENTENCE);
   if (needsScanReview(withoutVouchedNameDoubt(row))) return review(scanReviewReason(row, { fieldLabel: ctx.fieldLabel }) ?? UNTRUSTED_DOUBT);
   if (!meta.reviewed) {
     // Another of a thing the workspace COUNTS is a re-purchase: +1 more, one

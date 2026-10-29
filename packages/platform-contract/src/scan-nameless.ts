@@ -26,6 +26,8 @@ export type NamelessReason =
   | "classified-code"
   /** The model looked and saw no one item (identify_failure no_item). */
   | "no-item"
+  /** The model named nothing and the photo is out of focus (#8796). */
+  | "blurry"
   /** A code no catalog knew; a web guess held back, or the lookup ran out
    *  (held_reason, or the lookup's own note). */
   | "unresolved-code"
@@ -48,6 +50,7 @@ export function namelessReason(
   if (unresolvedCode) return "unresolved-code";
   // Only a KNOWN "nothing here can identify a photo" earns the setup words.
   if (status && status.identify_available === false) return "no-identify";
+  if (failure?.code === "blurry") return "blurry";
   if (failure?.code === "no_item") return "no-item";
   if (failure && identifyNeverTried(failure)) return "no-identify";
   if (failure?.code === "ai_unavailable" || failure?.code === "no_answer") return "ai-failed";
@@ -64,7 +67,7 @@ export const MATCH_FAILED_WORDS = "Matching failed. Try it again.";
 export const RUN_NO_ANSWER_WORDS = "the AI didn’t answer";
 
 /** The way forward a card offers beside the line. */
-export type NamelessAction = "set-up-ai" | "read-as-receipt" | "identify-again" | "identify" | null;
+export type NamelessAction = "set-up-ai" | "read-as-receipt" | "retake" | "identify-again" | "identify" | null;
 
 export interface NamelessWords {
   /** The desk card's line before the name box. */
@@ -93,6 +96,10 @@ export function namelessWords(
       return { line: opts.classifiedLine ?? "Name it:", action: null, actionLabel: null, remedy: null };
     case "no-item":
       return { line: `Name this ${noun}, or`, action: "read-as-receipt", actionLabel: "read it as a receipt", remedy: null };
+    case "blurry":
+      // Out of focus is not "nothing in it": the way forward is another
+      // photo, never reading a blurred jar as a receipt (#8796).
+      return { line: `Too blurry to read. Name this ${noun}, or`, action: "retake", actionLabel: "take it again", remedy: null };
     case "unresolved-code":
       return {
         line: opts.heldGuess

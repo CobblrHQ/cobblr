@@ -134,6 +134,18 @@ export function aiStatusLine(
         ),
         cta: { to: "/me/connections", label: "Connect your own \u2192" },
       };
+    case "not_shared":
+      // AI is here, connected "Just me" by someone else: not the plan, not an
+      // allowance (#8855). They can share it; this person can bring their own.
+      return {
+        text: (
+          <>
+            <strong>AI here is {status.kept_by ?? "someone else"}'s own connection.</strong> It answers only
+            their calls. Ask them to share it with the workspace, or connect your own.{" "}
+          </>
+        ),
+        cta: { to: "/me/connections", label: "Connect your own \u2192" },
+      };
     default:
       return { text: null, cta: { to: "/configuration/ai", label: "Connect AI \u2192" } };
   }

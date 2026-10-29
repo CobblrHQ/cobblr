@@ -1052,6 +1052,12 @@ export function PartsListPage() {
         onClear={() => setSelected(new Set())}
         actions={
           <>
+            {/* Moving is what most selections are for: it leads (#8880). */}
+            <BulkMoveToPlace
+              rows={partItems.filter((p) => selected.has(p.id))}
+              onMoved={clearTicks}
+              listMove={otherLists ? { fromInstance: instance ?? "inventory" } : undefined}
+            />
             <BulkSetField records={Array.from(selected).map((id) => ({ kind: instance && instance !== "inventory" ? `${instance}:item` : "inventory:part", id }))} onDone={() => setSelected(new Set())} />
             <WhatsStillHereButton api={api} slug={orgSlug} scope={{ ids: Array.from(selected) }} label="the things you picked" className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent">
               <ClipboardCheck size={12} /> What's still here?
@@ -1066,11 +1072,6 @@ export function PartsListPage() {
             </button>
             <BulkTagAction count={selected.size} placeholder="e.g. urgent, archive, low-stock" onTag={bulkTag} />
             <BulkGiveTo kind={instance && instance !== "inventory" ? `${instance}:item` : "inventory:part"} ids={Array.from(selected)} onDone={clearTicks} />
-            <BulkMoveToPlace
-              rows={partItems.filter((p) => selected.has(p.id))}
-              onMoved={clearTicks}
-              listMove={otherLists ? { fromInstance: instance ?? "inventory" } : undefined}
-            />
             {mayDelete && <button
               type="button"
               onClick={() => void bulkDelete()}

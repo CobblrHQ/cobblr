@@ -143,7 +143,13 @@ export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | unde
   if (exprs.length === 0) return null;
   const hasValues = !!(columns.json?.length || readings);
   const read = hasValues && eb.and && eb.not ? measureTokens(needle) : null;
-  if (!read) return eb.or(exprs);
+  if (!read) {
+    // Every word somewhere on the record, in any order: as one phrase, "M3
+    // bolts" found nothing in a workspace of "M3 x 10 bolts" (#8866).
+    const words = needle.split(/\s+/).filter(Boolean);
+    if (words.length < 2 || !eb.and) return eb.or(exprs);
+    return eb.and(words.map((w) => eb.or(anywhere(w))));
+  }
   return valueSearchWhere(eb, read, {
     text: anywhere,
     fields: (columns.json ?? []) as readonly string[],

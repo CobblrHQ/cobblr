@@ -82,7 +82,7 @@ export async function quickFileRow(
     ...(serial ? { serial_number: serial } : {}),
     ...(dest.fields && Object.keys(dest.fields).length ? { metadata: dest.fields } : {}),
   };
-  const filed = await api.confirmScanItem(slug, item.id, {
+  const filed = await api.confirmScanItem(slug, item, {
     target_module: dest.module,
     target_kind: baseKind(dest.module),
     instance,

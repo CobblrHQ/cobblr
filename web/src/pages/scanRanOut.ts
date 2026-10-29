@@ -45,7 +45,7 @@ export function useRanOut(item: ScanInboxItem | null, viewer: ScanRowStateContex
         const cand = destinationCandidateOf(item, viewer)!;
         const bundle = (cand as { bundle_external_id?: string | null }).bundle_external_id ?? null;
         const instance = bundle ? await resolveInstanceForFiling(activeSlug, bundle, cand.instance ?? null) : (cand.instance ?? null);
-        const r = await api.confirmScanItem(activeSlug, item.id, {
+        const r = await api.confirmScanItem(activeSlug, item, {
           target_module: cand.module,
           target_kind: baseKind(cand.module),
           ...(instance ? { instance } : {}),

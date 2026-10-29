@@ -172,6 +172,11 @@ export const HELD_GUESS_BECAUSE = "One page on the web says so; nothing confirme
 export const LABEL_GUESS_SOURCE = "read off its label";
 export const LABEL_GUESS_BECAUSE = "Read off the label in your scan; check it reads right.";
 
+/** A second person scanned the same code while the row waited (#8851):
+ *  another one, or one item scanned by both of them. The count already holds
+ *  both; a person who knows it was one sets it. */
+export const SCANNED_TOO_SENTENCE = "{who} scanned this too. Set the count if it was one.";
+
 /** A row whose lookup was throttled and has not answered. */
 export const THROTTLED_SENTENCE = "The lookup was throttled. Wait, or name it yourself.";
 

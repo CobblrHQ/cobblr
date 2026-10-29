@@ -11,22 +11,13 @@
 // the record as it was read for its history. A route the kind registry does
 // not map (a line inside an order) calls refuseStaleEdit with its own read.
 import type { Request, Response } from "express";
-import { EDITED_FROM_HEADER, decodeEditedFrom, staleFields } from "@cobblr/platform-contract/edited-from";
+import { EDITED_FROM_HEADER, agoWords, decodeEditedFrom, staleFields } from "@cobblr/platform-contract/edited-from";
 import { changesIn } from "@cobblr/platform-contract/activity-changes";
 
 /** How a field reads in a sentence: its own words, not its column. */
 function said(field: string): string {
   const name = field.replace(/^metadata\./, "").replace(/_id$/, "").replace(/_/g, " ");
   return name === "parent" ? "where it is" : name;
-}
-
-function ago(at: Date, now = Date.now()): string {
-  const minutes = Math.round((now - at.getTime()) / 60_000);
-  if (minutes < 1) return "a moment ago";
-  if (minutes === 1) return "a minute ago";
-  if (minutes < 60) return `${minutes} minutes ago`;
-  const hours = Math.round(minutes / 60);
-  return hours === 1 ? "an hour ago" : `${hours} hours ago`;
 }
 
 /** Who last changed one of these fields of this record, and when. */
@@ -52,7 +43,7 @@ async function lastChangeOf(orgId: string, id: string, fields: readonly string[]
 export function staleEditMessage(fields: readonly string[], last: { who: string; at: Date } | null, now = Date.now()): string {
   const what = fields.map(said);
   const list = what.length === 1 ? what[0]! : `${what.slice(0, -1).join(", ")} and ${what.at(-1)}`;
-  const by = last ? `${last.who} changed ${list} ${ago(last.at, now)}` : `${list[0]!.toUpperCase()}${list.slice(1)} changed`;
+  const by = last ? `${last.who} changed ${list} ${agoWords(last.at, now)}` : `${list[0]!.toUpperCase()}${list.slice(1)} changed`;
   return `${by}, after you opened this, so nothing was saved. Look at it again and save what you still want.`;
 }
 

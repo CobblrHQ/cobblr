@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { apiErrorMessage, toolFail, toolOk } from "../api.js";
 import { type WorkspaceTool, firstSentence, offerableToAssistant } from "../tool-kit.js";
+import { RECIPIENT_ROLES } from "@cobblr/platform-contract/recipients";
+
+type Choice = { value: string; label: string };
+/** The most names a "who" argument lists: a workspace's People run to tens,
+ *  and past this the model is told how many it does not see. */
+const MOST_PEOPLE = 40;
 
 const tool: WorkspaceTool = {
   name: "list_actions",
@@ -30,7 +36,7 @@ const tool: WorkspaceTool = {
             module_name?: string;
             matched_kinds?: string[];
             scope?: string;
-            args_schema?: Record<string, { label?: string; type?: string; required?: boolean; oneOf?: string }> | null;
+            args_schema?: Record<string, { label?: string; type?: string; required?: boolean; oneOf?: string; choices?: Choice[]; choicesFrom?: string }> | null;
             undoable?: boolean;
             refused_here?: string | null;
             user_invokable?: boolean;
@@ -56,6 +62,26 @@ const tool: WorkspaceTool = {
       .filter((a) => !actionId || a.id === actionId)
       .filter((a) => !kind || (a.scope === "workspace" ? takesAKind(a) : (a.matched_kinds ?? []).includes(kind)));
     if (!kind && !actionId) return toolOk({ index: Object.fromEntries(picked.map((a) => [a.id, a.label])) });
+    // A "who" argument picks from the People, by id. Listed without them,
+    // "when stock hits zero, email me" spent its rounds hunting a list of
+    // people no tool reads and ended with no words (#8331, 2026-10-29), so
+    // the names go with the argument, the asker's own marked "(you)".
+    const wantsPeople = picked.some((a) => Object.values(a.args_schema ?? {}).some((s) => s?.choicesFrom === "people" || s?.choicesFrom === "recipients"));
+    let people: Choice[] = [];
+    let morePeople = 0;
+    if (wantsPeople) {
+      const r = await api.request("GET", "/people");
+      const all = r.status >= 400 ? [] : ((r.body.items as Array<{ id?: string; name?: string; you?: boolean }> | undefined) ?? []);
+      const mine = all.filter((p) => p.you);
+      const listed = [...mine, ...all.filter((p) => !p.you)].filter((p) => p.id).slice(0, MOST_PEOPLE);
+      people = listed.map((p) => ({ value: String(p.id), label: p.you ? `${p.name ?? "You"} (you)` : String(p.name ?? "Someone") }));
+      morePeople = Math.max(0, all.length - listed.length);
+    }
+    const choicesOf = (spec: { choices?: Choice[]; choicesFrom?: string } | undefined): Choice[] | null =>
+      spec?.choicesFrom === "recipients" ? [...RECIPIENT_ROLES.map((r) => ({ value: r.value, label: r.label })), ...people]
+        : spec?.choicesFrom === "people" ? people
+          : spec?.choices?.length ? spec.choices
+            : null;
     // Project to what a caller needs to actually RUN one. `args` is the
     // decisive field: an action listed without its arguments is an action
     // that cannot be invoked, and the honest-looking conclusion is "I have no
@@ -109,6 +135,10 @@ const tool: WorkspaceTool = {
                     // enough to matter, and the order inside a list is
                     // frequently the whole point of the call.
                     ...(type === "list" ? { pass_as: 'a JSON array, in order — ["…", "…"]' } : {}),
+                    // What it takes, as values: a form offers these, and a
+                    // model told only "Who" invents a value the door refuses.
+                    ...(choicesOf(spec) ? { choices: choicesOf(spec), pass_as: "a choice's value" } : {}),
+                    ...((spec?.choicesFrom === "people" || spec?.choicesFrom === "recipients") && morePeople ? { more_people_not_listed: morePeople } : {}),
                   },
                 ];
               }),

@@ -49,3 +49,22 @@ export function mayCreateIn(
   const gate = createCapabilityForModule(module);
   return gate ? caps.grants.includes(gate) : true;
 }
+
+/** The capability behind adding to a record already there (a restock, "+1
+ *  more"): the module's own quantity door checks it, not the create gate
+ *  (#8850). A member holds it by default; a role that leaves stock out does
+ *  not. */
+const RESTOCK_BY_MODULE: Record<string, string> = {
+  inventory: "inventory:adjust-stock",
+};
+
+/** May this person add to a record already in this module? */
+export function mayRestockIn(
+  module: string | null | undefined,
+  caps: { all: boolean; grants: readonly string[] } | null | undefined,
+): boolean | null {
+  if (!caps) return null;
+  if (caps.all) return true;
+  const gate = module ? RESTOCK_BY_MODULE[module] : undefined;
+  return gate ? caps.grants.includes(gate) : true;
+}

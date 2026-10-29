@@ -528,6 +528,7 @@ export function SortingPlanView({
     // This surface skipped the install and re-created the 2026-08-22 Groceries
     // failure: every line 404'd against a bundle nobody had installed.
     const instanceByBundle = new Map<string, string | undefined>();
+    const together = [...first.ready, ...second.ready].map((r) => r.id);
     for (const it of [...first.ready, ...second.ready]) {
       const id = it.id;
       const cand = it.suggested_candidates![0]!;
@@ -546,7 +547,8 @@ export function SortingPlanView({
         instance = instanceByBundle.get(bundleId);
       }
       try {
-        await api.confirmScanItem(slug, id, {
+        await api.confirmScanItem(slug, it, {
+          filed_with: together,
           target_module: cand.module,
           target_kind: cand.kind,
           instance,

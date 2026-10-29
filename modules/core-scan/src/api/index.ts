@@ -35,6 +35,9 @@ import { registerRedoSplitAction } from "./redo-split-action.js";
 import { registerRanOutAction } from "./ran-out-action.js";
 import { registerMarkBrokenAction } from "./mark-broken-action.js";
 import { registerUnmarkBrokenAction } from "./unmark-broken-action.js";
+import { registerMarkArrivedDamagedAction } from "./mark-arrived-damaged-action.js";
+
+registerMarkArrivedDamagedAction();
 
 registerRanOutAction();
 registerMarkBrokenAction();

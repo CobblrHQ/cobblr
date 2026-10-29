@@ -15,6 +15,7 @@ import { ScanScopeChip } from "./ScanScopeChip";
 import { scanResolveActionFor } from "../lib/scanResolveAction";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { useOpenOwnRoute } from "../lib/openOwnRoute";
 
 /**
  * App-wide hardware-scanner (keyboard-wedge) intake + Cobblr-QR navigation.
@@ -75,6 +76,7 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
   const scanOrigins = useScanOrigins(activeSlug);
   const loc = useLocation();
   const navigate = useNavigate();
+  const openOwnRoute = useOpenOwnRoute();
   const toast = useToast();
   const qc = useQueryClient();
   // Set when a QR resolved but we haven't been told whether to auto-jump — the
@@ -215,7 +217,7 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
           void handleQr(v.token);
           return;
         case "open":
-          navigate(v.path);
+          openOwnRoute(v.route);
           return;
         case "ignore":
           return;

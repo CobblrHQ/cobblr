@@ -22,7 +22,11 @@ import { scanPurpose, scanPurposeReview, FILED_INTO_KEY, isPaperworkRow, scanMat
 import { bearer, sessionUser, tenantContext, tenantDb } from "../../db.js";
 import { asyncHandler, badBody, requireRole } from "../util.js";
 import { brokenMarkOf, markBroken, unmarkBroken } from "../../services/mark-broken.js";
+import { markArrivedDamaged } from "../../services/arrived-damaged.js";
+import { ARRIVED_DAMAGED_KEY, scanArrivedDamaged } from "@cobblr/platform-contract/scan-arrived-damaged";
 import { mergeMeta } from "../../services/metadata.js";
+import { SENDING_BACK_EXPIRES_MS, SENDING_BACK_KEY, SENT_BACK_KEY, actOf, sentBackRefusal } from "../../services/who-did-it.js";
+import { FILED_BY_KEY, scanFilingRefusal } from "@cobblr/platform-contract/scan-recovery";
 import { newPlaceAt } from "../../services/tracked-stamp.js";
 import { matchQuery, scanPlaceOf, trackedMatchFor, type TrackedMatchStamp } from "../../services/tracked-stamp.js";
 import { filingDestination } from "../../services/destination.js";
@@ -282,6 +286,24 @@ attachRouter.post(
   }),
 );
 
+// An item a delivery brought in damaged (#8854): settled without adding it
+// to stock, marked for the owner checking the delivery. Undo is unconfirm.
+// AI-REACH: action core-scan:mark-arrived-damaged
+attachRouter.post(
+  "/inbox/:id/arrived-damaged",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "core-scan:mark-arrived-damaged"))) return;
+    const parsed = BrokenBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const r = await markArrivedDamaged(tenantDb(req), tenantContext(req).org.id, actOf(req), String(req.params.id), parsed.data.note || null);
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.json({ item: r.item, damaged: r.damaged });
+  }),
+);
+
 // ─────────────────────── POST /inbox/:id/unconfirm ─────────────────────
 // REVERT a commit: bring a resolved scan back to the pending inbox so a wrong
 // confirm can be redone (the mirror of restore-from-discarded, for the other
@@ -312,6 +334,14 @@ attachRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
+    // Two people pressing Undo on one filing at once each took its count back
+    // off (#8848). The one who arrives second, or while the first is still at
+    // it, takes nothing and hears who did.
+    const late = sentBackRefusal(row);
+    if (late) {
+      res.status(409).json({ error: { code: "already_sent_back", message: late } });
+      return;
+    }
     if (row.status !== "resolved") {
       res.status(422).json({
         error: { code: "not_resolved", message: "Only a committed scan can be sent back." },
@@ -340,176 +370,217 @@ attachRouter.post(
       return;
     }
 
-    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
-    const attached = meta.attached_to as
-      | { kind?: string; id?: string; instance?: string | null; mode?: string; qty_added?: number; qty_field?: string; qty_after?: number; undo?: unknown }
-      | undefined;
-    let entityDeleted = false;
-    let note: string | null = null;
+    // Claimed before anything is reversed: of two presses at once, one
+    // updates the row and the other finds it claimed.
+    const act = actOf(req);
+    const claimed = await db
+      .updateTable("core_scan_inbox_items")
+      .set({ suggested_metadata: mergeMeta({ [SENDING_BACK_KEY]: act }) as never })
+      .where("id", "=", id)
+      .where("status", "=", "resolved")
+      .where((eb) =>
+        eb.or([
+          eb(sql`suggested_metadata->${SENDING_BACK_KEY}`, "is", null),
+          eb(sql`(suggested_metadata->${SENDING_BACK_KEY}->>'at')::timestamptz`, "<", new Date(Date.now() - SENDING_BACK_EXPIRES_MS)),
+        ]),
+      )
+      .returning("id")
+      .executeTakeFirst();
+    if (!claimed) {
+      const now = await db.selectFrom("core_scan_inbox_items").select(["status", "suggested_metadata"]).where("id", "=", id).executeTakeFirst();
+      const message = (now && sentBackRefusal(now)) ?? "Someone else is sending this back now, so nothing more was taken off.";
+      res.status(409).json({ error: { code: "already_sent_back", message } });
+      return;
+    }
+    try {
+      await sendBack();
+    } catch (err) {
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ suggested_metadata: mergeMeta({}, [SENDING_BACK_KEY]) as never })
+        .where("id", "=", id)
+        .execute()
+        .catch(() => {});
+      throw err;
+    }
+    return;
 
-    const broken = brokenMarkOf(meta);
-    if (broken) {
-      // A broken mark made no thing: its repair entry comes off, the record stays.
-      note = await unmarkBroken(ctx.org.id, sessionUser(req)?.id ?? null, broken);
-    } else if (attached?.id && (attached.mode === NEW_BIN || attached.mode === INTO_BIN)) {
-      // A bin this scan made goes away with it; a bin that was already there
-      // stays, given back what it said before the scan's identity landed.
-      const writer = await platform().entities.getWriter(ctx.org.id, attached.kind ?? "core-locations:location");
-      const before = (attached as { before?: { metadata?: unknown; description?: unknown; image_path?: unknown } }).before;
-      if (attached.mode === NEW_BIN) {
-        const gone = writer?.delete ? await writer.delete(ctx.org.id, attached.id).then(() => true).catch(() => false) : false;
-        if (gone) entityDeleted = true;
-        else note = "The bin it made couldn't be removed automatically. Delete it from Locations.";
-      } else if (writer && before) {
-        await writer.update(ctx.org.id, attached.id, { metadata: before.metadata ?? {}, description: before.description ?? null, image_path: before.image_path ?? null })
-          .then(() => { note = "The bin stays, as it was before this scan."; })
-          .catch(() => { note = "The bin stays; its product details from this scan couldn't be taken off."; });
-      } else note = "The bin stays.";
-    } else if (attached?.id && attached.mode === "add-place") {
-      // Another place of an item: that place's row goes, through its module's
-      // own delete (which unhooks it from the item), and the item stays.
-      const target = attached.kind ? await scanTargetOf(ctx.org.id, attached.kind, attached.instance ?? undefined).catch(() => null) : null;
-      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-      const path = target?.instance
-        ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${target.instance}/items/${attached.id}`
-        : target
-          ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${target.scannable.createEndpoint}/${attached.id}`
-          : null;
-      const gone = path
-        ? await apiFetch(path, { method: "DELETE", headers: { Authorization: `Bearer ${bearer(req) ?? ""}` } }).then((r) => r.ok || r.status === 404).catch(() => false)
-        : false;
-      if (gone) entityDeleted = true;
-      else note = "The place it added couldn't be removed automatically. Remove that place from the item's page.";
-    } else if (attached?.id) {
-      // An attach that restocked kept the record's own way back (the lot it
-      // started, the dates it stamped, the count): put that back, while the
-      // record still reads what the attach left. Otherwise, or for an older
-      // attach that only recorded what it added, take exactly that back off
-      // the record through its own quantity door. Either way the ledger is
-      // asked to forget the purchase, so a bulk "File everything" that
-      // attached to the wrong thing is undoable line by line.
-      const who = sessionUser(req)?.id ?? null;
-      const restored =
-        attached.mode === "add-qty" || attached.mode === "replace" || attached.mode === "count"
-          ? await restoreAttachedRecord(ctx.org.id, id, attached, who).catch(() => null)
-          : null;
-      if (restored) {
-        note = restored.refused
-          ? `${restored.title}: ${restored.refused}. Nothing was put back.`
-          : `Took the ${Number(attached.qty_added ?? 0)} back off ${restored.title}, and the lot it started.`;
-      } else {
-        const token = bearer(req) ?? "";
+    async function sendBack(): Promise<void> {
+      if (!row) return;
+      const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+      const attached = meta.attached_to as
+        | { kind?: string; id?: string; instance?: string | null; mode?: string; qty_added?: number; qty_field?: string; qty_after?: number; undo?: unknown }
+        | undefined;
+      let entityDeleted = false;
+      let note: string | null = null;
+
+      const broken = brokenMarkOf(meta);
+      if (scanArrivedDamaged(meta)) {
+        // It added nothing anywhere: only the mark comes off.
+        note = "It is no longer marked as arrived damaged.";
+      } else if (broken) {
+        // A broken mark made no thing: its repair entry comes off, the record stays.
+        note = await unmarkBroken(ctx.org.id, sessionUser(req)?.id ?? null, broken);
+      } else if (attached?.id && (attached.mode === NEW_BIN || attached.mode === INTO_BIN)) {
+        // A bin this scan made goes away with it; a bin that was already there
+        // stays, given back what it said before the scan's identity landed.
+        const writer = await platform().entities.getWriter(ctx.org.id, attached.kind ?? "core-locations:location");
+        const before = (attached as { before?: { metadata?: unknown; description?: unknown; image_path?: unknown } }).before;
+        if (attached.mode === NEW_BIN) {
+          const gone = writer?.delete ? await writer.delete(ctx.org.id, attached.id).then(() => true).catch(() => false) : false;
+          if (gone) entityDeleted = true;
+          else note = "The bin it made couldn't be removed automatically. Delete it from Locations.";
+        } else if (writer && before) {
+          await writer.update(ctx.org.id, attached.id, { metadata: before.metadata ?? {}, description: before.description ?? null, image_path: before.image_path ?? null })
+            .then(() => { note = "The bin stays, as it was before this scan."; })
+            .catch(() => { note = "The bin stays; its product details from this scan couldn't be taken off."; });
+        } else note = "The bin stays.";
+      } else if (attached?.id && attached.mode === "add-place") {
+        // Another place of an item: that place's row goes, through its module's
+        // own delete (which unhooks it from the item), and the item stays.
+        const target = attached.kind ? await scanTargetOf(ctx.org.id, attached.kind, attached.instance ?? undefined).catch(() => null) : null;
         const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-        const took = await reverseAttachedQty(ctx.org.id, id, attached, who, {
-          baseUrl,
-          slug: ctx.org.slug,
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        }).catch(() => null);
-        note =
-          attached.mode === "add-qty"
-            ? took
-              ? took.refused
-                ? `${took.title}: ${took.refused}. Nothing was taken back.`
-                : took.qty < Number(attached.qty_added ?? 0)
-                  ? `Took the ${took.qty} back off ${took.title} (only that many were left).`
-                  : `Took the ${took.qty} back off ${took.title}.`
-              : "The existing entry it attached to was left untouched — undo the quantity bump there if needed."
-            : "The existing entry it attached to was left untouched.";
-      }
-    } else if (row.target_entity_id && row.target_module && row.target_kind) {
-      const kindKey = row.target_kind.includes(":")
-        ? row.target_kind
-        : `${row.target_module}:${row.target_kind}`;
-      const existing = await platform()
-        .entities.lookup(ctx.org.id, kindKey, row.target_entity_id)
-        .catch(() => null);
-      if (!existing) {
-        note = "The created entry was already deleted.";
-      } else if (row.target_entity_id === row.target_location_id) {
-        // The record is the very place the scan was taken in: a scan put onto
-        // the bin it was scanned into, from before Undo recorded whether the
-        // scan made it. That bin was there first (and may hold things), so it
-        // stays. Nothing a scan creates is ever its own location.
-        note = `${existing.title} stays: it is the place this scan was taken in.`;
-      } else {
-        const writer = await platform().entities.getWriter(ctx.org.id, kindKey);
-        if (!writer?.delete) {
-          note = `The created entry couldn't be removed automatically — delete it from its own page (${existing.title}).`;
+        const path = target?.instance
+          ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${target.instance}/items/${attached.id}`
+          : target
+            ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${target.scannable.createEndpoint}/${attached.id}`
+            : null;
+        const gone = path
+          ? await apiFetch(path, { method: "DELETE", headers: { Authorization: `Bearer ${bearer(req) ?? ""}` } }).then((r) => r.ok || r.status === 404).catch(() => false)
+          : false;
+        if (gone) entityDeleted = true;
+        else note = "The place it added couldn't be removed automatically. Remove that place from the item's page.";
+      } else if (attached?.id) {
+        // An attach that restocked kept the record's own way back (the lot it
+        // started, the dates it stamped, the count): put that back, while the
+        // record still reads what the attach left. Otherwise, or for an older
+        // attach that only recorded what it added, take exactly that back off
+        // the record through its own quantity door. Either way the ledger is
+        // asked to forget the purchase, so a bulk "File everything" that
+        // attached to the wrong thing is undoable line by line.
+        const who = sessionUser(req)?.id ?? null;
+        const restored =
+          attached.mode === "add-qty" || attached.mode === "replace" || attached.mode === "count"
+            ? await restoreAttachedRecord(ctx.org.id, id, attached, who).catch(() => null)
+            : null;
+        if (restored) {
+          note = restored.refused
+            ? `${restored.title}: ${restored.refused}. Nothing was put back.`
+            : `Took the ${Number(attached.qty_added ?? 0)} back off ${restored.title}, and the lot it started.`;
         } else {
-          try {
-            await writer.delete(ctx.org.id, row.target_entity_id);
-            entityDeleted = true;
-          } catch (err) {
-            note = `The created entry couldn't be removed (${(err as Error).message}) — delete it from its own page.`;
+          const token = bearer(req) ?? "";
+          const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+          const took = await reverseAttachedQty(ctx.org.id, id, attached, who, {
+            baseUrl,
+            slug: ctx.org.slug,
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          }).catch(() => null);
+          note =
+            attached.mode === "add-qty"
+              ? took
+                ? took.refused
+                  ? `${took.title}: ${took.refused}. Nothing was taken back.`
+                  : took.qty < Number(attached.qty_added ?? 0)
+                    ? `Took the ${took.qty} back off ${took.title} (only that many were left).`
+                    : `Took the ${took.qty} back off ${took.title}.`
+                : "The existing entry it attached to was left untouched — undo the quantity bump there if needed."
+              : "The existing entry it attached to was left untouched.";
+        }
+      } else if (row.target_entity_id && row.target_module && row.target_kind) {
+        const kindKey = row.target_kind.includes(":")
+          ? row.target_kind
+          : `${row.target_module}:${row.target_kind}`;
+        const existing = await platform()
+          .entities.lookup(ctx.org.id, kindKey, row.target_entity_id)
+          .catch(() => null);
+        if (!existing) {
+          note = "The created entry was already deleted.";
+        } else if (row.target_entity_id === row.target_location_id) {
+          // The record is the very place the scan was taken in: a scan put onto
+          // the bin it was scanned into, from before Undo recorded whether the
+          // scan made it. That bin was there first (and may hold things), so it
+          // stays. Nothing a scan creates is ever its own location.
+          note = `${existing.title} stays: it is the place this scan was taken in.`;
+        } else {
+          const writer = await platform().entities.getWriter(ctx.org.id, kindKey);
+          if (!writer?.delete) {
+            note = `The created entry couldn't be removed automatically — delete it from its own page (${existing.title}).`;
+          } else {
+            try {
+              await writer.delete(ctx.org.id, row.target_entity_id);
+              entityDeleted = true;
+            } catch (err) {
+              note = `The created entry couldn't be removed (${(err as Error).message}) — delete it from its own page.`;
+            }
           }
         }
       }
-    }
 
-    // If this line came off a receipt, its order line was born at parse and
-    // stays: sending the item back only RELEASES the claim (part_id back to
-    // NULL). This used to delete the line and then the order when it emptied,
-    // which was right when confirm had created both; now the receipt is the
-    // order's reason to exist, and undoing a filing is not un-reading it.
-    const receiptOrderId = typeof meta.receipt_order_id === "string" ? meta.receipt_order_id : null;
-    const receiptOrderItemId =
-      typeof meta.receipt_order_item_id === "string" ? meta.receipt_order_item_id : null;
-    if (receiptOrderId && receiptOrderItemId) {
-      const token = bearer(req);
-      if (token) {
-        const released = await claimOrderLine({
-          baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
-          slug: ctx.org.slug,
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          orderId: receiptOrderId,
-          itemId: receiptOrderItemId,
-          partId: null,
-        });
-        if (released) note = note ? `${note} Its line on the purchase order is unclaimed again.` : "Its line on the purchase order is unclaimed again.";
+      // If this line came off a receipt, its order line was born at parse and
+      // stays: sending the item back only RELEASES the claim (part_id back to
+      // NULL). This used to delete the line and then the order when it emptied,
+      // which was right when confirm had created both; now the receipt is the
+      // order's reason to exist, and undoing a filing is not un-reading it.
+      const receiptOrderId = typeof meta.receipt_order_id === "string" ? meta.receipt_order_id : null;
+      const receiptOrderItemId =
+        typeof meta.receipt_order_item_id === "string" ? meta.receipt_order_item_id : null;
+      if (receiptOrderId && receiptOrderItemId) {
+        const token = bearer(req);
+        if (token) {
+          const released = await claimOrderLine({
+            baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+            slug: ctx.org.slug,
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            orderId: receiptOrderId,
+            itemId: receiptOrderItemId,
+            partId: null,
+          });
+          if (released) note = note ? `${note} Its line on the purchase order is unclaimed again.` : "Its line on the purchase order is unclaimed again.";
+        }
       }
-    }
-    // Ran out's list line comes off with it (#6526): Undo leaves nothing it added.
-    if (meta[RAN_OUT_KEY]) {
-      await withdrawRanOut(ctx.org.id, sessionUser(req)?.id ?? null, meta[RAN_OUT_KEY]).catch((e: Error) => {
-        note = note ? `${note} Its shopping list line stayed (${e.message}).` : `Its shopping list line stayed (${e.message}).`;
+      // Ran out's list line comes off with it (#6526): Undo leaves nothing it added.
+      if (meta[RAN_OUT_KEY]) {
+        await withdrawRanOut(ctx.org.id, sessionUser(req)?.id ?? null, meta[RAN_OUT_KEY]).catch((e: Error) => {
+          note = note ? `${note} Its shopping list line stayed (${e.message}).` : `Its shopping list line stayed (${e.message}).`;
+        });
+      }
+      // Reopen: back to pending, resolution cleared, RESTORED to its original
+      // spot — un-confirm is an UNDO, not a re-scan. created_at stays (it's when
+      // the item was scanned, immutable history); rewriting it to now() dragged
+      // the item's whole SESSION header time + sort position forward to the undo
+      // moment (the session reads max(created_at) across its items). Only
+      // updated_at moves. suggested_* stays — the point is to FIX + redo.
+      const reopened = await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          status: "pending",
+          target_module: null,
+          target_kind: null,
+          target_entity_id: null,
+          resolved_at: null,
+          // Unconfirm clears the attach link + the receipt-order linkage (the order
+          // line is gone now) — DB-side delete of just those keys, leaving every
+          // other pass's keys intact (this used to full-replace).
+          // The receipt-order linkage STAYS: the order line is a fact about the
+          // receipt, born at parse, and filing this row again must claim that
+          // same line. Only the attach link is cleared.
+          suggested_metadata: mergeMeta({ [SENT_BACK_KEY]: act }, ["attached_to", FILED_INTO_KEY, RAN_OUT_KEY, SENDING_BACK_KEY, FILED_BY_KEY, ARRIVED_DAMAGED_KEY]) as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await appendScanHistory(db, id, {
+        action: "unconfirm",
+        note: entityDeleted ? "commit reverted; created entry removed" : (note ?? "commit reverted"),
       });
+      void platform().events.emit("core-scan.scan.unconfirmed", {
+        orgId: ctx.org.id,
+        itemId: id,
+        entityDeleted,
+      });
+      res.json({ item: reopened, entity_deleted: entityDeleted, note });
     }
-    // Reopen: back to pending, resolution cleared, RESTORED to its original
-    // spot — un-confirm is an UNDO, not a re-scan. created_at stays (it's when
-    // the item was scanned, immutable history); rewriting it to now() dragged
-    // the item's whole SESSION header time + sort position forward to the undo
-    // moment (the session reads max(created_at) across its items). Only
-    // updated_at moves. suggested_* stays — the point is to FIX + redo.
-    const reopened = await db
-      .updateTable("core_scan_inbox_items")
-      .set({
-        status: "pending",
-        target_module: null,
-        target_kind: null,
-        target_entity_id: null,
-        resolved_at: null,
-        // Unconfirm clears the attach link + the receipt-order linkage (the order
-        // line is gone now) — DB-side delete of just those keys, leaving every
-        // other pass's keys intact (this used to full-replace).
-        // The receipt-order linkage STAYS: the order line is a fact about the
-        // receipt, born at parse, and filing this row again must claim that
-        // same line. Only the attach link is cleared.
-        suggested_metadata: mergeMeta({}, ["attached_to", FILED_INTO_KEY, RAN_OUT_KEY]) as never,
-        updated_at: new Date(),
-      })
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await appendScanHistory(db, id, {
-      action: "unconfirm",
-      note: entityDeleted ? "commit reverted; created entry removed" : (note ?? "commit reverted"),
-    });
-    void platform().events.emit("core-scan.scan.unconfirmed", {
-      orgId: ctx.org.id,
-      itemId: id,
-      entityDeleted,
-    });
-    res.json({ item: reopened, entity_deleted: entityDeleted, note });
   }),
 );
 
@@ -635,7 +706,7 @@ attachRouter.post(
     // golden e2e: confirm(1) + attach(+2) on the same dedup-bumped row → 3).
     if (row.status !== "pending") {
       res.status(409).json({
-        error: { code: "already_resolved", message: "this item was already committed or attached" },
+        error: scanFilingRefusal(row) ?? { code: "already_resolved", message: "this item was already committed or attached" },
       });
       return;
     }
@@ -661,14 +732,16 @@ attachRouter.post(
     // same 409 before any entity mutation.
     const attachClaim = await db
       .updateTable("core_scan_inbox_items")
-      .set({ status: "resolved", updated_at: new Date() })
+      .set({ status: "resolved", updated_at: new Date(), suggested_metadata: mergeMeta({ [FILED_BY_KEY]: actOf(req) }) as never })
       .where("id", "=", id ?? "")
       .where("status", "=", "pending")
       .returning(["id"])
       .executeTakeFirst();
     if (!attachClaim) {
+      // The other filing won: say whose it was (#8852).
+      const now = await db.selectFrom("core_scan_inbox_items").select(["status", "suggested_metadata"]).where("id", "=", id ?? "").executeTakeFirst();
       res.status(409).json({
-        error: { code: "already_resolved", message: "this item was already committed or attached" },
+        error: (now && scanFilingRefusal(now)) ?? { code: "already_resolved", message: "this item was already committed or attached" },
       });
       return;
     }

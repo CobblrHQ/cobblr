@@ -103,6 +103,20 @@ begin
       values (TG_OP, k, NEW.id::text, null);
     end if;
   else
+    -- A thing is never filed in a place that is not there (#4115). Nothing
+    -- else checked a direct location_id write, so a part could be saved into a
+    -- place that never existed, or into a bin being deleted at that moment.
+    -- The key-share lock is what a foreign key takes: a delete of that place
+    -- still at work holds the row, so this waits for it and then finds it gone.
+    if to_regclass('public.core_locations_locations') is not null then
+      if NEW.location_id::text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+        raise exception 'there is no place with id %', NEW.location_id using errcode = 'foreign_key_violation', hint = 'place_gone';
+      end if;
+      perform 1 from core_locations_locations where id = NEW.location_id::text::uuid for key share;
+      if not found then
+        raise exception 'there is no place with id %', NEW.location_id using errcode = 'foreign_key_violation', hint = 'place_gone';
+      end if;
+    end if;
     if not exists (
       select 1 from core_placement_placements
        where containee_kind = k and containee_id = NEW.id::text
@@ -256,7 +270,7 @@ export async function backfillPlacements(): Promise<PlacementBackfillResult> {
   // module is enabled, so once this has run clean at this version the only
   // work left is what a change to the triggers or the backfill brings.
   const version = sweepVersion(backfillOne, TRIGGER_FUNCTION_SQL, triggerSql);
-  if (await sweptClean(SWEEP, version)) return { orgsTouched: 0, rowsInserted: 0 };
+  if (await sweptClean(SWEEP, version, backfillPlacements)) return { orgsTouched: 0, rowsInserted: 0 };
   const orgs = await meta
     .selectFrom("org_modules")
     .select("org_id")

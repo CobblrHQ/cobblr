@@ -113,6 +113,7 @@ import { classifyScanPayload } from "../lib/scanPayload";
 import { filedIntoOf, scanRowState, scanSessionAction } from "@cobblr/platform-contract/scan-triage";
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { sessionVerdict, type SessionVerdict } from "@cobblr/platform-contract/scan-session";
+import { splitParentName } from "@cobblr/platform-contract/split-line";
 import { itemEnriching } from "./scan-status";
 import { attachBodyFor, confirmBodyFor, destinationCandidateOf, duplicateSummary, filedLine, isReadyToFile, placementPreview } from "./scanFileAll";
 import { useScanViewer } from "./scanViewer";
@@ -138,7 +139,9 @@ import { tabBrowserId } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { } from "../lib/useFieldPresentation";
-import { } from "../auth/AuthContext";
+import { useAuth } from "../auth/AuthContext";
+import { arrivedDamagedLine, scanArrivedDamaged } from "@cobblr/platform-contract/scan-arrived-damaged";
+import { filedWhileOpenWords } from "./scanFiledWhileOpen";
 import { destinationLabel, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import { KeepAsPurchase } from "./KeepAsPurchase";
 import { InboxCard, GalleryTile } from "./ScanInboxCard";
@@ -149,6 +152,7 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { useUndoSplit } from "../lib/useUndoSplit";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { InboxFacets } from "./InboxFacets";
+import { useOpenOwnRoute } from "../lib/openOwnRoute";
 export type { ScanTarget } from "./scanInboxShared";
 
 interface ScanDrive {
@@ -476,6 +480,15 @@ function CommittedDestination({
 }) {
   const filed = filedIntoOf(item.suggested_metadata);
   const label = filed?.label ?? destinationLabel(item.target_kind, tables, item.target_module);
+  // Not filed anywhere: it came in damaged, and says so (#8854).
+  const damaged = scanArrivedDamaged(item.suggested_metadata);
+  if (damaged) {
+    return (
+      <div className="text-[10px] text-amber-700 dark:text-amber-300 truncate" data-testid="committed-destination" title={damaged.note ?? undefined}>
+        {arrivedDamagedLine(damaged)}
+      </div>
+    );
+  }
   return (
     <div className="text-[10px] text-faint truncate" data-testid="committed-destination">
       {label ? `→ ${label}` : ""}
@@ -503,6 +516,8 @@ function SessionIdentity({ handheld, expanded, onToggle, className, title, child
 
 export function ScanPage() {
   const later = useLater();
+  const { user } = useAuth();
+  const openOwnRoute = useOpenOwnRoute();
   usePageTitle("Scan");
   const { activeSlug, activeOrg } = useActiveOrg();
   const scanOrigins = useScanOrigins(activeSlug);
@@ -1479,7 +1494,7 @@ export function ScanPage() {
       // The one classifier (lib/scanPayload.ts): what the wedge read decides
       // where it goes, the same rule as the camera and the typed field.
       const payload = classifyScanPayload(code, scanOrigins);
-      if (payload.kind === "own-route") { navigate(payload.path); return; }
+      if (payload.kind === "own-route") { openOwnRoute(payload.route); return; }
       if (payload.kind === "own-link" || payload.kind === "empty") return;
       if (payload.kind !== "cobblr-qr") {
         wedgeScan.mutate(code);
@@ -1624,9 +1639,9 @@ export function ScanPage() {
   };
   const submitOmni = async () => {
     const intent = classifyOmni(searchQ, scanOrigins);
-    if (intent.kind === "own-route") {
+    if (intent.kind === "own-route" && intent.route) {
       setSearchQ("");
-      navigate(intent.value);
+      openOwnRoute(intent.route);
       return;
     }
     if (intent.kind === "cobblr-qr") {
@@ -1966,6 +1981,23 @@ export function ScanPage() {
   // on a phone (#2982). `focusCand` is the chip a phone tap carried in, so the
   // sheet opens on that table's form.
   const [galleryFocusId, setGalleryFocusId] = useState<string | null>(null);
+  // The open item, once it was on screen: when it then leaves the inbox under
+  // this person, someone else filed it, and they are told who (#8849).
+  const focusShownRef = useRef<string | null>(null);
+  const focusLeft = !!galleryFocusId && focusShownRef.current === galleryFocusId && !items.some((i) => i.id === galleryFocusId);
+  useEffect(() => {
+    if (!focusLeft || !galleryFocusId) return;
+    const id = galleryFocusId;
+    focusShownRef.current = null;
+    setGalleryFocusId(null);
+    void api
+      .getScanItem(activeSlug, id)
+      .then((row) => {
+        const said = filedWhileOpenWords(row, user?.id);
+        if (said) toast.info(said);
+      })
+      .catch(() => {});
+  }, [focusLeft]); // eslint-disable-line react-hooks/exhaustive-deps
   const [focusCand, setFocusCand] = useState<ScanCandidate | null>(null);
   const openSheet = (id: string, cand: ScanCandidate | null = null) => {
     setFocusCand(cand);
@@ -2158,7 +2190,8 @@ export function ScanPage() {
         continue;
       }
       try {
-        await api.confirmScanItem(activeSlug, id, {
+        await api.confirmScanItem(activeSlug, it, {
+          filed_with: [...selected],
           target_module: entry.module,
           target_kind: entry.kind.includes(":") ? entry.kind.split(":")[1] : entry.kind,
           instance: entry.instance ?? undefined,
@@ -2294,7 +2327,7 @@ export function ScanPage() {
         continue;
       }
       try {
-        await api.confirmScanItem(activeSlug, id, body);
+        await api.confirmScanItem(activeSlug, it!, { ...body, filed_with: idList });
         ok++;
         filed.push({ id, label: scanRowState(it!, viewer).destination?.label ?? "Inventory", locationId: body.location_id ?? null });
       } catch (e) {
@@ -4757,11 +4790,16 @@ export function ScanPage() {
         (() => {
           const focus = items.find((i) => i.id === galleryFocusId);
           if (!focus) return null;
+          focusShownRef.current = focus.id;
           const queue = visibleItems.filter((i) => i.status === "pending");
           const at = queue.findIndex((i) => i.id === focus.id);
           // Triage rip-through: once this item resolves, advance the
           // sheet to the NEXT pending item instead of showing a stale card.
           if (focus.status !== "pending") {
+            // Someone else filed what this person had open: say who, or the
+            // change they were making goes with it unseen (#8849).
+            const said = filedWhileOpenWords(focus, user?.id);
+            if (said) later.after("filed-while-open", 0, () => toast.info(said));
             const next = queue.find((i) => i.id !== focus.id);
             if (next) later.after("advance", 0, () => openSheet(next.id));
             else later.after("advance", 0, () => setGalleryFocusId(null));
@@ -4918,7 +4956,7 @@ export function ScanPage() {
                       <div key={sp.parent.id} data-testid="split-parent" id={`committed-${sp.parent.id}`}>
                         <div className="flex items-center gap-2 px-3 py-1 pl-4 bg-surface/60 dark:bg-slate-800/40">
                           <div className="min-w-0 flex-1 truncate text-[11px] text-faint">
-                            ✂ {displayName(sp.parent) ?? "Group photo"} · split into {splitPieces(sp.parent)}
+                            ✂ {splitParentName(sp.parent, displayName(sp.parent)) ?? "Group photo"} · split into {splitPieces(sp.parent)}
                           </div>
                           <button
                             type="button"

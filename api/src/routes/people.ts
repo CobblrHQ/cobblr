@@ -26,7 +26,8 @@ const isAdmin = (role: string | undefined) => role === "owner" || role === "admi
 peopleRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
   try {
     const viewer = { id: req.session!.id, role: req.tenant!.role };
-    res.json({ items: (await listPeople(req.tenant!.org.id)).map((p) => (p.user_id ? { ...p, email: accountEmailFor(viewer, p.user_id, p.email) } : p)) });
+    // `you` marks the asker's own entry, so "email me" names a person (#8331).
+    res.json({ items: (await listPeople(req.tenant!.org.id)).map((p) => (p.user_id ? { ...p, email: accountEmailFor(viewer, p.user_id, p.email), ...(p.user_id === viewer.id ? { you: true } : {}) } : p)) });
   } catch (err) {
     next(err);
   }

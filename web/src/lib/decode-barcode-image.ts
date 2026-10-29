@@ -1,4 +1,7 @@
 export async function decodeBarcodeImage(file: File): Promise<string | null> {
+  // A page that cannot open an image has nothing to decode: answered before
+  // the decoder (about 120 KB) is fetched at all.
+  if (typeof createImageBitmap !== "function") return null;
   const { createBarcodeReader, decodeCanvasSmart } = await import("./barcodeDecode");
   const image = await createImageBitmap(file);
   try {

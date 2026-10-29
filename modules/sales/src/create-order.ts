@@ -51,7 +51,7 @@ export async function createOrder(db: Kysely<SalesDB>, orgId: string, userId: st
       });
     }
     const order = await trx.insertInto("sales_orders").values({ instance: a.instance, customer_id: customerId, customer_name: customerName,
-      order_number: a.order_number || await nextOrderNumber(trx, a.instance), status: a.status, order_date: a.order_date ?? null, due_date: a.due_date ?? null,
+      order_number: a.order_number || await nextOrderNumber(trx, a.instance), status: a.status, order_date: a.order_date ?? await platform().accounts.dayFor(userId), due_date: a.due_date ?? null,
       shipping_address: a.shipping_address ?? null, notes: a.notes ?? null, metadata: a.metadata ?? {},
       source_name: a.source?.name ?? null, source_ref: a.source?.ref ?? null, source_url: a.source?.url ?? null,
     } as never).returningAll().executeTakeFirstOrThrow();

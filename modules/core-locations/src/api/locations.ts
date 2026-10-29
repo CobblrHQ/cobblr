@@ -8,8 +8,9 @@ import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { DUPLICATE_SIBLING, duplicateSiblingMessage, siblingNamed } from "./siblings.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
-import { deletePlace, hasPlacesInside, restoreDeletedPlace, whatGoesWith } from "./place-delete.js";
+import { deletePlace, restoreDeletedPlace, whatGoesWith } from "./place-delete.js";
 import { MoveRefused, moveEverything, putBackEverything, readMoveResult } from "./move-everything.js";
+import { placeGone, type MergedInto } from "./place-gone.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { movePlace, PlaceMoveRefused } from "./place-move.js";
 
@@ -153,6 +154,15 @@ locationsRouter.get(
       .where("id", "=", id)
       .executeTakeFirst();
     if (!row) {
+      // A place that was deleted says so, and where its things went when it
+      // was merged: an old label still points here (#8884).
+      const kept = await platform().deletedRecords.get(tenantContext(req).org.id, "core-locations:location", id);
+      if (kept) {
+        const was = (kept.details ?? {}) as { name?: string; merged_into?: MergedInto | null };
+        const gone = placeGone(was.name ?? String(kept.image.name ?? "This place"), was.merged_into);
+        res.status(410).json({ error: { code: gone.code, message: gone.message, details: gone.details } });
+        return;
+      }
       res.status(404).json({ error: { code: "not_found", message: "location not found" } });
       return;
     }
@@ -421,9 +431,15 @@ locationsRouter.delete(
     // One shelf is a member's to delete. A place with places inside it takes
     // all of them, and everything kept there loses its place, so that is an
     // owner's or admin's call, or a grant: a member is told so and can ask,
-    // and the kept request finishes the delete once someone says yes.
-    if ((await hasPlacesInside(ctx.org.id, id)) && !(await requireCapability(req, res, "core-locations:delete-with-places-inside"))) return;
-    const gone = await deletePlace(ctx.org.id, id, sessionUser(req).id);
+    // and the kept request finishes the delete once someone says yes. Whether
+    // it has places inside is read under the tree lock, by the delete itself:
+    // asked first, a shelf moved in meanwhile went with an empty room's delete.
+    let gone = await deletePlace(ctx.org.id, id, sessionUser(req).id, undefined, true);
+    if (gone === "places_inside") {
+      if (!(await requireCapability(req, res, "core-locations:delete-with-places-inside"))) return;
+      gone = await deletePlace(ctx.org.id, id, sessionUser(req).id);
+    }
+    if (gone === "places_inside") return;
     if (!gone) {
       res.status(404).json({ error: { code: "not_found", message: "location not found" } });
       return;

@@ -8,11 +8,12 @@
 import { useState } from "react";
 import { ScanLine } from "lucide-react";
 import { TYPED_FIELD_HINT, TYPED_FIELD_PLACEHOLDER, typedVerdict } from "../lib/scanPayload";
+import type { OwnRoute } from "../lib/openOwnRoute";
 
 export function ManualScanField({
   onLookup,
   onCobblrQr,
-  onOpenPath,
+  onOpenRoute,
   className,
   ownOrigins,
 }: {
@@ -21,7 +22,7 @@ export function ManualScanField({
   /** A Cobblr label: route to the place or record it names, as the camera would. */
   onCobblrQr: (token: string) => void;
   /** A link to a page of this instance (a record, a pairing link): open it. */
-  onOpenPath: (path: string) => void;
+  onOpenRoute: (route: OwnRoute) => void;
   className?: string;
   ownOrigins?: readonly string[];
 }) {
@@ -41,7 +42,7 @@ export function ManualScanField({
           case "open":
             setValue("");
             setRefusal(null);
-            onOpenPath(v.path);
+            onOpenRoute(v.route);
             return;
           case "lookup":
             setValue("");

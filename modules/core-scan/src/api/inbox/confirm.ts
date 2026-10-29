@@ -29,6 +29,7 @@ import { mapRoledFacts, platform, roledFactsPatch, roledNativePatch, traitAxisVa
 import { entityKindOf } from "@cobblr/platform-contract/entity-kind";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
+import { actOf, staleFiling } from "../../services/who-did-it.js";
 import { BundleInstaller, tableForFiling, type FilingCandidate } from "../../services/file-through-confirm.js";
 import { scanPurpose, scanPurposeReview, FILED_INTO_KEY, type FiledInto } from "@cobblr/platform-contract/scan-triage";
 import { nextBinName } from "@cobblr/platform-contract/scan-tools";
@@ -37,12 +38,12 @@ import { type LiveTable } from "../../services/resolve-offers.js";
 import { resolveNativeIdentity } from "../../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "../util.js";
 import { downloadCatalogImage } from "../../services/enrich.js";
-import { committedImagePath, commitThumbPath, itemPhotos } from "../../services/committed-image.js";
+import { committedImagePath, commitThumbPath, itemPhotos, uncutGroupShot } from "../../services/committed-image.js";
 import { clampEntityName } from "../../services/item-name.js";
 import { mergeMeta } from "../../services/metadata.js";
 import { assembleMergedMenu } from "../../services/matchmaker.js";
 import { unevidencedIdentifiers } from "@cobblr/platform-contract/scan-evidence";
-import { scanFilingRefusal } from "@cobblr/platform-contract/scan-recovery";
+import { FILED_BY_KEY, scanFilingRefusal } from "@cobblr/platform-contract/scan-recovery";
 import { reportBarcodeCorrection, reportLearnedRoute, reportLabelConfirm, meaningfullyChanged, originOfValue, unitLotsOf } from "../../services/barcode-corrections.js";
 import { FIELD_PROVENANCE_KEY, acquisitionSourceConflict, fieldProvenanceOf, isAcquiredFromField, purchaseEvidenceOf, type FieldProvenanceMap } from "@cobblr/platform-contract/acquisition-source";
 import { filingName, isBareCodeName } from "@cobblr/platform-contract/display-identity";
@@ -53,7 +54,8 @@ import { apiFetch } from "@cobblr/platform-contract/self-api";
 import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 import { bindToCatalogEntry } from "../../services/catalog-match.js";
 import { wordsOf } from "../../services/open-facts-allergens.js";
-import { INTERNAL_API, INTO_BIN, NEW_BIN, filedIntoFor, liveTablesFor, served, storedCandidateList, tableCategoryWord } from "./shared.js";
+import { INTERNAL_API, INTO_BIN, NEW_BIN, filedIntoFor, liveTablesFor, matchItem, served, storedCandidateList, tableCategoryWord } from "./shared.js";
+import { FILED_SINCE_ASKED_KEY, filedSinceMatched } from "../../services/filed-since.js";
 
 export const confirmRouter = Router({ mergeParams: true });
 
@@ -145,6 +147,10 @@ export const ConfirmBody = z.object({
    *  rule as the stepper's, from the same place (services/filed-quantity.ts):
    *  a count from one, never zero (#3088). */
   quantity: FiledQuantity.optional(),
+  /** The rows filed together with this one in one selection (File N, Add
+   *  all, file_inbox_items): a record one of them just made is theirs, never
+   *  "you already have it". */
+  filed_with: z.array(z.string().uuid()).max(500).optional(),
   /** Module-specific extras forwarded verbatim to the create endpoint. */
   extras: z.record(z.unknown()).optional(),
   /** The category to file under, by NAME, whatever store the table keeps its
@@ -247,6 +253,14 @@ confirmRouter.post(
       res.status(409).json({ error: filingRefused });
       return;
     }
+    // A card someone else's edit never reached filed what it showed, over
+    // that edit (#8849). The filing says what the row's name and count were
+    // when it read them; one changed since is refused, saying who.
+    const stale = staleFiling(req, row, parsed.data);
+    if (stale) {
+      res.status(409).json({ error: { code: "changed_since", message: stale.message, fields: stale.fields } });
+      return;
+    }
 
     const purposeHold = scanPurposeReview({ ...row, status: "pending" });
     // A count of something you do not keep yet that comes to none is Ran out:
@@ -266,6 +280,7 @@ confirmRouter.post(
       .set({
         status: "resolved",
         updated_at: new Date(),
+        suggested_metadata: mergeMeta({ [FILED_BY_KEY]: actOf(req) }) as never,
         ...(into ? { target_container_kind: into.kind, target_container_id: into.id, target_location_id: null } : {}),
       })
       .where("id", "=", id)
@@ -273,8 +288,10 @@ confirmRouter.post(
       .returning(["id"])
       .executeTakeFirst();
     if (!claim) {
+      // The other filing won: say whose it was (#8852).
+      const now = await db.selectFrom("core_scan_inbox_items").select(["status", "suggested_metadata"]).where("id", "=", id).executeTakeFirst();
       res.status(409).json({
-        error: { code: "already_resolved", message: "This item was already confirmed." },
+        error: (now && scanFilingRefusal(now)) ?? { code: "already_resolved", message: "This item was already confirmed." },
       });
       return;
     }
@@ -410,6 +427,39 @@ confirmRouter.post(
         "unique";
     } catch {
       /* advisory — fall through to the fungible default */
+    }
+
+    // A record of this name filed in this table since the row was matched is
+    // asked about once, never silently doubled (filed-since.ts, #8792). The
+    // row is matched again from what it already read (replay: no new AI
+    // call), so its card offers adding to that record.
+    if (!ranOutAsked) {
+      const sameName = await filedSinceMatched(db, ctx.org.id, effectiveKindId, row, String(parsed.data.name ?? filingName(row) ?? ""), parsed.data.filed_with ?? []);
+      if (sameName) {
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({ suggested_metadata: mergeMeta({ [FILED_SINCE_ASKED_KEY]: sameName.id }) as never, updated_at: new Date() })
+          .where("id", "=", row.id)
+          .execute();
+        await matchItem({
+          orgId: ctx.org.id,
+          orgSlug: ctx.org.slug,
+          token,
+          baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+          itemId: row.id,
+          userId: sessionUser(req)?.id ?? null,
+          force: true,
+          replay: true,
+        }).catch((err: Error) => console.error("[core-scan] matching again before filing failed:", err.message));
+        res.status(409).json({
+          error: {
+            code: "already_have",
+            message: `You already have ${sameName.title}. Add this to it, or press Add again to keep a second one.`,
+            record_id: sameName.id,
+          },
+        });
+        return;
+      }
     }
 
     // What the receipt knew about the PURCHASE, landed on whatever this
@@ -1097,8 +1147,11 @@ confirmRouter.post(
     // scan evidence. A row identified by barcode has its OWN capture as that
     // frame; in a combined scan the barcode pic can sit on an absorbed sibling,
     // so each row is judged by its own barcode_text.
+    // An uncut split piece's group shot is the same kind of frame: it shows
+    // every piece, not this one (uncutGroupShot, #8794).
     const barcodeFrames = [
       row.barcode_text ? row.image_file_id : null,
+      uncutGroupShot(row),
       ...siblingPhotos.map((s) => (s.barcode_text ? s.image_file_id : null)),
     ].filter((fid): fid is string => !!fid);
     const galleryFiles = [...userPhotos, ...(row.catalog_image_file_id ? [row.catalog_image_file_id] : [])];

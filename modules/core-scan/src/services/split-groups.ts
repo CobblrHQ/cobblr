@@ -5,7 +5,7 @@
 // assistant alike.
 
 import type { Kysely } from "kysely";
-import { splitCheckSentence, splitHeadline, splitHowOf, SPLIT_HOW_WORDS, splitParentIdOf, withoutStoreCopySuffix, type SplitParentSummary } from "@cobblr/platform-contract/split-line";
+import { splitCheckSentence, splitHeadline, splitHowOf, SPLIT_HOW_WORDS, splitParentIdOf, splitParentName, withoutStoreCopySuffix, type SplitParentSummary } from "@cobblr/platform-contract/split-line";
 import type { CoreScanDB } from "../db.js";
 
 type Meta = Record<string, unknown>;
@@ -60,7 +60,7 @@ export async function splitParentsOf(
       id: p.id,
       // A line read before intake dropped the store's copy number keeps
       // it in its name; the parent is never filed, so it is said without.
-      name: p.suggested_name ? withoutStoreCopySuffix(p.suggested_name) : null,
+      name: splitParentName(p, p.suggested_name ? withoutStoreCopySuffix(p.suggested_name) : null),
       quantity: whole,
       line_total: num(m.line_net) ?? num(m.line_total),
       currency: typeof m.receipt_currency === "string" ? m.receipt_currency : null,

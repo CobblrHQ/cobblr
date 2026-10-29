@@ -15,6 +15,7 @@
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "./db.js";
+import { releaseHoldUnderLock } from "./holds.js";
 import { withOrderLock } from "./order-lock.js";
 import { orderHappened } from "./history.js";
 import { orderStockComplete } from "./fulfilment.js";
@@ -31,7 +32,7 @@ export type CancelResult =
   | { ok: true; from: SalesOrderStatus; restocked: Restocked[] }
   | { ok: false; code: "not_found" | "already_cancelled" | "ask_returned"; message: string };
 
-async function adjust(orgId: string, userId: string | null, orderId: string, partId: string, delta: number, why: string): Promise<number> {
+export async function adjust(orgId: string, userId: string | null, orderId: string, partId: string, delta: number, why: string): Promise<number> {
   const res = (await platform().actions.invoke("inventory:adjust-stock", {
     orgId,
     userId,
@@ -74,23 +75,26 @@ export async function cancelOrder(
     if (!shipped || opts.returned) {
       const lines = await db
         .selectFrom("sales_order_items")
-        .select(["id", "part_id", "qty_fulfilled"])
+        .select(["id", "part_id", "qty_fulfilled", "qty_returned"])
         .where("order_id", "=", orderId)
         .execute();
       for (const l of lines) {
-        const taken = Number(l.qty_fulfilled) || 0;
+        const fulfilled = Number(l.qty_fulfilled) || 0;
+        // What a customer already sent back is already on the shelf (#8790): put back only what is still out.
+        const taken = fulfilled - (Number(l.qty_returned) || 0);
         if (!l.part_id || taken <= 0) continue;
         const back = await adjust(orgId, userId, orderId, l.part_id, taken, "sale-cancelled");
         if (back <= 0) continue;
         await db
           .updateTable("sales_order_items")
-          .set({ qty_fulfilled: String(Math.max(0, taken - back)), updated_at: new Date() })
+          .set({ qty_fulfilled: String(Math.max(0, fulfilled - back)), updated_at: new Date() })
           .where("id", "=", l.id)
           .execute();
         restocked.push({ line_id: l.id, part_id: l.part_id, qty: back });
       }
     }
 
+    await releaseHoldUnderLock(db, orgId, userId, orderId, "the order was cancelled");
     await db.updateTable("sales_orders").set({ status: "cancelled", updated_at: new Date() }).where("id", "=", orderId).execute();
     if (restocked.length > 0) {
       await orderHappened(db, orgId, orderId, {

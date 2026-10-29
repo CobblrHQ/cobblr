@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { Package } from "lucide-react";
 import type { FamilyPayload } from "./api";
 import { countOf } from "@cobblr/platform-contract";
@@ -16,8 +17,19 @@ async function getJson<T>(url: string, getToken: () => string | null): Promise<T
   return r.json() as Promise<T>;
 }
 
-type Counts = { total: number; low: number };
+type Counts = { total: number; low: number; out?: number; stock_value?: number | null; currency?: string };
 type Inst = { instance_name: string; display_name: string; is_default?: boolean };
+
+const shortOf = (low: number, out: number) => [low > 0 && `${low} low-stock`, out > 0 && `${out} out of stock`].filter(Boolean).join(" · ");
+
+/** What the stock cost, across the default collection and its named ones, in the shop's currency; nothing when no part has a cost (#8791). */
+function worth(base: Counts | undefined, rows: ReadonlyArray<Counts>): string | null {
+  const parts = [base, ...rows].filter((c): c is Counts => !!c && typeof c.stock_value === "number");
+  if (!parts.length) return null;
+  const currency = parts.find((c) => c.currency)?.currency;
+  const text = formatStoredMoney(parts.reduce((n, c) => n + (c.stock_value ?? 0), 0), "amount", currency ? { currency } : undefined);
+  return text ? `${text} in stock` : null;
+}
 
 function InventoryDashboardWidget({ slug, getToken }: DashboardWidgetProps) {
   const base = useQuery({
@@ -45,14 +57,15 @@ function InventoryDashboardWidget({ slug, getToken }: DashboardWidgetProps) {
   const ready = !failed && !!base.data && !!insts.data && (instList.length === 0 || !!instData.data);
   const total = (base.data?.total ?? 0) + rows.reduce((n, r) => n + r.total, 0);
   const low = (base.data?.low ?? 0) + rows.reduce((n, r) => n + r.low, 0);
+  const out = (base.data?.out ?? 0) + rows.reduce((n, r) => n + (r.out ?? 0), 0);
   const biggest = [...rows].sort((a, b) => b.total - a.total)[0];
   return <DashboardTile
     to={(base.data?.total ?? 0) > 0 || !biggest ? "/inventory" : `/instances/${encodeURIComponent(biggest.name)}`}
     icon={Package} label="inventory" primary={ready ? total : "…"}
-    empty={ready && total === 0} attention={ready && low > 0}
-    secondary={failed ? "Couldn't load totals" : !ready ? "Loading totals" : low > 0
-      ? <span className="text-ember-600 dark:text-ember-500">{low} low-stock</span>
-      : rows.length > 0 ? rows.map((r) => r.label).join(" · ") : "all stocked"}
+    empty={ready && total === 0} attention={ready && (low > 0 || out > 0)}
+    secondary={failed ? "Couldn't load totals" : !ready ? "Loading totals" : low > 0 || out > 0
+      ? <span className="text-ember-600 dark:text-ember-500">{shortOf(low, out)}</span>
+      : [rows.length > 0 ? rows.map((r) => r.label).join(" · ") : "all stocked", worth(base.data, rows)].filter(Boolean).join(" · ")}
   />;
 }
 
@@ -112,9 +125,9 @@ function PlainInstanceTile({ slug, getToken, instance }: DashboardWidgetProps) {
   return <DashboardTile
     to={isDefault ? "/inventory" : `/instances/${encodeURIComponent(name)}`}
     icon={Package} label={instance.display_name} primary={d?.total ?? "…"}
-    empty={!!d && d.total === 0} attention={!!d && d.low > 0}
-    secondary={q.isError ? "Couldn't load totals" : !d ? "Loading totals" : d.low > 0
-      ? <span className="text-ember-600 dark:text-ember-500">{d.low} low-stock</span> : "all stocked"}
+    empty={!!d && d.total === 0} attention={!!d && (d.low > 0 || (d.out ?? 0) > 0)}
+    secondary={q.isError ? "Couldn't load totals" : !d ? "Loading totals" : d.low > 0 || (d.out ?? 0) > 0
+      ? <span className="text-ember-600 dark:text-ember-500">{shortOf(d.low, d.out ?? 0)}</span> : "all stocked"}
   />;
 }
 

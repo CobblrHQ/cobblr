@@ -24,6 +24,8 @@ export const SEARCH_CORPUS_RECORDS: readonly CorpusRecord[] = [
   { name: "مفك براغي" },
   { name: "Ключ гаечный" },
   { name: "Torque wrench", serial_number: "SER7724-00025" },
+  { name: "M3 x 10 bolts" },
+  { name: "M3 x 16 bolts" },
 ];
 
 /** A query, and the names of the records it finds (none, for a miss). */
@@ -44,6 +46,10 @@ export const SEARCH_CORPUS_QUERIES: readonly CorpusQuery[] = [
   { q: "مفك", finds: ["مفك براغي"] },
   { q: "Ключ", finds: ["Ключ гаечный"] },
   { q: "SER7724-00025", finds: ["Torque wrench"] },
+  // Every word, in any order, not the words as one phrase: "M3 bolts" found
+  // nothing in a workspace of "M3 x 10 bolts" (#8866).
+  { q: "M3 bolts", finds: ["M3 x 10 bolts", "M3 x 16 bolts"] },
+  { q: "bolts 16", finds: ["M3 x 16 bolts"] },
   { q: "zzqxvnomatch", finds: [] },
 ];
 

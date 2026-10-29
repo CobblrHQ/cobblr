@@ -3,6 +3,7 @@
 // rail lists and in which order, what a place is called in full, and which
 // places a drop on a container can mean.
 
+import { siblingOrder } from "@cobblr/platform-web";
 import type { Location } from "./api";
 import { placesOf, type PlaceableRecord } from "./placeableRecords";
 
@@ -83,7 +84,7 @@ export function placeChoices(id: string, locations: Location[]): PlaceChoice[] {
   const byId = new Map(locations.map((l) => [l.id, l] as const));
   const children = new Map<string, Location[]>();
   for (const l of locations) if (l.parent_id) children.set(l.parent_id, [...(children.get(l.parent_id) ?? []), l]);
-  const order = (a: Location, b: Location) => (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name, undefined, { numeric: true });
+  const order = siblingOrder;
   const out: PlaceChoice[] = [];
   const walk = (loc: Location, depth: number, seen: Set<string>) => {
     if (seen.has(loc.id)) return;
@@ -101,4 +102,9 @@ export function placeChoices(id: string, locations: Location[]): PlaceChoice[] {
  *  one you are most likely looking for. Otherwise the order it came in. */
 export function pinnedFirst<T extends { position?: { x_mm: number; y_mm: number } | null }>(items: T[]): T[] {
   return [...items.filter((i) => i.position), ...items.filter((i) => !i.position)];
+}
+
+/** The places directly inside `id`, in the order every list draws them (#8879). */
+export function childrenOf(id: string, locations: Location[]): Location[] {
+  return locations.filter((l) => l.parent_id === id).sort(siblingOrder);
 }

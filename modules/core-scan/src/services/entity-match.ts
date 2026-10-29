@@ -233,15 +233,22 @@ export function nameOverlap(
 
 /** The words a scan and a record share by declaration: the maker and the
  *  kind, from the scan's brand and category and the record's own fields. */
-function knownWords(
+export function knownWords(
   opts: { brand?: string | null; seller?: string | null; category?: string | null; fields?: Record<string, unknown> | null },
   stored: Record<string, unknown>,
+  storedTitle = "",
 ): { brand: string | null; category: string | null } {
   const text = (v: unknown): string => (typeof v === "string" ? v : "");
+  const recordMaker = [stored.manufacturer, stored.brand, stored.maker].map(text).filter(Boolean).join(" ");
+  // The scan's maker is shared only when the record names it too. Set aside
+  // against a record that never names it, it left a Coca-Cola can with the
+  // one word "can", and that was the WD-40 can on the shelf (#8876).
+  const recordWords = new Set(tokens(`${storedTitle} ${recordMaker}`));
+  const scanMaker = tokens(text(opts.brand)).some((w) => recordWords.has(w)) ? text(opts.brand) : "";
   // Who sold it says nothing about what it is: every line of one receipt
   // carries the shop's words, and a shop's name in two records' titles makes
   // them neighbours, never one thing (#5813).
-  const brand = [opts.brand, opts.seller, stored.manufacturer, stored.brand, stored.maker].map(text).filter(Boolean).join(" ");
+  const brand = [scanMaker, opts.seller, recordMaker].map(text).filter(Boolean).join(" ");
   const category = [opts.category, opts.fields?.category, stored.category, stored.category_name, stored.kind, stored.type]
     .map(text)
     .filter(Boolean)
@@ -561,7 +568,7 @@ export async function findTracked(
             // The maker and the kind on EITHER side are taken out of the
             // count: the scan's brand and category, and the record's own
             // manufacturer and category fields.
-            .map((e) => ({ e, ...nameOverlap(want, e.title, knownWords(opts, e.fields)) }))
+            .map((e) => ({ e, ...nameOverlap(want, e.title, knownWords(opts, e.fields, e.title)) }))
             .filter(({ pass }) => pass)
             // The identity the two sides already carry outranks the word
             // overlap that got them here: a record with a different set

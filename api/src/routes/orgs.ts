@@ -1024,6 +1024,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
         const coll = kindOf(i) ?? (entityKind || null);
         return { action: i.action, diff: i.diff, kinds: coll && coll !== base ? [coll, base] : [base] };
       }),
+      { userId: req.session!.id },
     ).catch((err) => {
       console.error("[activity] describing changes failed:", (err as Error).message);
       return items.map(() => []);

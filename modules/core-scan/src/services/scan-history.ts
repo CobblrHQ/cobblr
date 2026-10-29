@@ -26,7 +26,7 @@ export type ScanRewriteAction =
 /** Actions that leave those fields alone, or that are one half of a pair
  *  whose other half undoes them (file/unfile, combine/uncombine,
  *  split/unsplit). They record no revision. */
-export type ScanOwnInverseAction = "confirm" | "attached" | "broken" | "unconfirm" | "combine" | "uncombine" | "split" | "unsplit" | "resplit";
+export type ScanOwnInverseAction = "confirm" | "attached" | "broken" | "damaged" | "unconfirm" | "combine" | "uncombine" | "split" | "unsplit" | "resplit";
 
 /** A recorded before-state: its id rides on the History entry. */
 export interface ScanRevision {
@@ -46,7 +46,7 @@ export type ScanHistoryEntry =
   | { action: ScanOwnInverseAction; note?: string | null }
   // A person's own edit (#8557): who, and what. An Undo that would throw a
   // row away reads it, so someone else's edit since is never lost unseen.
-  | { action: "edit"; by: string | null; changed: readonly ScanEditPart[] };
+  | { action: "edit"; by: string | null; by_name?: string | null; changed: readonly ScanEditPart[] };
 
 /** Every column a rewrite can change. A put-back writes all of them back. */
 export const REVISION_COLUMNS = [
@@ -224,6 +224,8 @@ export async function appendScanHistory(
     if ("note" in entry && entry.note && entry.note.trim()) e.note = entry.note.trim();
     if (entry.action === "edit") {
       e.by = entry.by;
+      // Named as well, so a person arriving second is told who (#8849).
+      if (entry.by_name) e.by_name = entry.by_name;
       e.changed = [...entry.changed];
     }
     if ("revision" in entry) {

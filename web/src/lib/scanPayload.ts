@@ -12,6 +12,7 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 import { productName } from "@cobblr/platform-web";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { isOwnCobblrLink, ownAppPath } from "@cobblr/platform-contract/own-hosts";
+import type { OwnRoute } from "./openOwnRoute";
 
 export type ScanPayload =
   /** A printed Cobblr label: a navigation or a filing target, never a product. */
@@ -28,7 +29,7 @@ export type ScanPayload =
   | { kind: "own-link"; url: string }
   /** A link to a page of the instance the scanner runs on: a record, the
    *  open door, a pairing or invite link. Opens that page (own-hosts.ts). */
-  | { kind: "own-route"; path: string }
+  | { kind: "own-route"; route: OwnRoute }
   /** Words, not a code. Only the typed door can produce this. */
   | { kind: "words"; text: string }
   | { kind: "empty" };
@@ -52,7 +53,7 @@ export function classifyScanPayload(raw: string, ownOrigins: readonly string[] =
   const token = qrTokenFromUrl(v);
   if (token) return { kind: "cobblr-qr", token };
   const path = ownAppPath(v, ownOrigins);
-  if (path) return { kind: "own-route", path };
+  if (path) return { kind: "own-route", route: { href: path } };
   if (isOwnCobblrLink(v, ownOrigins)) return { kind: "own-link", url: v };
   if (/^https?:\/\//i.test(v)) return { kind: "link", url: v };
   if (PRODUCT_CODE.test(v)) return { kind: "product-code", code: v };
@@ -65,7 +66,7 @@ export function classifyScanPayload(raw: string, ownOrigins: readonly string[] =
  *  has not typed a code, and filing it makes an inbox item nobody wanted. */
 export type TypedVerdict =
   | { action: "route-qr"; token: string }
-  | { action: "open"; path: string }
+  | { action: "open"; route: OwnRoute }
   | { action: "lookup"; code: string }
   | { action: "refuse"; sentence: string }
   | { action: "nothing" };
@@ -81,7 +82,7 @@ export function typedVerdict(raw: string, ownOrigins?: readonly string[]): Typed
     case "cobblr-qr":
       return { action: "route-qr", token: p.token };
     case "own-route":
-      return { action: "open", path: p.path };
+      return { action: "open", route: p.route };
     case "product-code":
     case "code":
       return { action: "lookup", code: p.code };
@@ -109,7 +110,7 @@ export function scannerIgnores(raw: string, ownOrigins?: readonly string[]): boo
  *  the resolvers (a declared identifier, a spool's URL). */
 export type WedgeVerdict =
   | { action: "route-qr"; token: string }
-  | { action: "open"; path: string }
+  | { action: "open"; route: OwnRoute }
   | { action: "ignore" }
   | { action: "stage"; code: string }
   | { action: "resolve"; code: string };
@@ -120,7 +121,7 @@ export function wedgeVerdict(raw: string, ownOrigins?: readonly string[]): Wedge
     case "cobblr-qr":
       return { action: "route-qr", token: p.token };
     case "own-route":
-      return { action: "open", path: p.path };
+      return { action: "open", route: p.route };
     case "own-link":
     case "empty":
       return { action: "ignore" };

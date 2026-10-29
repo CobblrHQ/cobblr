@@ -25,7 +25,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { changeWorkspaceShape, useToast, SearchInput, EntityPhoto } from "@cobblr/platform-web";
 import { FileSpreadsheet, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X, Map as MapIcon } from "lucide-react";
-import { api, type ScanInboxItem } from "../lib/api";
+import { api, type ScanInboxItem, type ScanShown } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { BundleDetailModal } from "./BundleDetailModalLazy";
@@ -354,8 +354,8 @@ export function WhatToDoPanel({
   // File a captured item into a tracker — a matched existing instance, a matched
   // module's generic table, or (no body) the backend's generic default home.
   const confirmMut = useMutation({
-    mutationFn: (v: { id: string; body: { target_module?: string; target_kind?: string; instance?: string }; label?: string }) =>
-      api.confirmScanItem(slug, v.id, v.body),
+    mutationFn: (v: { item: ScanShown; body: { target_module?: string; target_kind?: string; instance?: string }; label?: string }) =>
+      api.confirmScanItem(slug, v.item, v.body),
     onSuccess: (r, v) => {
       void qc.invalidateQueries();
       // ALWAYS say where it went, by the table's own name ("3D Printers", not
@@ -389,7 +389,7 @@ export function WhatToDoPanel({
     const d = captures[0]?.resolved_destination;
     if (d?.bundle_external_id) materialize.start(d.bundle_external_id, captures.map(it => it.id));
     else if (captures.length > 1) batchMut.mutate(captures);
-    else if (captures[0]) confirmMut.mutate({ id: captures[0].id, body: captureTarget(captures[0]), label: d?.label || undefined });
+    else if (captures[0]) confirmMut.mutate({ item: captures[0], body: captureTarget(captures[0]), label: d?.label || undefined });
   };
   // Col 3 for a multi-instance kind: create a new CATEGORY (a named instance) and
   // drop the user in to add items — the kind → category → item model.

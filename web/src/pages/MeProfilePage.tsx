@@ -28,6 +28,7 @@ import { NAV_LAYOUTS, setNavLayout, useNavLayout } from "../lib/nav-mode";
 import { LayoutPreview } from "../components/LayoutPreview";
 import { DownloadMyDataSection } from "../components/DownloadMyDataSection";
 import { DeleteAccountSection } from "../components/DeleteAccountSection";
+import { StationPinSection } from "../components/StationPinSection";
 import { DeletedWorkspaceBackups } from "../components/DeletedWorkspaceBackups";
 import { ChangeEmailSection } from "../components/ChangeEmailSection";
 import { LinkedSignInsSection } from "../components/LinkedSignInsSection";
@@ -195,6 +196,7 @@ export function MeIdentityPage() {
         />
       )}
       <PasswordSection onChanged={() => toast.success("Password updated - you stay signed in.")} />
+      <StationPinSection />
       <DownloadMyDataSection />
       <DeleteAccountSection />
     </div>

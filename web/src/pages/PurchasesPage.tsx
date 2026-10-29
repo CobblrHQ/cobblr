@@ -21,7 +21,7 @@ import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
 import { QueryError } from "../components/QueryError";
-import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
+import { ModuleInstanceChooser, namedInstances } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
 import { ContributedDetailPanels } from "../panels/registry";
@@ -430,8 +430,8 @@ export function PurchasesPage() {
       {orders.isError && <QueryError what="your orders" onRetry={() => void orders.refetch()} />}
       {summaryAll.isSuccess && totalOrders === 0 && <ModulePurposeHint moduleName="purchases" />}
 
-      {summaryAll.isSuccess && totalOrders === 0 && (orderInstances.data?.items.length ?? 0) > 0 ? (
-        <ModuleInstanceChooser instances={orderInstances.data!.items} icon={Store} noun="order" />
+      {summaryAll.isSuccess && totalOrders === 0 && namedInstances(orderInstances.data?.items).length > 0 ? (
+        <ModuleInstanceChooser instances={namedInstances(orderInstances.data?.items)} icon={Store} noun="order" />
       ) : (
       rows.length === 0 ? (
         // No rows: the sentence on its own, never centred across nine columns

@@ -7,6 +7,7 @@
 // off. Settings is in every state (#5774: it used to vanish at Turn on). A
 // Turn on that did not finish says what failed and what to do, with Try again
 // (#5810: a refused registration used to bring back the same button, silent).
+import { NOTIFICATION_SETTINGS_PATH } from "../lib/notification-settings-path";
 import { productName } from "@cobblr/platform-web";
 import { lazy, Suspense, useState } from "react";
 import { AlertTriangle, BellRing, Smartphone, X } from "lucide-react";
@@ -18,7 +19,6 @@ import { PushHandoffPrompt } from "./PushHandoffPrompt";
 const InstallWalkBody = lazy(() => import("./InstallWalk").then((m) => ({ default: m.InstallWalkBody })));
 
 export const BELL_PUSH_DISMISSED_KEY = "cobblr.push.bell-offer-dismissed";
-export const NOTIFICATION_SETTINGS_PATH = "/me/communication";
 
 function wasDismissed(): boolean {
   try {

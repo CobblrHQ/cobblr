@@ -30,7 +30,7 @@ import { fallbackHint, RETIRED_FALLBACK_HINTS, type AiFallback, type ProviderErr
 // one. Re-composing on a re-run must not stack routing sentences, so the
 // known fallback sentences are stripped from the verdict before composing.
 
-const FALLBACKS: AiFallback[] = ["no-provider", "background", "not-entitled", "provider-error", "no-answer"];
+const FALLBACKS: AiFallback[] = ["no-provider", "background", "not-entitled", "not-shared", "provider-error", "no-answer"];
 const REASONS: Array<ProviderErrorReason | undefined> = [undefined, "invalid_key", "quota", "model_unavailable", "unreachable", "unknown"];
 // The retired wordings first: an old sentence may contain a new, shorter one
 // as a substring, and the longer must go before the shorter can be looked for.

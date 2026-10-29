@@ -90,7 +90,9 @@ export function receiptReadWords(f: Pick<ReceiptReadFailure, "code" | "ai" | "ai
     case "background":
       return { sentence: "Couldn't be read: this step ran without your personal AI. Read it again to use it.", retry: true, connect: false };
     case "not-entitled":
-      return { sentence: "Couldn't be read: the AI allowance for this workspace is used up for now. Read it again later.", retry: true, connect: false };
+      return { sentence: "Couldn't be read: this workspace's plan doesn't include AI. Connect your own under Account, then read it again.", retry: false, connect: true };
+    case "not-shared":
+      return { sentence: "Couldn't be read: the AI here answers only its owner. Ask them to share it, or connect your own under Account.", retry: false, connect: true };
     case "provider-error":
       switch (f.ai_reason) {
         case "invalid_key":

@@ -4,7 +4,7 @@
 // workspace's own components (a Station tablet, #4640) give them the same
 // context; the Station mounted the scan inbox's card without it and the card
 // threw "usePlatformWeb called outside PlatformWebProvider".
-import { lazy, type ReactNode } from "react";
+import { lazy, useEffect, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { KERNEL_PANELS, PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
@@ -12,11 +12,15 @@ import { api } from "./lib/api";
 import { raiseBlockedAction } from "./lib/blocked-action";
 import { decodeBarcodeImage } from "./lib/decode-barcode-image";
 import { photoSuggestionsWhenOn } from "./lib/photoSuggestionsWhenOn";
-import { FormBarcodeCapture } from "./components/FormBarcodeCapture";
-import { RecordPhoto } from "./components/RecordPhoto";
-import { LocationTreePicker } from "./components/LocationTreePicker";
-import { LocationChipPicker } from "./components/LocationChipPicker";
+import { deferredPiece } from "./lib/lazy-preload";
 import { CobbHead } from "./components/CobbHead";
+
+// The record pieces a module draws in its own pages load after the shell (#4945).
+const RecordPhoto = deferredPiece(() => import("./components/RecordPhoto").then((m) => ({ default: m.RecordPhoto })));
+const LocationTreePicker = deferredPiece(() => import("./components/LocationTreePicker").then((m) => ({ default: m.LocationTreePicker })));
+const LocationChipPicker = deferredPiece(() => import("./components/LocationChipPicker").then((m) => ({ default: m.LocationChipPicker })));
+const FormBarcodeCapture = deferredPiece(() => import("./components/FormBarcodeCapture").then((m) => ({ default: m.FormBarcodeCapture })));
+const DEFERRED_PIECES = [RecordPhoto, LocationTreePicker, LocationChipPicker, FormBarcodeCapture];
 // Flows load when one is opened (the flow host gives each a boundary).
 const NewFromTemplateFlow = lazy(() => import("./flows/NewFromTemplateFlow").then((m) => ({ default: m.NewFromTemplateFlow })));
 const OrganizeFlow = lazy(() => import("./flows/OrganizeFlow").then((m) => ({ default: m.OrganizeFlow })));
@@ -40,6 +44,17 @@ const WORKSPACE_FLOWS: FlowRegistry = {
 export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { orgSlug: string; role: OrgRoleName | null; appMode: boolean; children: ReactNode }) {
   const qc = useQueryClient();
   const activeSlug = orgSlug;
+  // Fetched once the page has drawn, so a picker opened later opens at once.
+  useEffect(() => {
+    const load = () => DEFERRED_PIECES.forEach((p) => void p.preload());
+    const w = window as { requestIdleCallback?: (cb: () => void) => number; cancelIdleCallback?: (h: number) => void };
+    if (w.requestIdleCallback) {
+      const h = w.requestIdleCallback(load);
+      return () => w.cancelIdleCallback?.(h);
+    }
+    const t = setTimeout(load, 1500);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <PlatformWebProvider
         orgSlug={activeSlug}

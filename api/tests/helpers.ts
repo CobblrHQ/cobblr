@@ -425,4 +425,18 @@ export async function ensureModule(s: { token: string; slug: string }, name: str
   }
 }
 
+/** A second person in the owner's workspace: signed up through a member
+ *  invite, under `name` (what the app calls them to other people). */
+export async function joinAsMember(owner: TestSession, name: string): Promise<TestSession> {
+  const inv = await http<{ token: string }>(owner, org(owner, "/members/invites"), { method: "POST", body: { role: "member" } });
+  const res = await fetchTransient(`${BASE}/api/v1/invites/${inv.token}/accept-signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: `${name.toLowerCase().replace(/\W+/g, "-")}-${Math.random().toString(36).slice(2, 8)}@cobblr-test.local`, password: "correct horse battery", display_name: name }),
+  });
+  const j = (await res.json()) as { token?: string; user?: { id: string } };
+  if (!j.token || !j.user) throw new Error(`${name} could not join ${owner.slug}: ${res.status}`);
+  return { token: j.token, userId: j.user.id, orgId: owner.orgId, slug: owner.slug };
+}
+
 export { mapLimit } from "./map-limit.js";

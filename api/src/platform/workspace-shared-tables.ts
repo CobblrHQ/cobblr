@@ -135,6 +135,8 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   oauth_codes: { travels: "never", why: CREDENTIAL },
   org_encryption_keys: { travels: "never", why: CREDENTIAL },
   station_qr_keys: { travels: "never", why: CREDENTIAL },
+  station_member_pins: { travels: "never", why: CREDENTIAL },
+  station_crews: { travels: "never", why: "who works at a station names the screen's members by their accounts here; a restored workspace's screens are approved again, and their crews named with them" },
   integration_inbound_token_lookup: { travels: "never", why: CREDENTIAL },
   user_credential_orgs: { travels: "never", why: CREDENTIAL },
   org_personal_documents_reader: { travels: "never", why: "a consent to send personal documents to a cloud company is given by the owner where the workspace runs, never carried in a backup" },

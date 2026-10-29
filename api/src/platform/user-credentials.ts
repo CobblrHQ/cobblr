@@ -522,6 +522,28 @@ export async function listRoutedConnections(
   }));
 }
 
+/** Someone else's AI connection that is routed to this workspace but does
+ *  not answer this person's calls: kept to its owner ("Just me"), or shared
+ *  and not yet approved or made the one in use. When nothing else serves
+ *  them, that is why they have no AI here, and it is not their plan or an
+ *  allowance (#8855: a member was told both, about a workspace whose owner
+ *  had connected Gemini "Just me"). Its owner's name, or null. */
+export async function aiKeptByItsOwner(orgId: string, userId: string | null | undefined): Promise<{ ownerName: string } | null> {
+  const row = await meta
+    .selectFrom("user_credential_orgs as uco")
+    .innerJoin("user_credentials as uc", "uc.id", "uco.credential_id")
+    .innerJoin("users as u", "u.id", "uc.user_id")
+    .select(["u.display_name"])
+    .where("uco.org_id", "=", orgId)
+    .where("uc.kind", "=", "ai-provider")
+    .$if(!!userId, (q) => q.where("uc.user_id", "!=", userId!))
+    .where((eb) => eb.or([eb("uco.mode", "=", "my-calls"), eb("uco.approved_at", "is", null), eb("uco.active", "is not", true)]))
+    .orderBy("uco.org_id")
+    .executeTakeFirst()
+    .catch(() => undefined);
+  return row ? { ownerName: row.display_name?.trim() || "Someone here" } : null;
+}
+
 export async function listWorkspaceAiOffers(orgId: string): Promise<WorkspaceAiOffer[]> {
   const rows = await meta
     .selectFrom("user_credential_orgs as uco")

@@ -31,6 +31,7 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { addPending, dropPending, expirePending, pulseRow, updatePending } from "../lib/pendingPictures";
 import { KEEP_AS_PURCHASE_SENTENCE, useKeepAsPurchase } from "../pages/KeepAsPurchase";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { decodeBarcodeImage } from "../lib/decode-barcode-image";
 
 /** What the picker takes: a picture, or a receipt as a PDF or a CSV. One
  *  string, so no door can accept less than another. */
@@ -152,11 +153,17 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
         try {
           const rec = await api.uploadFile(slug, file);
           updatePending(slug, key, { stage: "reading" });
-          const scanned = await api.scanBarcode(slug, {
-            source_kind: "photo",
-            image_file_id: rec.id,
-            scan_batch_id: sessionBatch ?? undefined,
-          });
+          // A code in the picture says what it is, for free and with no AI:
+          // read it the way the camera does, and scan that code with the
+          // picture kept as the scan's photo (#8877). A picture with no code
+          // in it, or one the decoder cannot open, is a photo as before.
+          const code = await decodeBarcodeImage(file).catch(() => null);
+          const scanned = await api.scanBarcode(
+            slug,
+            code
+              ? { barcode: code, source_kind: "barcode", image_file_id: rec.id, scan_batch_id: sessionBatch ?? undefined }
+              : { source_kind: "photo", image_file_id: rec.id, scan_batch_id: sessionBatch ?? undefined },
+          );
           if (scanned.duplicate_of_recent) {
             // The same picture was added a moment ago: one item, not two.
             dropPending(slug, key);

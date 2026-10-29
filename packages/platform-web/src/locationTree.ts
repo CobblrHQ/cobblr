@@ -27,6 +27,13 @@ export interface LocationAccessors<T> {
 // collator so the tiebreak is identical everywhere.
 const NATURAL = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
+/** The order of places under one parent, wherever they are listed: manual
+ *  position, then natural name. A shelf's page sorted its bins as text, Bin 10
+ *  before Bin 7, while the Locations list drew them 7 to 12 (#8879). */
+export function siblingOrder(x: { position?: number | null; name: string }, y: { position?: number | null; name: string }): number {
+  return (x.position ?? 0) - (y.position ?? 0) || NATURAL.compare(x.name, y.name);
+}
+
 /** Build the location forest, split into the **areas** roots (the room tree,
  *  with containers nesting inside them) and the **loose container** roots (bins
  *  not filed into any area) — the same split the Locations page draws. Siblings

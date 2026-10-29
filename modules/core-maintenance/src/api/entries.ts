@@ -13,7 +13,8 @@ import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { completeEntry, rollForward, reconcileSchedules, serviceTimeZone } from "../schedules-store.js";
-import { present } from "./schedules.js";
+import { PRESENT_AT_ONCE, presentEach } from "./schedules.js";
+import { mapLimit } from "@cobblr/platform-contract/map-limit";
 import { MaintenanceRefusal } from "../refusal.js";
 import { calendarDue, serviceDay } from "../schedule.js";
 import { asAddress } from "@cobblr/platform-contract/address";
@@ -142,16 +143,15 @@ entriesRouter.get(
     // does not say which of a hundred assets. One lookup per record.
     const orgId = tenantContext(req).org.id;
     const titles = new Map<string, string | null>();
-    await Promise.all(
-      [...new Set(rows.map((r) => `${r.entity_module}:${r.entity_type}|${r.entity_id}`))].map(async (key) => {
-        const [kind, id] = key.split("|") as [string, string];
-        const found = await platform().entities.lookup(orgId, kind, id).catch(() => null);
-        titles.set(key, found?.title ?? null);
-      }),
-    );
+    await mapLimit([...new Set(rows.map((r) => `${r.entity_module}:${r.entity_type}|${r.entity_id}`))], PRESENT_AT_ONCE, async (key) => {
+      const [kind, id] = key.split("|") as [string, string];
+      const found = await platform().entities.lookup(orgId, kind, id).catch(() => null);
+      titles.set(key, found?.title ?? null);
+    });
     const schedules = new Map((await db.selectFrom("core_maintenance_schedules").selectAll().execute()).map((s) => [s.id, s]));
-    const presented = new Map(await Promise.all([...new Set(rows.map((r) => r.schedule_id).filter((id): id is string => !!id))].map(async (id) => [id, schedules.has(id) ? await present(orgId, schedules.get(id)!, filter.tz) : null] as const)));
-    const paperwork = new Map(await Promise.all(rows.filter((r) => r.performed_at).map(async (r) => [r.id, await platform().files.listAttachments(orgId, { source_module: "core-maintenance", source_type: "entry", source_id: r.id }) ?? []] as const)));
+    const shown = [...new Set(rows.map((r) => r.schedule_id))].flatMap((id) => (id && schedules.get(id)) || []);
+    const presented = new Map((await presentEach(orgId, shown, filter.tz)).map((s) => [s.id, s] as const));
+    const paperwork = new Map(await mapLimit(rows.filter((r) => r.performed_at), PRESENT_AT_ONCE, async (r) => [r.id, await platform().files.listAttachments(orgId, { source_module: "core-maintenance", source_type: "entry", source_id: r.id }) ?? []] as const));
     res.json({
       items: rows.map((r) => {
         const entity_title = titles.get(`${r.entity_module}:${r.entity_type}|${r.entity_id}`) ?? null;

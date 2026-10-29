@@ -12,25 +12,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
+import { containerName } from "../lib/container-name";
 
-/** The next free container number: the highest trailing number across all
- *  container locations, + 1. By convention every container (bin/drawer/shelf)
- *  carries a unique number you can label + scan, regardless of its word. */
-function nextContainerNumber(all: Location[]): number {
-  let max = 0;
-  for (const l of all) {
-    if (l.kind !== "container") continue;
-    const m = (l.name ?? "").match(/(\d+)\s*$/);
-    if (m) max = Math.max(max, parseInt(m[1]!, 10));
-  }
-  return max + 1;
-}
-
-const ENDS_WITH_NUMBER = /\d\s*$/;
 
 // Inline accordion — name + parent + kind, expanded right inside the parent
-// form (no nested modal). Containers auto-append a globally-unique number so
-// "Bin" becomes "Bin 17". Mirrors the full form on /locations but trimmed for
+// form (no nested modal). A container named with a bare word gets the next
+// number, so "Bin" becomes "Bin 17" (lib/container-name.ts). Mirrors the full form on /locations but trimmed for
 // in-flight use.
 export function QuickCreateLocation({
   slug,
@@ -64,11 +51,8 @@ export function QuickCreateLocation({
   const [kind, setKind] = useState<"area" | "container">(defaultKind ?? "container");
   const [parentId, setParentId] = useState<string>(fixedParentId ?? "");
 
-  const nextNum = nextContainerNumber(all);
-  // A container whose name is just a word ("Bin", "Office") gets the global
-  // number appended; an explicit "Bin 5" is left as typed.
-  const autoNumber = kind === "container" && name.trim().length > 0 && !ENDS_WITH_NUMBER.test(name);
-  const finalName = autoNumber ? `${name.trim()} ${nextNum}` : name.trim();
+  const finalName = containerName(name, kind, all);
+  const autoNumber = finalName !== name.trim();
 
   const create = useMutation({
     mutationFn: () =>
@@ -130,7 +114,7 @@ export function QuickCreateLocation({
           {autoNumber && (
             <span className="mt-1 block text-[10px] text-muted dark:text-slate-400">
               → <span className="font-medium text-content dark:text-mortar-200">{finalName}</span>{" "}
-              (auto-numbered - containers get a unique number)
+              (numbered: a bin named with one word gets the next number)
             </span>
           )}
         </label>

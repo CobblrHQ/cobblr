@@ -4,6 +4,7 @@ import { kindRecordForOrg, baseKindOf } from "./entities.js";
 import { effectiveFieldDefsForKind } from "./field-defs.js";
 import { meta } from "../db/meta.js";
 import * as activity from "./activity.js";
+import { bulkSettableNative } from "./bulk-settable.js";
 
 export interface BulkField {
   name: string;
@@ -31,7 +32,7 @@ async function fieldsFor(orgId: string, kind: string): Promise<BulkField[]> {
   const own = new Map(overrides.map((o) => [o.name, o]));
   if (!rec) return [];
   const native: BulkField[] = rec.fields
-    .filter((f) => !f.readOnly && !own.get(f.name)?.hidden && f.role !== "quantity" && f.type !== "object" && f.type !== "image-path")
+    .filter((f) => bulkSettableNative(f, !!own.get(f.name)?.hidden))
     .map((f) => ({ name: f.name, display_label: own.get(f.name)?.display_label ?? f.label ?? f.name.replace(/_/g, " "), type: f.type as FieldDefType, native: true, required: f.required === true || f.role === "title", choices: own.get(f.name)?.overrides?.choices ?? f.choices, money: f.money }));
   const names = new Set(rec.fields.map((f) => f.name));
   return [...native, ...custom.filter((f) => !names.has(f.name) && !own.get(f.name)?.hidden && f.type !== "computed" && !f.server_managed).map((f) => ({

@@ -3,7 +3,7 @@
 
 import type { IntakeSetting } from "../intake.js";
 import type { LineAvailability } from "../availability.js";
-import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch, uploadJson, type Edit } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, waitingCreates, workspaceFetch, uploadJson, type Edit } from "@cobblr/platform-web";
 
 export const orderWriteKey = (id: string) => ["sales-order-write", id] as const;
 
@@ -31,6 +31,9 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   paid: boolean;
   paid_at?: string | null;
+  /** When the order began holding its stock, and the day the hold lets go (#8838). */
+  held_at?: string | null;
+  hold_until?: string | null;
   auto_closed_at?: string | null;
   auto_close_undone?: boolean;
   order_date: string | null;
@@ -50,6 +53,12 @@ export interface SalesOrder {
   /** A bundle's custom fields on the order, by field name. */
   metadata?: Record<string, unknown>;
   created_at: string;
+  /** The list row's own figures (returns.ts orderMoney), so a card can say its amount. */
+  total?: number;
+  currency?: string;
+  net_total?: number;
+  refund_due?: number;
+  owed?: number;
 }
 
 export interface SalesOrderItem {
@@ -61,6 +70,8 @@ export interface SalesOrderItem {
   qty: string;
   /** How many have left stock so far. */
   qty_fulfilled: string;
+  /** How many of the fulfilled quantity came back (#8790). */
+  qty_returned?: string;
   unit_price: string | null;
 }
 
@@ -77,8 +88,72 @@ export interface WorkOrderView {
   make_id?: string | null;
 }
 
+/** One return and/or refund recorded on an order. */
+export interface SalesReturnView {
+  id: string;
+  line_id: string | null;
+  qty: string | null;
+  restocked: string;
+  refund_amount: string | null;
+  reason: string | null;
+  created_at: string;
+}
+
+/** The one answer to "how much?" for an order (returns.ts orderMoney). */
+export interface OrderMoneyView {
+  currency: string;
+  gross: number;
+  returned_value: number;
+  refunded: number;
+  paid_amount: number;
+  kept: number;
+  refund_due: number;
+  net_total: number;
+  owed: number;
+  state: "paid" | "part" | "unpaid";
+}
+
+/** One payment recorded on an order (#8838). */
+export interface SalesPaymentView {
+  id: string;
+  amount: string;
+  method: string;
+  paid_on: string;
+  created_at: string;
+}
+
+/** One order that still owes the shop something (#8838). */
+export interface OwedOrderView {
+  id: string;
+  order_number: string | null;
+  customer_name: string | null;
+  order_date: string | null;
+  status: string;
+  currency: string;
+  owed: number;
+  state: "paid" | "part" | "unpaid";
+}
+export interface OwedView {
+  by_currency: Array<{ currency: string; owed: number; orders: number }>;
+  items: OwedOrderView[];
+}
+
+export interface MoneySummaryView {
+  currency: string;
+  orders: number;
+  cancelled: number;
+  sold: number;
+  received: number;
+  refunded: number;
+  refund_due: number;
+  owed: number;
+}
+
 export interface SalesOrderDetail extends SalesOrder {
   items: SalesOrderItem[];
+  returns?: SalesReturnView[];
+  payments?: SalesPaymentView[];
+  money?: OrderMoneyView;
   total: number;
   /** Lines with no price; the total covers only the priced ones. */
   unpriced_lines?: number;
@@ -131,7 +206,7 @@ export interface ShipResult {
 
 export interface HistoryRow {
   id: string;
-  kind: "status" | "stock" | "shipped" | "email" | "work_order";
+  kind: "status" | "stock" | "shipped" | "email" | "work_order" | "line" | "delivered" | "return" | "payment" | "hold";
   from_status: string | null;
   to_status: string | null;
   detail: Record<string, unknown>;
@@ -248,14 +323,33 @@ export class SalesApi {
 
   // orders
   /** One page of orders and how many match. */
-  listOrders(f: { q?: string; status?: SalesOrderStatus | ""; sort?: OrderSort; offset?: number; limit?: number } = {}) {
+  listOrders(f: { q?: string; status?: SalesOrderStatus | ""; sort?: OrderSort; month?: string; offset?: number; limit?: number } = {}) {
     const qs = new URLSearchParams();
+    if (f.month) qs.set("month", f.month);
     if (f.q) qs.set("q", f.q);
     if (f.status) qs.set("status", f.status);
     if (f.sort) qs.set("sort", f.sort);
     qs.set("offset", String(f.offset ?? 0));
     qs.set("limit", String(f.limit ?? 50));
     return this.req<Paged<SalesOrder>>("GET", `/orders?${qs}`);
+  }
+  /** What the orders that match came to (#8786): sold, received, refunded, owed, refund due, per currency. */
+  ordersSummary(f: { q?: string; status?: SalesOrderStatus | ""; month?: string } = {}) {
+    const qs = new URLSearchParams();
+    if (f.q) qs.set("q", f.q);
+    if (f.status) qs.set("status", f.status);
+    if (f.month) qs.set("month", f.month);
+    return this.req<{ month: string | null; orders: number; by_currency: MoneySummaryView[] }>("GET", `/orders/summary?${qs}`);
+  }
+  /** The accountant's file for the same orders (#8787). */
+  async accountingCsv(f: { q?: string; status?: SalesOrderStatus | ""; month?: string } = {}) {
+    const qs = new URLSearchParams();
+    if (f.q) qs.set("q", f.q);
+    if (f.status) qs.set("status", f.status);
+    if (f.month) qs.set("month", f.month);
+    const res = await workspaceFetch(`/api/v1/orgs/${this.slug}/modules/sales/orders/accounting.csv?${qs}`, { headers: this.headers() });
+    if (!res.ok) { await this.parse(res); throw new Error("The file could not be downloaded."); }
+    return res.blob();
   }
   getOrder(id: string) { return this.req<SalesOrderDetail>("GET", `/orders/${id}`); }
   createOrder(body: Partial<SalesOrder>) { return this.req<SalesOrder>("POST", "/orders", body); }
@@ -278,6 +372,12 @@ export class SalesApi {
   addItem(orderId: string, body: { part_id?: string | null; description?: string | null; qty: number; unit_price?: number | null; metadata?: Record<string, unknown> }) {
     return this.req<SalesOrderItem>("POST", `/orders/${orderId}/items`, body);
   }
+  /** Lines added to this order that are still waiting for a connection. */
+  waitingLines(orderId: string) {
+    const token = this.getToken();
+    return waitingCreates(`/api/v1/orgs/${this.slug}/modules/sales/orders/${orderId}/items`, token ? `Bearer ${token}` : null)
+      .flatMap((w) => (typeof w.body === "object" && w.body !== null ? [w.body as { description?: string | null; qty: number; unit_price?: number | null; part_id?: string | null; metadata?: Record<string, unknown> }] : []));
+  }
   removeItem(orderId: string, itemId: string) { return this.req<void>("DELETE", `/orders/${orderId}/items/${itemId}`); }
   updateItem(orderId: string, itemId: string, edit: Edit<{ qty?: number; unit_price?: number | null; description?: string | null }>) {
     return this.req<SalesOrderItem>("PATCH", `/orders/${orderId}/items/${itemId}`, edit.body, edit.headers);
@@ -285,6 +385,28 @@ export class SalesApi {
   /** Cancel; a shipped order answers 409 ask_returned until returned is given. */
   cancelOrder(orderId: string, returned?: boolean) {
     return this.req<CancelAnswer>("POST", `/orders/${orderId}/cancel`, returned === undefined ? {} : { returned });
+  }
+  /** A customer's return and/or refund; refused with a sentence when it is more than was fulfilled or paid. */
+  recordReturn(orderId: string, body: { line_id?: string; qty?: number; refund_amount?: number; reason?: string }) {
+    return this.req<{ ok: true; return_id: string; restocked: number; refunded: number; refund_due: number }>("POST", `/orders/${orderId}/returns`, body);
+  }
+  /** Hold a draft order's stock for its customer; refused with a sentence when stock does not cover it. */
+  holdOrder(orderId: string, body: { until?: string }) {
+    return this.req<{ ok: true; held: number; until: string | null }>("POST", `/orders/${orderId}/hold`, body);
+  }
+  releaseHold(orderId: string) {
+    return this.req<{ ok: true; released: number }>("DELETE", `/orders/${orderId}/hold`);
+  }
+  owed() { return this.req<OwedView>("GET", "/orders/owed"); }
+  /** A payment received; refused with a sentence when it is more than is owed. */
+  recordPayment(orderId: string, body: { amount: number; method?: string; paid_on?: string }) {
+    return this.req<{ ok: true; payment_id: string }>("POST", `/orders/${orderId}/payments`, body);
+  }
+  undoPayment(orderId: string, paymentId: string) {
+    return this.req<{ ok: true }>("DELETE", `/orders/${orderId}/payments/${paymentId}`);
+  }
+  undoReturn(orderId: string, returnId: string) {
+    return this.req<{ ok: true }>("DELETE", `/orders/${orderId}/returns/${returnId}`);
   }
   reinstateOrder(orderId: string, undo: CancelAnswer) {
     return this.req<{ ok: true }>("POST", `/orders/${orderId}/reinstate`, { from: undo.from, restocked: undo.restocked });

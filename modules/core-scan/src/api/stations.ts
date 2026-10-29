@@ -48,7 +48,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { INTERNAL_API } from "./inbox.js";
 import { findTracked } from "../services/entity-match.js";
 import { matchQuery, trackedMatchStampAt } from "../services/tracked-stamp.js";
-import { moveQuantity, scanTargetOf } from "../services/scan-target.js";
+import { moveQuantity, scanTargetOf, type ScanTarget } from "../services/scan-target.js";
 import { isActionStep, type ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
@@ -372,12 +372,13 @@ stationsRouter.post(
     const have = Number.isFinite(cur) ? cur : 0;
     const n = b.value ?? 1;
     const delta = b.op === "add" ? n : b.op === "use" ? -n : n - have;
+    const reason = b.op === "add" ? `added at ${label}` : b.op === "use" ? `used, at ${label}` : `counted at ${label}`;
     const moved =
       delta === 0
         ? { ok: true, delta: 0, newQty: have }
         : await moveQuantity(org.id, target, { kind: b.kind, id: b.entity_id }, delta, {
             userId: sessionUser(req).id,
-            reason: b.op === "add" ? `added at ${label}` : b.op === "use" ? `used, at ${label}` : `counted at ${label}`,
+            reason,
             ...(b.op === "add" ? { restock: true } : {}),
             ...(b.op === "total" ? { correction: true } : {}),
             source: { kind: "core-scan:station", id: address },
@@ -396,6 +397,7 @@ stationsRouter.post(
       .where("address", "=", address)
       .where("request_id", "=", b.request_id)
       .execute();
+    await logStationCount(req, org.id, target, b.entity_id, moved.delta, reason, qty);
     res.json({ request_id: b.request_id, op: b.op, delta: moved.delta, qty, note } satisfies StationMove);
   }),
 );
@@ -460,9 +462,30 @@ stationsRouter.post(
       await release();
       return void res.status(409).json({ error: { code: "undo_refused", message: moved.refused ?? "That could not be undone." } });
     }
+    await logStationCount(req, org.id, target, move.entity_id, moved.delta, `undo at ${label}`, moved.newQty);
     res.json({ ok: true, qty: moved.newQty });
   }),
 );
+
+/** Who pressed it, on the record's own history. A station's count moves
+ *  through its module's action, which keeps the ledger and logs nobody, so a
+ *  shared station's every take read as no one's (#8845). The parts route's
+ *  own stepper writes the same row; the request names the station as how. */
+async function logStationCount(req: Request, orgId: string, target: ScanTarget, entityId: string, delta: number, reason: string, qty: number | null): Promise<void> {
+  if (delta === 0) return;
+  const [module, entityType] = target.baseKind.split(":");
+  try {
+    await platform().activity.log({
+      orgId,
+      userId: sessionUser(req).id,
+      action: "stock_adjusted",
+      ref: { module: module ?? null, entityType: entityType ?? target.baseKind, entityId },
+      diff: { delta, reason, new_qty: qty, ...(target.instance ? { instance: target.instance } : {}) },
+    });
+  } catch (err) {
+    console.warn("[core-scan] activity log for a station count failed:", (err as Error).message);
+  }
+}
 
 const MoveBody = z.object({ kind: z.string().min(1), entity_id: z.string().min(1), location_id: z.string().min(1) });
 

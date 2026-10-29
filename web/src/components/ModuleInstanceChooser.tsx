@@ -3,6 +3,14 @@ import { ChevronRight, type LucideIcon } from "lucide-react";
 import type { ModuleInstance } from "../lib/api";
 import { pluralise } from "@cobblr/platform-contract/plural";
 
+/** The instances worth choosing between: the named ones. The default
+ *  instance is the base list itself, so a fresh Machines page with only it
+ *  said "everything lives under a type below" over no types at all (#8872).
+ *  Empty means the page shows its own empty list and New. */
+export function namedInstances(instances: readonly ModuleInstance[] | undefined): ModuleInstance[] {
+  return (instances ?? []).filter((i) => !i.is_default);
+}
+
 /** An honest aggregate destination for an instanceability:multi module whose
  *  base list is empty. Instead of the tile diving into ONE instance (dropping
  *  the others), land on the base page and — with no base-table items to show —

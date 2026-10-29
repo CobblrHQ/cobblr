@@ -16,6 +16,7 @@
 // six records) declines rather than guesses.
 
 import { keepWords, normQuestion } from "./question-text.js";
+import { addDays, countdownWords, type Day } from "@cobblr/platform-contract/day";
 
 /** A kind as the matcher needs to see it: its id and the words people use. */
 export interface KindWords {
@@ -30,7 +31,8 @@ export type Question =
   | { kind: "count"; entityKind: string }
   | { kind: "low-stock" }
   | { kind: "where"; name: string }
-  | { kind: "attention" };
+  | { kind: "attention" }
+  | { kind: "due"; days: number; span: string };
 
 const norm = normQuestion;
 
@@ -66,6 +68,15 @@ export function readQuestionOf(message: string, kinds: KindWords[]): Question | 
     return { kind: "attention" };
   }
 
+  // "what's due this week", "anything due for service today", "what's coming
+  // up this month": the calendar, read for a span. Asked before "where", which
+  // would otherwise take "what's due" as a name to look for.
+  if (/\b(what'?s|what is|what|anything|is anything|whats)\b.*\b(due|coming up|scheduled|needs? servic\w*)\b/.test(m)) {
+    if (/\btoday\b/.test(m)) return { kind: "due", days: 0, span: "today" };
+    if (/\b(this month|next month|next 30 days|in the next month)\b/.test(m)) return { kind: "due", days: 30, span: "in the next 30 days" };
+    return { kind: "due", days: 7, span: /\bthis week\b/.test(m) ? "this week" : "in the next 7 days" };
+  }
+
   // "how many parts (do I have)", "how many locations are there"
   const count = /\bhow many (\p{L}[\p{L}\p{M} ]*?)(?:\s+(?:do|have|are|is|does|did|in|under|left|remain)\b.*)?$/u.exec(m);
   if (count) {
@@ -89,3 +100,25 @@ export function readQuestionOf(message: string, kinds: KindWords[]): Question | 
 /** How long a message must be before it is worth asking anything at all. A
  *  half-typed word matches nothing useful and costs a request per keystroke. */
 export const MIN_PEEK_LENGTH = 8;
+
+/** One dated thing as the due answer reads it (a calendar event). */
+export interface DueEvent {
+  title: string;
+  date: string;
+  /** "record": a date something happened, never due (date-field-direction.ts). */
+  direction?: "due" | "record";
+}
+
+/** "What's due this week", said from the calendar: how many, then the first
+ *  three by date with how far off each is. A date that records something is
+ *  not due, so it is never counted. */
+export function dueSaid(events: readonly DueEvent[], q: Extract<Question, { kind: "due" }>, today: Day): { answer: string; detail: string } {
+  const until = addDays(today, q.days);
+  const due = events
+    .filter((e) => e.direction !== "record" && e.date.slice(0, 10) >= today && e.date.slice(0, 10) <= until)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  if (due.length === 0) return { answer: `Nothing is due ${q.span}`, detail: "nothing on the calendar for then" };
+  const shown = due.slice(0, 3).map((e) => `${e.title}, ${countdownWords(e.date.slice(0, 10) as Day, today, "long")}`);
+  const more = due.length > 3 ? `; and ${due.length - 3} more` : "";
+  return { answer: `${due.length} due ${q.span}`, detail: shown.join("; ") + more };
+}

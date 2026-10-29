@@ -1,5 +1,5 @@
-// CSV import — paste, preview, commit. Two-step flow:
-//   1. user pastes / types CSV → "Preview" → dry-run server-side
+// CSV import — paste or choose a file, preview, commit. Two-step flow:
+//   1. user pastes a CSV or chooses a .csv file (#8871) → "Preview" → dry-run server-side
 //      returns parsed rows + detected headers
 //   2. user reviews → "Import N rows" → commit server-side
 
@@ -19,6 +19,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
   const [csv, setCsv] = useState("");
   const [defaultCat, setDefaultCat] = useState("");
   const [defaultLoc, setDefaultLoc] = useState("");
+  const [makeCategories, setMakeCategories] = useState(true);
   const [preview, setPreview] = useState<ImportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +32,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
         dry_run: true,
         default_category_id: defaultCat || null,
         default_location_id: defaultLoc || null,
+        make_categories: makeCategories,
       }),
     onSuccess: (r) => {
       setPreview(r);
@@ -48,6 +50,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
         dry_run: false,
         default_category_id: defaultCat || null,
         default_location_id: defaultLoc || null,
+        make_categories: makeCategories,
       }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
@@ -68,12 +71,28 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
       open
       onClose={() => onClose(0)}
       title={`Import ${itemNounPlural.toLowerCase()} from CSV`}
-      subtitle="paste a CSV (common headers auto-detected; at minimum a name column)"
+      subtitle="paste a CSV or choose a file (common headers auto-detected; at minimum a name column)"
       size="lg"
     >
       <div className="space-y-4">
         {!preview && (
           <>
+            {/* A file on a phone cannot be opened and copied into the box, so it
+                is chosen and read here; the same preview runs (#8871). */}
+            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-line dark:border-slate-700 px-3 text-sm text-content dark:text-mortar-200 hover:bg-subtle">
+              <FileUp size={14} /> Choose a CSV file
+              <input
+                type="file"
+                accept=".csv,text/csv,text/plain"
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  void file.text().then((text) => { setCsv(text); setError(null); }, () => setError(`Couldn't read ${file.name}.`));
+                }}
+              />
+            </label>
             <textarea
               value={csv}
               onChange={(e) => setCsv(e.target.value)}
@@ -102,6 +121,10 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                 noneLabel="No default"
               />
             </div>
+            <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-200">
+              <input type="checkbox" checked={makeCategories} onChange={(e) => setMakeCategories(e.target.checked)} />
+              Make the categories the file names that are not here yet
+            </label>
             {error && <div className="text-xs text-ember-500">{error}</div>}
             <div className="flex gap-2">
               <button
@@ -219,7 +242,8 @@ function DetectedHeaders({ headers }: { headers: Record<string, string | null> }
 function ImportNotes({ preview }: { preview: ImportResponse }) {
   const noted = preview.rows.flatMap((r) => r.warnings.map((w) => ({ row: r.row_number, text: w })));
   const unread = preview.unread_columns ?? [];
-  if (noted.length === 0 && unread.length === 0) return null;
+  const made = preview.new_categories ?? [];
+  if (noted.length === 0 && unread.length === 0 && made.length === 0) return null;
   return (
     <div role="status" className="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 space-y-1">
       {noted.length > 0 && (
@@ -236,6 +260,11 @@ function ImportNotes({ preview }: { preview: ImportResponse }) {
             {noted.length > 5 && <li>…and {noted.length - 5} more</li>}
           </ul>
         </>
+      )}
+      {made.length > 0 && (
+        <div>
+          <span className="font-medium">Makes {countOf(made.length, { singular: "new category", plural: "new categories" })}:</span> {made.join(", ")}
+        </div>
       )}
       {unread.length > 0 && (
         <div>

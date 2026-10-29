@@ -17,6 +17,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mayRun } from "./lib/step-reach.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIR = join(ROOT, ".forgejo", "workflows");
@@ -91,25 +92,16 @@ const SCHEDULED_ON_LANES_OK: Record<string, string> = {
   "new-app-proof.yml": "it runs on pull requests too and proves pr-check's image; 15 min at 10:15Z, nothing waits on it",
   "watch.yml": "the hourly watch's light job: a minute of checks holding no secret but the run's token; on docker-build it waited up to 2 h behind main (the coordinator, 2026-10-26)",
 };
-/** The secrets a pr-check job may hold: the run's own token and the alert hook. */
-const PR_CHECK_SECRETS = new Set(["GITHUB_TOKEN", "INFRA_ALERT_WEBHOOK"]);
-/** The pr-check jobs that held another secret when the rule came (2026-10-26): a list that only shrinks. Each is a
- *  token on the test-only boxes, to move to a main-lane job; a pair not here is refused. */
+/** The secrets a pr-check job may hold: the run's own token, the alert hook, and REGISTRY_READ_TOKEN, a read of the
+ *  forge's package registry (the published nesting solver, the private npm scope): it can fetch, never push (#8531). */
+const PR_CHECK_SECRETS = new Set(["GITHUB_TOKEN", "INFRA_ALERT_WEBHOOK", "REGISTRY_READ_TOKEN"]);
+/** The pr-check jobs that held another secret when the rule came (2026-10-26): a list that only shrinks, 14 then, 1 on
+ *  2026-10-28 (#8531). Each is a token on the test-only boxes, to move to a main-lane job; a pair not here is refused. */
 const PR_CHECK_SECRETS_HELD = new Set([
-  "ci-recheck-rules.yml BUNDLE_SYNC_TOKEN",
-  "ci-recheck-rules.yml CLOUD_DISPATCH_TOKEN",
-  "ci-recheck-rules.yml FEEDBACK_TOKEN",
-  "ci-recheck-rules.yml REGISTRY_READ_TOKEN",
-  "ci-recheck.yml BUNDLE_SYNC_TOKEN",
-  "ci-recheck.yml CLOUD_DISPATCH_TOKEN",
-  "ci-recheck.yml FEEDBACK_TOKEN",
-  "ci-recheck.yml REGISTRY_READ_TOKEN",
-  "ci.yml BUNDLE_SYNC_TOKEN",
+  // The overlay check clones the private cloud repository with it; only a read token for that one repository, which
+  // the owner creates (#8531's proposal), takes it off. The step uses it for the clone alone and unsets it before
+  // any of the pull request's own scripts run.
   "ci.yml CLOUD_DISPATCH_TOKEN",
-  "ci.yml FEEDBACK_TOKEN",
-  "ci.yml REGISTRY_READ_TOKEN",
-  "nesting-wasm.yml REGISTRY_TOKEN",
-  "new-app-proof.yml REGISTRY_READ_TOKEN",
 ]);
 // One list of what publishes, for both rules below (a test-only box and a pr-check job never ship anything).
 // push-main-and-verify.sh is how the showcase site publishes (e2e-suite.yml): a test-only box must not run it either
@@ -314,7 +306,19 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     // NOR DOES IT HOLD A SECRET THAT SHIPS (2026-10-26, the hourly watch): moving it to pr-check would have handed the
     // release's publish tokens, the cloud dispatch token and the bundle-sync token to the test-only boxes. A pr-check job
     // holds the run's own token and the alert hook only (PR_CHECK_SECRETS); anything else goes in a job on a main lane.
+    // A step that can never run in this workflow holds nothing here (lib/step-reach.mjs, #8531): ci.yml's steps guarded to
+    // main's pushes run only in ci-main.yml, generated from it, on main's own lane.
+    const stepIf = (k: number) => {
+      let at = k;
+      while (at > 0 && !/^ {6}- /.test(job[at] ?? "")) at--;
+      for (let n = at; n < job.length && (n === at || !/^ {6}- /.test(job[n] ?? "")); n++) {
+        const m = /^ {6}(?:- )? {0,2}if:\s*(.*)$/.exec(job[n] ?? "");
+        if (m) return m[1]!;
+      }
+      return "";
+    };
     job.forEach((l, k) => {
+      if (/^ {6}/.test(l) && !mayRun(stepIf(k), src)) return;
       for (const m of l.matchAll(/secrets\.([A-Za-z0-9_]+)/g)) {
         if (PR_CHECK_SECRETS_HELD.has(`${f} ${m[1]}`)) heldSeen.add(`${f} ${m[1]}`);
         if (!PR_CHECK_SECRETS.has(m[1]!) && !PR_CHECK_SECRETS_HELD.has(`${f} ${m[1]}`)) errors.push(`.forgejo/workflows/${f}:${i + k + 1} a pr-check job holds secrets.${m[1]}: pr-check runs on the test-only boxes, which must hold nothing that ships. Move the step that needs it to a job on a main lane (light-main), or say why it is safe in PR_CHECK_SECRETS.`);

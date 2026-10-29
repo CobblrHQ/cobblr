@@ -1244,7 +1244,9 @@ async function listUnscoped(
     // other modules may not read is not hidden from the person searching: a
     // part's serial, shown on its page, made the search for it drop the part
     // once the part said its serial (#8710). The public keep the narrow set.
-    const judged = publicRead ? own : await ownWhitelist(orgId, kind, whitelist, { ...viewer, export: true, assistant: false });
+    // Asked only when a match is judged: every search lists every kind, and
+    // this read on each of them made a workspace search 50-80% slower (#8898).
+    const judged = query.q && fieldReadScopes ? (publicRead ? own : await ownWhitelist(orgId, kind, whitelist, { ...viewer, export: true, assistant: false })) : own;
     const rows = query.q && fieldReadScopes ? result.items.filter((r) => !matchedOnlyWhatIsHidden(r, query.q!, judged, fieldReadScopes, readScope, publicRead)) : result.items;
     items = await Promise.all(
       rows.map(async (r) =>

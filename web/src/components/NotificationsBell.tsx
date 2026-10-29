@@ -17,8 +17,11 @@ import { Bell, Check, PanelRight, PanelRightClose, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { notificationRoute } from "../lib/deep-path";
 import { inviteTokenFrom, notificationAction } from "../lib/notification-action";
-import { NotificationActionButtons } from "./NotificationActionButtons";
-import { BellPushRow, NOTIFICATION_SETTINGS_PATH } from "./BellPushRow";
+import { NOTIFICATION_SETTINGS_PATH } from "../lib/notification-settings-path";
+import { deferredPiece } from "../lib/lazy-preload";
+// Drawn only in the open bell (#4945).
+const NotificationActionButtons = deferredPiece(() => import("./NotificationActionButtons").then((m) => ({ default: m.NotificationActionButtons })));
+const BellPushRow = deferredPiece(() => import("./BellPushRow").then((m) => ({ default: m.BellPushRow })));
 import { MarkdownText } from "@cobblr/platform-web";
 import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";

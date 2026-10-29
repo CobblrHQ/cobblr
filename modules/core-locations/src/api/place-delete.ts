@@ -14,6 +14,8 @@
 // has put it somewhere else since. Every door reaches the same undo: the
 // page's Undo button, and the assistant's, which restores the one row it knew
 // about through the writer and so finds this record by that row's id.
+import type { MergedInto } from "./place-gone.js";
+import { lockTree } from "./place-move.js";
 import { platform, restoreRowTree } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
@@ -65,36 +67,55 @@ export async function whatGoesWith(orgId: string, rootId: string): Promise<{ pla
   return { places: ids.length - 1, things };
 }
 
-/** Does this place have places inside it? The question that decides whether
- *  a delete is a member's to make. */
-export async function hasPlacesInside(orgId: string, rootId: string): Promise<boolean> {
-  const db = await dbOf(orgId);
-  return !!(await db.selectFrom(TABLE).select("id").where("parent_id", "=", rootId).limit(1).executeTakeFirst());
-}
-
 /** Delete a place and everything inside it, keeping what an undo needs.
- *  Null when there is no such place. */
+ *  Null when there is no such place; "places_inside" when `onlyWithoutPlacesInside`
+ *  and the place, read under the tree lock, has places in it.
+ *
+ *  It holds the workspace's tree lock from reading what is inside to the last
+ *  row, so a shelf moved or made in there meanwhile either lands first and is
+ *  kept for the undo, or waits and finds the place gone. A thing filed in as it
+ *  goes is caught by the sweep after the commit (#4115, locations pass 4): a
+ *  delete that read the room before a shelf moved in let the cascade take the
+ *  shelf, and its things went on naming a place no longer there, with no undo. */
 export async function deletePlace(
   orgId: string,
   rootId: string,
   deletedBy: string | null,
-): Promise<{ name: string; places: number; things: number } | null> {
+  /** Where its things went, when it was emptied into another and deleted:
+   *  an old label for it then says so (#8884). */
+  mergedInto?: MergedInto,
+  onlyWithoutPlacesInside = false,
+): Promise<{ name: string; places: number; things: number } | null | "places_inside"> {
   const db = await dbOf(orgId);
-  const ids = await withDescendants(db, rootId);
-  const rows = (await db.selectFrom(TABLE).selectAll().where("id", "in", ids).orderBy("depth").execute()) as Array<
-    Record<string, unknown> & { id: string; name: string }
-  >;
-  const root = rows.find((r) => r.id === rootId);
-  if (!root) return null;
-  const placements = await placementsIn(orgId, ids);
-  const things = placements.filter((p) => p.containee.kind !== LOCATION);
+  const done = await db.transaction().execute(async (trx) => {
+    await lockTree(trx);
+    const ids = await withDescendants(trx, rootId);
+    const rows = (await trx.selectFrom(TABLE).selectAll().where("id", "in", ids).orderBy("depth").execute()) as Array<
+      Record<string, unknown> & { id: string; name: string }
+    >;
+    const root = rows.find((r) => r.id === rootId);
+    if (!root) return null;
+    if (onlyWithoutPlacesInside && ids.length > 1) return "places_inside" as const;
+    const placements = await placementsIn(orgId, ids);
+    const things = placements.filter((p) => p.containee.kind !== LOCATION);
+    const details = { name: root.name, rows, placements, merged_into: mergedInto ?? null };
+    await platform().deletedRecords.keep(orgId, LOCATION, rootId, root, details, deletedBy);
+    for (const t of things) await platform().placement.remove({ orgId, containee: t.containee });
+    await trx.deleteFrom(TABLE).where("id", "=", rootId).execute();
+    return { root, ids, details, things: things.length };
+  });
+  if (!done || done === "places_inside") return done;
 
-  await platform().deletedRecords.keep(orgId, LOCATION, rootId, root, { name: root.name, rows, placements }, deletedBy);
-
-  for (const t of things) await platform().placement.remove({ orgId, containee: t.containee });
-  await db.deleteFrom(TABLE).where("id", "=", rootId).execute();
+  // Filed in after the read above: taken out now the places are gone, and kept
+  // for the undo with the rest.
+  const late = (await placementsIn(orgId, done.ids)).filter((p) => p.containee.kind !== LOCATION);
+  if (late.length) {
+    for (const t of late) await platform().placement.remove({ orgId, containee: t.containee });
+    const details = { ...done.details, placements: [...done.details.placements, ...late] };
+    await platform().deletedRecords.keep(orgId, LOCATION, rootId, done.root, details, deletedBy);
+  }
   void platform().events.emit("core-locations.location.deleted", { orgId, locationId: rootId });
-  return { name: root.name, places: ids.length - 1, things: things.length };
+  return { name: done.root.name, places: done.ids.length - 1, things: done.things + late.length };
 }
 
 /** Put a deleted place back, with every place that went with it and each
