@@ -11,11 +11,12 @@
 import { resolve } from "node:path";
 import { readdirSync } from "node:fs";
 import { sql } from "kysely";
-import { meta } from "../db/meta.js";
+import { meta, metaPool } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
 import { migrateConcurrently } from "./migrate-concurrently.js";
 import { describeMigrationFiles, healthVerdict, unreadableMigrationFiles, moduleIsBehind, needsCatchUp, newerName, pendingCause, type ModuleMigrationFiles, type PendingCause } from "./migration-currency.js";
-import { getTenantPool, evictTenantPool } from "../db/tenant.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { getTenantPool, evictTenantPool, releaseIdleTenantPool, setTenantOpenGate, tenantConnectionsContended } from "../db/tenant.js";
 import { appliedBudget } from "../db/connection-budget.js";
 import { canonicalModuleName, getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
@@ -429,13 +430,15 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
  *  count read the rows here, so they cannot disagree about which workspaces
  *  exist; reconcileDefaultModules skips the same workspaces. Finishing or
  *  removing a half-made signup belongs to provisioning. */
-export async function provisionedModuleRows(): Promise<
+export async function provisionedModuleRows(orgIds?: string[]): Promise<
   Array<{ org_id: string; module_name: string; last_migration: string | null; migration_count: number | null; newest_breaking_migration: string | null }>
 > {
-  return meta
+  let q = meta
     .selectFrom("org_modules")
     .innerJoin("orgs", "orgs.id", "org_modules.org_id")
-    .where("orgs.db_credentials_encrypted", "is not", null)
+    .where("orgs.db_credentials_encrypted", "is not", null);
+  if (orgIds) q = q.where("org_modules.org_id", "in", orgIds);
+  return q
     .select([
       "org_modules.org_id",
       "org_modules.module_name",
@@ -554,7 +557,132 @@ export async function catchUpOrgMigrations(orgId: string): Promise<number> {
   return applied;
 }
 
-export async function syncTenantMigrations(): Promise<number> {
+// The boot walk is bounded in time, not in workspaces (#8921). On staging's
+// 3,659 workspaces one module migration every workspace needed took the walk
+// to about 3 minutes before listen, and the roll's health window ran out. Each
+// workspace is its own database, so one that is briefly behind holds up no
+// other: what the walk did not reach is caught up after listen, and a
+// workspace asked for before then is migrated first (the open gate below),
+// so no request is ever served against tables this build has not shaped.
+const BOOT_MIGRATION_BUDGET_MS = 60_000;
+const deferred = new Map<string, string[]>();
+const deferredInFlight = new Map<string, Promise<void>>();
+const migratingOrg = new AsyncLocalStorage<string>();
+const deferredProgress = { total: 0, done: 0, since: 0, lastAt: 0 };
+
+export interface DeferredMigrations {
+  /** Workspaces still to catch up, counting any being caught up now. */
+  left: number;
+  total: number;
+  done: number;
+  since: string;
+  last_progress_at: string;
+}
+
+/** What the boot walk left for after listen, or null when it left nothing. */
+export function deferredMigrations(): DeferredMigrations | null {
+  if (!deferredProgress.total) return null;
+  return {
+    left: deferred.size + deferredInFlight.size,
+    total: deferredProgress.total,
+    done: deferredProgress.done,
+    since: new Date(deferredProgress.since).toISOString(),
+    last_progress_at: new Date(deferredProgress.lastAt).toISOString(),
+  };
+}
+
+async function migrateOrgModules(orgId: string, moduleNames: string[]): Promise<number> {
+  let touched = 0;
+  for (const moduleName of moduleNames) {
+    try {
+      if (await migrateOrgModule(orgId, moduleName)) touched++;
+    } catch (err) {
+      console.error(`[migrate-sync] failed for ${moduleName} on ${orgId}:`, (err as Error).message);
+    }
+  }
+  // After ALL of this org's modules have migrated (so every read-target
+  // table exists), retrofit the per-module Postgres roles. Idempotent +
+  // self-healing for installs that predate the role layer; no-op unless
+  // SANDBOX_MODULE_ROLES is on. (Audit follow-up #1.)
+  await ensureAllSandboxRolesForOrg(orgId);
+  return touched;
+}
+
+function catchUpDeferred(orgId: string): Promise<void> {
+  const running = deferredInFlight.get(orgId);
+  if (running) return running;
+  const moduleNames = deferred.get(orgId);
+  if (!moduleNames) return Promise.resolve();
+  deferred.delete(orgId);
+  const p = migratingOrg
+    .run(orgId, () => migrateOrgModules(orgId, moduleNames))
+    .then(
+      () => undefined,
+      (err) => console.error(`[migrate-sync] catching up ${orgId} after boot:`, (err as Error).message),
+    )
+    .finally(() => {
+      deferredInFlight.delete(orgId);
+      deferredProgress.done++;
+      deferredProgress.lastAt = Date.now();
+    });
+  deferredInFlight.set(orgId, p);
+  return p;
+}
+
+// A workspace the walk left is migrated before its database is handed out;
+// the migration's own opens (inside migratingOrg) go straight through. Set
+// by the walk when it leaves one, not at load: nothing else needs it.
+function deferredOpenGate(orgId: string): Promise<void> | null {
+  if (!deferred.has(orgId) && !deferredInFlight.has(orgId)) return null;
+  if (migratingOrg.getStore() === orgId) return null;
+  return catchUpDeferred(orgId);
+}
+
+/** Requests are waiting for a connection, workspace or meta: the catch-up waits. */
+function requestsWaiting(): boolean {
+  return metaPool.waitingCount > 0 || tenantConnectionsContended();
+}
+
+const YIELD_STEP_MS = 200;
+const CATCH_UP_WORKERS = 4;
+
+/** Catch up what the boot walk left, after listen, up to four workspaces at
+ *  a time, each started only while no request waits for a connection and one
+ *  more workspace pool fits. Running ten at once beside
+ *  live traffic (#8929) held the server at "too many clients" and refused
+ *  provisioning a workspace: the catch-up must never cost a request its
+ *  connection. A workspace a request asks for is migrated at once by the open
+ *  gate, so waiting here delays only workspaces nobody is using. The wait for
+ *  each workspace is capped, so a busy api still finishes. */
+export async function drainDeferredMigrations(opts: { waiting?: () => boolean; maxYieldMs?: number } = {}): Promise<number> {
+  const waiting = opts.waiting ?? requestsWaiting;
+  const maxYieldMs = opts.maxYieldMs ?? 30_000;
+  const start = Date.now();
+  const before = deferredProgress.done;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const yieldFrom = Date.now();
+      while (waiting() && Date.now() - yieldFrom < maxYieldMs) await new Promise((r) => setTimeout(r, YIELD_STEP_MS));
+      const next = deferred.keys().next();
+      if (next.done) return;
+      await catchUpDeferred(next.value);
+      await releaseIdleTenantPool(next.value);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CATCH_UP_WORKERS, walkWorkers(), deferred.size) }, worker));
+  await Promise.all(deferredInFlight.values());
+  const caught = deferredProgress.done - before;
+  if (caught) console.log(`[cobblr-api] tenant migration catch-up after listen: ${caught} workspace(s) in ${Date.now() - start}ms`);
+  return caught;
+}
+
+// No more workers than workspace pools the budget gives this api: past it,
+// each extra worker waits at the connection limit and then opens past it.
+function walkWorkers(): number {
+  return Math.min(10, appliedBudget()?.tenantPools ?? 10);
+}
+
+export async function syncTenantMigrations(opts: { budgetMs?: number; orgIds?: string[] } = {}): Promise<number> {
   // The version marker first, meta-side and per MODULE, not per workspace: a
   // manifest bump with no new migration left every existing workspace's
   // org_modules.version at whatever it was when the module was enabled, so
@@ -576,7 +704,7 @@ export async function syncTenantMigrations(): Promise<number> {
     }
   }
 
-  const rows = await provisionedModuleRows();
+  const rows = await provisionedModuleRows(opts.orgIds);
   let touched = 0;
 
   // PRE-CHECK (meta-side, no tenant open): what is on disk per module, computed
@@ -617,21 +745,7 @@ export async function syncTenantMigrations(): Promise<number> {
   }
   const processOrg = async (orgId: string, moduleNames: string[]): Promise<void> => {
     try {
-      for (const moduleName of moduleNames) {
-        try {
-          if (await migrateOrgModule(orgId, moduleName)) touched++; // single-threaded event loop — ++ between awaits is safe
-        } catch (err) {
-          console.error(
-            `[migrate-sync] failed for ${moduleName} on ${orgId}:`,
-            (err as Error).message,
-          );
-        }
-      }
-      // After ALL of this org's modules have migrated (so every read-target
-      // table exists), retrofit the per-module Postgres roles. Idempotent +
-      // self-healing for installs that predate the role layer; no-op unless
-      // SANDBOX_MODULE_ROLES is on. (Audit follow-up #1.)
-      await ensureAllSandboxRolesForOrg(orgId);
+      touched += await migrateOrgModules(orgId, moduleNames); // single-threaded event loop: += between awaits is safe
     } finally {
       // Safe pre-`listen`: nothing is serving traffic, and the pool lazily
       // reopens on this org's first real request.
@@ -639,17 +753,31 @@ export async function syncTenantMigrations(): Promise<number> {
     }
   };
   const entries = [...byOrg.entries()];
-  // No more workers than workspace pools the budget gives this api: past it,
-  // each extra worker waits at the connection limit and then opens past it.
-  const CAP = Math.min(10, appliedBudget()?.tenantPools ?? 10);
+  // `||`: compose passes an unset variable as "" (docs/architecture/platform-spec.md §14.6).
+  const budgetMs = opts.budgetMs ?? (Number(process.env.COBBLR_BOOT_MIGRATION_BUDGET_MS) || BOOT_MIGRATION_BUDGET_MS);
+  const start = Date.now();
   let cursor = 0;
   const worker = async (): Promise<void> => {
-    while (cursor < entries.length) {
+    while (cursor < entries.length && Date.now() - start < budgetMs) {
       const [orgId, moduleNames] = entries[cursor++]!;
       await processOrg(orgId, moduleNames);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(CAP, entries.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(walkWorkers(), entries.length) }, worker));
+  const left = entries.slice(cursor);
+  for (const [orgId, moduleNames] of left) deferred.set(orgId, moduleNames);
+  if (left.length) {
+    setTenantOpenGate(deferredOpenGate);
+    const now = Date.now();
+    deferredProgress.total += left.length;
+    deferredProgress.since ||= now;
+    deferredProgress.lastAt = now;
+    const secs = (now - start) / 1000;
+    console.log(
+      `[cobblr-api] tenant migration sync: ${cursor} workspace(s) walked in ${secs.toFixed(1)}s (${(cursor / Math.max(secs, 0.001)).toFixed(1)}/s), ` +
+        `${left.length} left for after listen`,
+    );
+  }
   return touched;
 }
 
@@ -675,7 +803,13 @@ export interface MigrationSummary {
    *  `causes`: how many pending pairs are each kind (pendingCause), and
    *  `breaking`: a declared peer's breaking migrations as module/file, so the
    *  deploy reader names the cause it has instead of listing three. */
-  pending: { count: number; modules: string[]; unprovisioned_workspaces: number; causes: Record<PendingCause, number>; breaking: string[]; unreadable: string[] };
+  pending: {
+    count: number; modules: string[]; unprovisioned_workspaces: number; causes: Record<PendingCause, number>; breaking: string[]; unreadable: string[];
+    /** `catching_up`: the workspaces the boot walk left for after listen
+     *  (#8921), and when the catch-up last finished one. Pending pairs while
+     *  it advances are progress; a deploy reader refuses one that stalls. */
+    catching_up: DeferredMigrations | null;
+  };
   ahead: { count: number; modules: string[]; peer: string | null };
 }
 let pendingCache: { at: number; value: MigrationSummary } | null = null;
@@ -716,7 +850,7 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
     }
   }
   const value: MigrationSummary = {
-    pending: { count, modules: [...modules].sort(), unprovisioned_workspaces: unprovisioned, causes, breaking: [...breaking].sort(), unreadable: [...unreadable].sort() },
+    pending: { count, modules: [...modules].sort(), unprovisioned_workspaces: unprovisioned, causes, breaking: [...breaking].sort(), unreadable: [...unreadable].sort(), catching_up: deferredMigrations() },
     ahead: { count: aheadCount, modules: [...aheadModules].sort(), peer: peer ?? null },
   };
   pendingCache = { at: Date.now(), value };

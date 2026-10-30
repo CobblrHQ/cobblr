@@ -6,7 +6,8 @@ import { z } from "zod";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer, tenantContext, tenantDb } from "../db.js";
 import { kyselyStore, nudge, oneRowPerRecord, putPictureOn, readAutoApply, readSuggestOn, recordHasNoPicture, searchAgain, writeAutoApply, writeSuggestOn } from "../services/record-photos.js";
-import { imagePathForFile, setEntityImageFile, storeFetchedImage } from "../services/entity-image.js";
+import { fetchImage, imagePathForFile, setEntityImageFile, storeFetchedImage } from "../services/entity-image.js";
+import { heldColumns, heldPicture } from "../services/held-picture.js";
 
 export const recordPhotosRouter: Router = Router({ mergeParams: true });
 
@@ -19,13 +20,16 @@ export function heldPicturePath(slug: string, kind: string, id: string): string 
 /** A suggestion as a card reads it: the picture to show, and whether it is
  *  still being looked for. A held picture is served from the suggestion
  *  store; a file only once it was used (or, on a workspace from before #7447
- *  the heal has not reached yet, the file it was stored as). */
-function served(slug: string, r: { entity_kind: string; entity_id: string; status: string; file_id: string | null; held: unknown; query: string | null }) {
+ *  the heal has not reached yet, the file it was stored as). A suggestion
+ *  whose preview outlived its days (#8941) is served from the same address,
+ *  which fetches it again from where it was found. */
+function served(slug: string, r: { entity_kind: string; entity_id: string; status: string; file_id: string | null; held: unknown; refetch: unknown; query: string | null }) {
+  const yes = (v: unknown) => v === true || v === 1;
   return {
     entity_kind: r.entity_kind,
     entity_id: r.entity_id,
     status: r.status,
-    image_path: r.held === true || r.held === 1 ? heldPicturePath(slug, r.entity_kind, r.entity_id) : r.file_id ? imagePathForFile(slug, r.file_id) : null,
+    image_path: yes(r.held) ? heldPicturePath(slug, r.entity_kind, r.entity_id) : r.file_id ? imagePathForFile(slug, r.file_id) : r.status === "suggested" && yes(r.refetch) ? heldPicturePath(slug, r.entity_kind, r.entity_id) : null,
     query: r.query,
   };
 }
@@ -58,7 +62,7 @@ const ListQuery = z
 async function lookup(req: Parameters<typeof tenantDb>[0], kind: string | undefined, ids: readonly string[]) {
   let q = tenantDb(req)
     .selectFrom("core_scan_record_photo_suggestions")
-    .select((eb) => ["entity_kind", "entity_id", "status", "file_id", "query", "updated_at", eb("held_bytes", "is not", null).as("held")])
+    .select((eb) => ["entity_kind", "entity_id", "status", "file_id", "query", "updated_at", eb("held_bytes", "is not", null).as("held"), eb("source_url", "is not", null).as("refetch")])
     .where("status", "in", ["suggested", "queued", "none"]);
   // A list asks by its kind AND names the records it shows: a record's row
   // may sit under another kind name (a collection's item is its module's
@@ -99,25 +103,21 @@ recordPhotosRouter.get(
 const Target = z.object({ kind: z.string().min(1).max(100), id: z.string().min(1).max(100) });
 
 // GET /photo-suggestions/:kind/:id/picture: the picture a suggestion holds,
-// from the suggestion store (#7447). Nothing about it is in Files.
+// from the suggestion store (#7447). Nothing about it is in Files. A preview
+// that outlived its days is fetched again from where it was found (#8941).
 recordPhotosRouter.get(
   "/photo-suggestions/:kind/:id/picture",
   asyncHandler(async (req, res) => {
     const t = Target.safeParse(req.params);
     if (!t.success) return badBody(res, t.error);
-    const row = await tenantDb(req)
-      .selectFrom("core_scan_record_photo_suggestions")
-      .select(["held_bytes", "held_type"])
-      .where("entity_kind", "=", t.data.kind)
-      .where("entity_id", "=", t.data.id)
-      .executeTakeFirst();
-    if (!row?.held_bytes) {
+    const pic = await heldPicture(tenantDb(req), t.data.kind, t.data.id, async (url) => (await fetchImage(url)).image);
+    if (!pic) {
       res.status(404).json({ error: { code: "no_picture", message: "This suggestion holds no picture now." } });
       return;
     }
-    res.setHeader("Content-Type", row.held_type || "image/jpeg");
+    res.setHeader("Content-Type", pic.mimeType || "image/jpeg");
     res.setHeader("Cache-Control", "private, max-age=300");
-    res.send(Buffer.from(row.held_bytes));
+    res.send(Buffer.from(pic.bytes));
   }),
 );
 
@@ -136,7 +136,7 @@ recordPhotosRouter.post(
       .where("entity_kind", "=", t.data.kind)
       .where("entity_id", "=", t.data.id)
       .executeTakeFirst();
-    if (!row || row.status !== "suggested" || (!row.held_bytes && !row.file_id)) {
+    if (!row || row.status !== "suggested" || (!row.held_bytes && !row.file_id && !row.source_url)) {
       res.status(404).json({ error: { code: "no_suggestion", message: "There is no suggested picture for this record now." } });
       return;
     }
@@ -146,15 +146,14 @@ recordPhotosRouter.post(
       res.status(409).json({ error: { code: "has_picture", message: "This record has a picture now, so the suggestion was left alone." } });
       return;
     }
-    // Use it is what makes the file: the very picture the card showed, from
-    // the bytes the suggestion held (#7447). A suggestion from before the
-    // heal still names its file.
-    const fileId = row.held_bytes
-      ? await storeFetchedImage(
-          ctx.org.id,
-          { bytes: new Uint8Array(row.held_bytes), mimeType: row.held_type || "image/jpeg", filename: row.held_name || "picture.jpg" },
-          { kind: "web", original_url: row.source_url ?? "", ...(row.query ? { query: row.query } : {}), at: new Date().toISOString() },
-        ).catch(() => null)
+    // Use it is what makes the file (#7447). A suggestion holds only a
+    // preview (#8941), so the picture is fetched whole from where it was
+    // found; a site that no longer gives it leaves the preview the card
+    // showed. A suggestion from before the heal still names its file.
+    const whole = !row.file_id && row.source_url ? (await fetchImage(row.source_url)).image : null;
+    const picture = whole ?? (row.held_bytes ? { bytes: new Uint8Array(row.held_bytes), mimeType: row.held_type || "image/jpeg", filename: row.held_name || "picture.jpg" } : null);
+    const fileId = picture
+      ? await storeFetchedImage(ctx.org.id, picture, { kind: "web", original_url: row.source_url ?? "", ...(row.query ? { query: row.query } : {}), at: new Date().toISOString() }).catch(() => null)
       : row.file_id;
     if (!fileId) {
       res.status(422).json({ error: { code: "not_applied", message: "The picture could not be kept. Try Show others." } });
@@ -182,7 +181,7 @@ recordPhotosRouter.post(
     }
     await db
       .updateTable("core_scan_record_photo_suggestions")
-      .set({ status: "applied", file_id: fileId, held_bytes: null, held_type: null, held_name: null, updated_at: new Date() })
+      .set({ status: "applied", file_id: fileId, ...heldColumns(null), updated_at: new Date() })
       .where("entity_kind", "=", t.data.kind)
       .where("entity_id", "=", t.data.id)
       .execute();
@@ -220,7 +219,7 @@ recordPhotosRouter.post(
     await tenantDb(req)
       .updateTable("core_scan_record_photo_suggestions")
       // No thanks keeps nothing: the held picture goes with it (#7447).
-      .set({ status: "declined", held_bytes: null, held_type: null, held_name: null, updated_at: new Date() })
+      .set({ status: "declined", ...heldColumns(null), updated_at: new Date() })
       .where("entity_kind", "=", t.data.kind)
       .where("entity_id", "=", t.data.id)
       .execute();

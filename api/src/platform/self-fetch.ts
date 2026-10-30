@@ -22,6 +22,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Duplex } from "node:stream";
 import { currentActor } from "../lib/request-context.js";
+import { currentBudget, withinBudget } from "../db/pool-budget.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -134,7 +135,11 @@ export async function selfFetch(input: string | URL | Request, init: RequestInit
   // loopback-ok: the fallback before the app is built, or outside the api process
   if (!handler) return fetch(`http://127.0.0.1:${process.env.API_PORT || "4000"}${path}`, init);
   const h = handler;
+  const url: string = path;
   const assistant = currentActor()?.assistant ?? null;
+  // A fan-out's budget is the one store the request keeps: the routes it calls
+  // take their connections from the same share as the fan-out (#8966).
+  const budget = currentBudget();
   const method = (init.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {};
   new Headers(init.headers).forEach((v, k) => (headers[k] = v));
@@ -155,12 +160,13 @@ export async function selfFetch(input: string | URL | Request, init: RequestInit
   else delete headers["content-length"];
 
   return new Promise<Response>((resolve, reject) => {
-    outsideAnyRequest(() => {
+    outsideAnyRequest(() => (budget ? withinBudget(budget, async () => serve()) : serve()));
+    function serve(): void {
       const socket = new LoopbackSocket();
       socket.assistant = assistant;
       const req = new IncomingMessage(socket as never);
       req.method = method;
-      req.url = path;
+      req.url = url;
       req.httpVersion = "1.1";
       req.httpVersionMajor = 1;
       req.httpVersionMinor = 1;
@@ -204,6 +210,6 @@ export async function selfFetch(input: string | URL | Request, init: RequestInit
       } catch (err) {
         reject(err);
       }
-    });
+    }
   });
 }

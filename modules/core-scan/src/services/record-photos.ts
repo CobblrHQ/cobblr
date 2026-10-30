@@ -32,6 +32,7 @@ import type { CoreScanDB } from "../db.js";
 import { derivedQueryFor, fetchImage, imagePathForFile, storeFetchedImage, type FetchedImage } from "./entity-image.js";
 import { pictureOptions } from "./picture-options.js";
 import { pickPhotoOf } from "./shows-the-thing.js";
+import { forHolding, HELD_DAYS, heldColumns, keepHeldWithinLifetime } from "./held-picture.js";
 import { curatedImageUrl } from "./curated-images.js";
 import { scanTargetsForOrg } from "./scan-target.js";
 
@@ -128,7 +129,7 @@ export function kyselyStore(db: Db): SuggestionStore {
       (await db.selectFrom(T).select(["status", "name"]).where("entity_id", "=", id).orderBy("updated_at", "desc").executeTakeFirst()) ?? null,
     queue: async (e) => {
       const name = (e.title ?? "").trim();
-      const fresh = { name, status: "queued" as const, file_id: null, source_url: null, held_bytes: null, held_type: null, held_name: null, attempts: 0, updated_at: new Date() };
+      const fresh = { name, status: "queued" as const, file_id: null, source_url: null, ...heldColumns(null), attempts: 0, updated_at: new Date() };
       const moved = await db.updateTable(T).set(fresh).where("entity_id", "=", e.id).executeTakeFirst();
       if (Number(moved.numUpdatedRows ?? 0) > 0) return;
       await db
@@ -146,7 +147,8 @@ export function kyselyStore(db: Db): SuggestionStore {
     settle: async (kind, id, { held, ...set }) => {
       await db
         .updateTable(T)
-        .set({ ...set, ...(held ? { held_bytes: Buffer.from(held.bytes), held_type: held.mimeType, held_name: held.filename } : {}), updated_at: new Date() })
+        // A preview, never the whole download, and only for HELD_DAYS (#8941).
+        .set({ ...set, ...(held ? heldColumns(await forHolding(held)) : {}), updated_at: new Date() })
         .where("entity_kind", "=", kind)
         .where("entity_id", "=", id)
         .where("status", "=", "queued")
@@ -183,7 +185,7 @@ export function kyselyStore(db: Db): SuggestionStore {
     requeue: async (kind, id) => {
       const r = await db
         .updateTable(T)
-        .set({ status: "queued", attempts: 0, file_id: null, source_url: null, held_bytes: null, held_type: null, held_name: null, updated_at: new Date() })
+        .set({ status: "queued", attempts: 0, file_id: null, source_url: null, ...heldColumns(null), updated_at: new Date() })
         .where("entity_kind", "=", kind)
         .where("entity_id", "=", id)
         .executeTakeFirst();
@@ -438,10 +440,20 @@ export function registerRecordPhotoSweep(): void {
     drainMs: ROUND_MS,
     module: "core-scan",
     visit: async ({ orgId, db }) => {
+      // The lifetime is kept whether or not suggestions are on: a workspace
+      // that turned them off still holds what it was offered (#8941).
+      const held = await keepHeldWithinLifetime(db as Db).catch((err) => {
+        platform().health.notePassFailure("core-scan.held-picture-lifetime", orgId, err);
+        console.error(`[core-scan] org ${orgId}: keeping held suggestion pictures to their lifetime failed:`, (err as Error).message);
+        return { dropped: 0, shrunk: 0, savedBytes: 0, more: false };
+      });
+      if (held.dropped || held.shrunk) {
+        console.log(`[core-scan] org ${orgId}: held suggestion pictures: ${held.dropped} past ${HELD_DAYS} days or answered let go, ${held.shrunk} shrunk to a preview (${Math.round(held.savedBytes / 1024)} KB freed)`);
+      }
       const slug = (await platform().orgs.get(orgId).catch(() => null))?.slug;
-      if (!slug) return;
+      if (!slug) return { backlog: held.more };
       const more = await suggestRound(orgId, slug, kyselyStore(db as Db));
-      return { backlog: more };
+      return { backlog: more || held.more };
     },
     // The backfill, at enable: a workspace enabled with records queues them
     // at once (the rounds then search a few a minute), and a new one is born

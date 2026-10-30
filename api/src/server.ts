@@ -38,6 +38,7 @@ import { rememberProbe } from "./platform/meta-probe.js";
 import { tenantPoolStats } from "./db/tenant.js";
 import { poolCounts } from "./db/pool-stats.js";
 import { errors5xxRecent, noteResponse } from "./platform/error-rate.js";
+import { noteServerFault } from "./platform/server-hearing.js";
 import { guardRefusals } from "./platform/guard-refusals.js";
 import { outboundReport, outboundSnapshot } from "./platform/outbound-reach.js";
 import compression from "compression";
@@ -720,6 +721,9 @@ export function completeApp(app: Application): void {
         res.status(503).json({ error: { code: err.code, message: WORKSPACE_NOT_CREATED_MESSAGE } });
         return;
       }
+      // The database failing is the server's outage: a bridge silent through
+      // it is not blamed for it (server-hearing.ts).
+      noteServerFault(err);
       answerServerError(err, req, res, env.NODE_ENV === "production");
     },
   );

@@ -53,7 +53,7 @@ import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { applyConnectionBudget } from "./db/apply-connection-budget.js";
-import { currentActor, currentVia, perRequest } from "./lib/request-context.js";
+import { currentActor, currentVia, perRequest, readingOnly } from "./lib/request-context.js";
 import { endOpenStreams } from "./lib/event-stream.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb, releaseIdleTenantPool, withTenantDbForSweep } from "./db/tenant.js";
@@ -62,7 +62,7 @@ import { bakeTestOrgPool, poolEnabled } from "./db/test-org-pool.js";
 import { signAppToken, signSession } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
-import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
+import { drainDeferredMigrations, syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
 import { registerWarrantyReminders } from "./platform/warranty-reminders.js";
 import { registerStationSweep } from "./platform/scan-stations.js";
 import { comparePlacementRemove, comparePlacementWrite } from "./platform/placement-compare.js";
@@ -91,6 +91,7 @@ import { tenantSweeps, startTenantSweeps } from "./platform/tenant-sweeps.js";
 import { startPoolWatch, poolCounts } from "./db/pool-stats.js";
 import { poolHolders } from "./db/client-error-guard.js";
 import { tenantPoolStats } from "./db/tenant.js";
+import { fanOut } from "./db/fan-out.js";
 import { startMemoryLog } from "./platform/memory-log.js";
 import { mountModules } from "./modules/mount.js";
 import { registerBuiltinResolvables } from "./platform/resolvable-providers.js";
@@ -444,7 +445,7 @@ async function boot() {
       register: registerResolvable,
       resolve: resolveValue,
     },
-    db: { meta, mergeJsonb, rowVersion, atVersion },
+    db: { meta, mergeJsonb, rowVersion, atVersion, fanOut },
     selfFetch,
     entities: {
       registerResolver: entities.registerResolver,
@@ -546,6 +547,7 @@ async function boot() {
       list: entities.list,
       listable: entities.listable,
       listAll: entities.listAll,
+      readingOnly,
       hiddenFields: entities.hiddenFieldsFor,
       exportCsv: (...args) => import("./platform/entity-export.js").then((m) => m.exportEntitiesCsv(...args)),
       walkPairings: entities.walkPairings,
@@ -2131,6 +2133,8 @@ async function boot() {
   const server = app.listen(env.API_PORT, () => {
     console.log(`[cobblr-api] listening on :${env.API_PORT} (${env.NODE_ENV})`);
   });
+  // What the bounded boot walk did not reach, now and not at the next sweep round (#8921).
+  void drainDeferredMigrations().catch((err) => console.error("[migrate-sync] catch-up after listen failed:", (err as Error).message));
   // The cross-tenant passes, once the api is serving: one walk per round with
   // one budget, each pass's first round spread over its cadence (#3036).
   // COBBLR_SWEEP_START_AFTER_MS keeps the first round clear of boot.

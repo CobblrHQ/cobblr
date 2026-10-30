@@ -18,7 +18,8 @@ import type { NextFunction, Request, Response } from "express";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
-import { getTenantDb } from "../db/tenant.js";
+import { getTenantDb, tenantOpenWait } from "../db/tenant.js";
+import { readyOrAnsweredUpdating } from "./workspace-updating.js";
 import { answerTenantTeardown } from "./tenant-errors.js";
 import { verifyImpersonation } from "../auth/jwt.js";
 import { currentActor } from "../lib/request-context.js";
@@ -211,6 +212,7 @@ export async function withTenant(
     return;
   }
 
+  if (!(await readyOrAnsweredUpdating(tenantOpenWait(row.org_id), res))) return;
   try {
     const db = await getTenantDb(row.org_id);
     // A guest reads what the workspace shares in its portal, not the
@@ -384,6 +386,7 @@ async function resolveImpersonatedTenant(
     .where("id", "=", sess.id)
     .execute()
     .catch(() => {});
+  if (!(await readyOrAnsweredUpdating(tenantOpenWait(row.org_id), res))) return;
   try {
     const db = await getTenantDb(row.org_id);
     if (row.role === "guest" && (req.method === "GET" || req.method === "HEAD")) {

@@ -45,6 +45,7 @@ import { BRIDGE_BUNDLE_VERSION, BRIDGE_BUNDLE_SHA256, bridgeBundleJs } from "./e
 import { blobExpect, blobOffer, blobReceived, blobRelease } from "./edge-blobs.js";
 import { createReadStream } from "node:fs";
 import { BRIDGE_LOADER_JS } from "./edge-bridge-loader.js";
+import { couldNotHear } from "./server-hearing.js";
 
 const channels = new Map<string, EdgeChannelSender>();
 
@@ -515,6 +516,13 @@ const DEFAULT_REQ_TIMEOUT_MS = 20_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** A heartbeat that could not be written: the bridge called and this server
+ *  could not record it, which is the server's outage, never the bridge's. */
+function heartbeatNotWritten(err: unknown): never {
+  couldNotHear();
+  throw err;
+}
+
 /** Register a bridge for this channel and record what it says about itself.
  *  The name is taken ONCE, from the token it was installed with (the name typed on the setup screen), so a
  *  rename afterwards is never undone by the next registration. */
@@ -535,7 +543,7 @@ export async function relayTouch(key: string, report?: BridgeReport): Promise<vo
     : null;
   const saysFeatures = report !== undefined && "features" in report;
   const features = Array.isArray(report?.features) ? report!.features.filter((f): f is string => typeof f === "string").slice(0, 32) : null;
-  const before = await meta.selectFrom("edge_bridges").select("last_seen").where("channel_key", "=", key).executeTakeFirst();
+  const before = await meta.selectFrom("edge_bridges").select("last_seen").where("channel_key", "=", key).executeTakeFirst().catch(heartbeatNotWritten);
   await meta
     .insertInto("edge_bridges")
     .values({
@@ -561,7 +569,8 @@ export async function relayTouch(key: string, report?: BridgeReport): Promise<vo
         ...(saysFeatures ? { features: sql`excluded.features` } : {}),
       }),
     )
-    .execute();
+    .execute()
+    .catch(heartbeatNotWritten);
   if (isReturn(before ? new Date(before.last_seen) : null)) cameOnline(key);
 }
 
@@ -697,11 +706,11 @@ async function claimNext(key: string, lanes: EdgeLane[] | null): Promise<EdgeRel
 }
 
 export async function relayPoll(key: string, opts?: { signal?: AbortSignal; lanes?: EdgeLane[] | null }): Promise<EdgeRelayItem | null> {
-  const before = await meta.selectFrom("edge_bridges").select("last_seen").where("channel_key", "=", key).executeTakeFirst();
+  const before = await meta.selectFrom("edge_bridges").select("last_seen").where("channel_key", "=", key).executeTakeFirst().catch(heartbeatNotWritten);
   if (!before) throw new EdgeNotRegistered();
   // Only registration creates presence. A read must not invent a bridge that
   // discovery will then spend its relay deadline waiting for.
-  const renewed = await meta.updateTable("edge_bridges").set({ last_seen: new Date() }).where("channel_key", "=", key).executeTakeFirst();
+  const renewed = await meta.updateTable("edge_bridges").set({ last_seen: new Date() }).where("channel_key", "=", key).executeTakeFirst().catch(heartbeatNotWritten);
   if (!Number(renewed.numUpdatedRows)) throw new EdgeNotRegistered();
   if (isReturn(new Date(before.last_seen))) cameOnline(key);
   const deadline = Date.now() + POLL_WAIT_MS;
@@ -723,7 +732,7 @@ export async function relayPoll(key: string, opts?: { signal?: AbortSignal; lane
     // poll that was already parked when the bridge was disconnected must not
     // put it back on the list.
     if (Date.now() % 10_000 < CLAIM_POLL_MS) {
-      await meta.updateTable("edge_bridges").set({ last_seen: new Date() }).where("channel_key", "=", key).execute();
+      await meta.updateTable("edge_bridges").set({ last_seen: new Date() }).where("channel_key", "=", key).execute().catch(heartbeatNotWritten);
     }
   }
 }

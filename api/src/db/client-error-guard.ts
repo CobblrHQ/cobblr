@@ -1,3 +1,4 @@
+import { budgetCheckouts } from "./pool-budget.js";
 import { stopAtGate } from "../lib/gate-probe.js";
 import { Client, Pool, types } from "pg";
 import { isConnectionRefusal, noteConnectionRefused } from "./connection-budget.js";
@@ -176,6 +177,11 @@ export function poolPeak(pool: Pool): PoolPeak | null {
   return PEAK.get(pool) ?? null;
 }
 
+/** Forget a pool's worst moment, so a test can ask about what comes next. */
+export function forgetPoolPeak(pool: Pool): void {
+  PEAK.delete(pool);
+}
+
 function notePeak(pool: Pool): void {
   const max = pool.options.max ?? 10;
   if (pool.idleCount > 0 || pool.totalCount < max) return; // this caller gets a client without waiting
@@ -207,7 +213,7 @@ export function checkoutSite(stack: string | undefined): string | null {
   const ours: Array<{ fn: string; file: string }> = [];
   for (const line of String(stack ?? "").split("\n").slice(1)) {
     const m = /^\s*at (?:async )?(?:(\S+) \()?(?:file:\/\/)?([^():]+):\d+:\d+\)?$/.exec(line);
-    if (!m || /node_modules|node:|client-error-guard/.test(m[2]!)) continue;
+    if (!m || /node_modules|node:|client-error-guard|pool-budget/.test(m[2]!)) continue;
     ours.push({ fn: (m[1] ?? "<anonymous>").replace(/^Object\./, ""), file: m[2]! });
   }
   const pick = ours.find((f) => !/\/db\//.test(f.file)) ?? ours[0];
@@ -335,6 +341,7 @@ export function createPool(config: PoolConfig, label: string): Pool {
   const pool = new Pool({ connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS, types: DAYS_STAY_DAYS, application_name: appName(label), ...config, Client: bornGuarded(label, Base) });
   traceCheckouts(pool);
   countRefusals(pool);
+  budgetCheckouts(pool);
   // pg-pool re-emits an idle client's error on the pool and, being an
   // EventEmitter, throws if nobody listens there either. The client's own
   // listener already logged it; this one only keeps the pool's emit harmless.

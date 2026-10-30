@@ -23,7 +23,7 @@ export function DesignMakeDialog({ makeId, onClose }: { makeId: string; onClose:
   const [templateId, setTemplateId] = useState("");
   const [params, setParams] = useState<Record<string, unknown>>({});
   const [source, setSource] = useState("");
-  const [language, setLanguage] = useState<"build123d" | "openscad">("build123d");
+  const [language, setLanguage] = useState<"solidcraft" | "openscad">("solidcraft");
   const [material, setMaterial] = useState("PLA");
   const templates = options.data?.templates ?? [];
   const template = templates.find((t) => t.id === templateId);
@@ -55,7 +55,7 @@ export function DesignMakeDialog({ makeId, onClose }: { makeId: string; onClose:
           }} />}
         </label>)}
       </> : <>
-        <label className="block text-sm">Language<select className={inputClass} value={language} onChange={(e) => setLanguage(e.target.value as typeof language)}><option value="build123d">build123d</option><option value="openscad">OpenSCAD</option></select></label>
+        <label className="block text-sm">Language<select className={inputClass} value={language} onChange={(e) => setLanguage(e.target.value as typeof language)}><option value="solidcraft">SolidCraft (JSON script)</option><option value="openscad">OpenSCAD</option></select></label>
         <label className="block text-sm">CAD source<textarea required rows={8} className={`${inputClass} font-mono`} value={source} onChange={(e) => setSource(e.target.value)} /></label>
       </>}
       <label className="block text-sm">Material<input required className={inputClass} value={material} onChange={(e) => setMaterial(e.target.value)} /></label>

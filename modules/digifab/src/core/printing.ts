@@ -75,12 +75,18 @@ export interface PrinterMaterial {
  color_by_tool?: string[];
 }
 
+/** The languages the design service writes a part in: a SolidCraft command
+ *  script (JSON), or OpenSCAD. The service refuses any other (build123d was
+ *  retired on 2026-10-29), so a source with no language is SolidCraft. */
+export const DESIGN_SOURCE_LANGS = ["solidcraft", "openscad"] as const;
+export type DesignSourceLang = (typeof DESIGN_SOURCE_LANGS)[number];
+
 export interface PrintThisAsk {
   /** A model (STL or 3MF) or G-code in the workspace's files. */
   file_id?: string;
   prompt?: string;
   source?: string;
-  source_lang?: "build123d" | "openscad";
+  source_lang?: DesignSourceLang;
   template?: string;
   params?: Record<string, unknown>;
   quantity?: number;

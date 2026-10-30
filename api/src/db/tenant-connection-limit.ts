@@ -90,6 +90,8 @@ export interface ConnectionLimitOptions {
 
 export function createConnectionLimit(opts: ConnectionLimitOptions) {
   const waiters = new Set<() => void>();
+  // Checkouts waiting at the limit right now, for work that yields to them.
+  let blocked = 0;
   const wake = () => {
     for (const w of [...waiters]) w();
   };
@@ -121,15 +123,20 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
         opts.onOverrun?.(open(), opts.limit());
         return doConnect();
       }
-      await new Promise<void>((resolve) => {
-        const done = () => {
-          clearTimeout(t);
-          waiters.delete(done);
-          resolve();
-        };
-        const t = setTimeout(done, Math.min(left, 1_000));
-        waiters.add(done);
-      });
+      blocked++;
+      try {
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            clearTimeout(t);
+            waiters.delete(done);
+            resolve();
+          };
+          const t = setTimeout(done, Math.min(left, 1_000));
+          waiters.add(done);
+        });
+      } finally {
+        blocked--;
+      }
     }
   }
 
@@ -182,5 +189,5 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
     pool.on("remove", wake);
   }
 
-  return { gate, connect, open, wake };
+  return { gate, connect, open, wake, waiting: () => blocked };
 }

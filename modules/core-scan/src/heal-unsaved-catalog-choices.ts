@@ -3,13 +3,14 @@
 //
 // DONE WHEN: no tenant DB has a pending or enriching core_scan_inbox_items row
 // with catalog_image_url set and catalog_image_file_id null, and no
-// core_scan_record_photo_suggestions row with status 'suggested', no file_id
-// and no held picture. Check with, per tenant:
+// core_scan_record_photo_suggestions row with status 'suggested', no file_id,
+// no held picture and no address to fetch it from. Check with, per tenant:
 //   select count(*) from core_scan_inbox_items
 //    where status in ('pending','enriching')
 //      and catalog_image_url is not null and catalog_image_file_id is null;
 //   select count(*) from core_scan_record_photo_suggestions
-//    where status = 'suggested' and file_id is null and held_bytes is null;
+//    where status = 'suggested' and file_id is null and held_bytes is null
+//      and source_url is null;
 // /healthz reports the count this pass found (noteHealShim). When both read 0
 // on prod, staging and dev, delete this file and its boot call.
 //
@@ -41,6 +42,7 @@ interface HealDB {
     status: string;
     file_id: string | null;
     held_bytes: Buffer | null;
+    source_url: string | null;
     attempts: number;
     updated_at: Date;
   };
@@ -70,13 +72,16 @@ export async function healUnsavedCatalogChoicesIn(orgId: string, db: Kysely<Heal
     }
   }
   // A suggestion offered with no picture at all is looked for again. One that
-  // holds its picture (#7447: a suggestion is not a file) is whole.
+  // holds its picture (#7447: a suggestion is not a file) is whole, and so is
+  // one whose preview outlived its days (#8941): its address fetches it again,
+  // and searching the web for it again every boot would undo the lifetime.
   const requeued = await db
     .updateTable("core_scan_record_photo_suggestions")
     .set({ status: "queued", attempts: 0, updated_at: new Date() })
     .where("status", "=", "suggested")
     .where("file_id", "is", null)
     .where("held_bytes", "is", null)
+    .where("source_url", "is", null)
     .executeTakeFirst()
     .then((r) => Number(r.numUpdatedRows ?? 0))
     .catch(() => 0);

@@ -21,7 +21,6 @@ import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contra
 import { TermFields, termValues } from "../term-fields.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { instantFromInput } from "@cobblr/platform-contract/day";
-import { mapLimit } from "@cobblr/platform-contract/map-limit";
 
 export const schedulesRouter = Router({ mergeParams: true });
 
@@ -77,12 +76,13 @@ export const ScheduleUpdateBody = z.object({
   last_done_at: Rule.last_done_at,
 });
 
-/** How many schedules a list presents at once. Each asks the workspace
- *  directory its zone and currency, and a page of fifty presented together held
- *  46 of the api's 80 directory clients and starved the release run. */
-export const PRESENT_AT_ONCE = 8;
+/** A list's schedules presented a few at a time, within the workspace's
+ *  pool less two connections (#8966). Each asks the workspace directory its
+ *  zone and currency, and a page of fifty presented together held 46 of the
+ *  api's 80 directory clients and starved the release run; eight at a time
+ *  then held more than a server's pool of five. */
 export function presentEach(orgId: string, rows: readonly ScheduleRow[], timeZone?: string | null) {
-  return mapLimit(rows, PRESENT_AT_ONCE, (s) => present(orgId, s, timeZone));
+  return platform().db.fanOut(orgId, rows, (s) => present(orgId, s, timeZone));
 }
 
 /** A schedule as a record page shows it: the rule in words and where it stands. */

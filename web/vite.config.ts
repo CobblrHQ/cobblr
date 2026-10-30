@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, type UserConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -155,7 +155,15 @@ function serviceWorker(): Plugin {
   };
 }
 
-export default defineConfig({
+// A BUILD IS THE PRODUCT'S BUILD, WHATEVER NODE_ENV THE SHELL HAS (#8952). Vite takes import.meta.env.PROD from
+// NODE_ENV, and the walk and e2e jobs set NODE_ENV=development for the api: their web was built without the service
+// worker's registration (and with React's development build), so every offline walk spec went unjudged for a week.
+export default defineConfig(({ command }) => {
+  if (command === "build") process.env.NODE_ENV = "production";
+  return config;
+});
+
+const config: UserConfig = {
   plugins: [react(), serviceWorker(), routePreload(), importAgain()],
   // occt-import-js is an Emscripten/WASM module (the STEP-preview CAD kernel).
   // esbuild's dev pre-bundler mangles Emscripten glue + can't see the `?url`
@@ -229,4 +237,4 @@ export default defineConfig({
       },
     },
   },
-});
+};

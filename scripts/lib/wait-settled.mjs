@@ -134,3 +134,26 @@ export function actsWhenSettled(page, settle = waitSettled) {
   }
   return page;
 }
+
+/** How long a step's checks wait, between them, for what they expect to see. */
+export const SHOWS_WITHIN_MS = 10_000;
+
+/**
+ * A step's check of something it expects to see, judged the way a person
+ * waits for a page still drawing: looked at again until it shows or the
+ * step's time is up. Judged once, a page a loaded runner drew a moment after
+ * its settle cap failed as missing though it drew whole (#6881, walk 60786:
+ * a saved view's rows after a reload, a page coming back from an update
+ * refresh). A check that something is absent is judged once: waiting would
+ * let it pass on a page that had not drawn yet.
+ * @param {() => Promise<string|null>} judgeOnce null when it holds, else what is wrong
+ * @param {{ waits: boolean, until: number, everyMs?: number }} opts
+ */
+export async function judgeWaitingToShow(judgeOnce, { waits, until, everyMs = 250 }) {
+  let bad = await judgeOnce();
+  while (bad && waits && !bad.startsWith("could not check") && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, everyMs));
+    bad = await judgeOnce();
+  }
+  return bad;
+}

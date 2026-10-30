@@ -68,4 +68,12 @@ export interface PlatformDb {
   rowVersion(): unknown;
   /** A WHERE condition: the row is still at this version. */
   atVersion(version: string): unknown;
+  /** Each item through fn, results in input order, holding at most the
+   *  workspace pool's size less two of its connections however many queries
+   *  each branch starts, so the workspace's other requests are never queued
+   *  behind it (#8966). Any fan-out over one workspace's records goes
+   *  through this, never a mapLimit sized by hand. `atOnce` runs more
+   *  branches than that when each mostly waits on something else (a printer
+   *  over the network); their connections come out of the same share. */
+  fanOut<T, R>(orgId: string, items: readonly T[], fn: (item: T, i: number) => Promise<R>, opts?: { atOnce?: number }): Promise<R[]>;
 }

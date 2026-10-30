@@ -250,6 +250,9 @@ export interface CoreScanRecordPhotoSuggestionsTable {
   held_bytes: Buffer | null;
   held_type: string | null;
   held_name: string | null;
+  /** When the held picture was kept: it is dropped HELD_DAYS later
+   *  (services/held-picture.ts, #8941). Null on a row from before 0047. */
+  held_at: Date | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

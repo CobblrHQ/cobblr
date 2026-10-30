@@ -218,14 +218,14 @@ function buildManifest(version: string, basePath: string, maxFileMb: number, max
         effect: "none", mode: "async", typical_seconds: 1,
         input_schema: {
           type: "object", properties: {
-            source: { type: "string" }, source_lang: { enum: ["build123d", "openscad"] }, template: { type: "string" }, params: { type: "object" },
+            source: { type: "string" }, source_lang: { enum: ["solidcraft", "openscad"] }, template: { type: "string" }, params: { type: "object" },
             prompt: { type: "string" }, material: { type: "string" }, units: { const: "mm" },
             max_bbox_mm: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 }, tolerances: { type: "object" },
           },
           anyOf: [{ required: ["source"] }, { required: ["template"] }],
         },
         output_schema: { type: "object", required: ["source_lang", "params", "report"] },
-        files_out: [{ name: "source", types: ["text/x-python", "text/x-openscad"] }, { name: "stl", types: ["model/stl"] }, { name: "preview", types: ["image/png"] }, { name: "step", types: ["model/step"], optional: true }],
+        files_out: [{ name: "source", types: ["application/json", "text/x-openscad"] }, { name: "stl", types: ["model/stl"] }, { name: "preview", types: ["image/png"] }, { name: "step", types: ["model/step"], optional: true }],
         options_endpoint: `${basePath}/capabilities/design.part/options`,
       },
     ],
@@ -502,12 +502,14 @@ export async function startFakeService(opts: FakeServiceOptions = {}): Promise<F
       const size = [40, 12.8, 15];
       const fits = Array.isArray(input.max_bbox_mm) ? size.every((v, i) => v <= (input.max_bbox_mm as number[])[i]) : undefined;
       j.files = {
-        source: storeBytes(Buffer.from(String(input.source ?? `# template ${input.template}`)), "text/x-python", "part.py"),
+        source: input.source_lang === "openscad"
+          ? storeBytes(Buffer.from(String(input.source)), "text/x-openscad", "part.scad")
+          : storeBytes(Buffer.from(String(input.source ?? JSON.stringify({ commands: [], template: input.template }))), "application/json", "part.solidcraft.json"),
         stl: storeBytes(Buffer.from("solid fake\nendsolid fake\n"), "model/stl", "part.stl"),
         preview: storeBytes(PNG_1PX, "image/png", "preview.png"),
       };
       j.output = {
-        source_lang: input.source_lang ?? "build123d", params: input.params ?? {},
+        source_lang: input.source_lang ?? "solidcraft", params: input.params ?? {},
         report: { watertight: true, winding_consistent: true, size_mm: size, volume_mm3: 2207, z_min_on_bed: true, bodies: 1, ...(fits === undefined ? {} : { fits }) },
       };
       set(j, "done", 1, "done");

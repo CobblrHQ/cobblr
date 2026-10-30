@@ -1,0 +1,10 @@
+{
+  "lint": "lint:blob-columns-state-their-lifetime",
+  "run": "node scripts/lint-blob-columns-state-their-lifetime.ts",
+  "rows": [
+    "migration"
+  ],
+  "ms": 696,
+  "recorded": "2026-10-30",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

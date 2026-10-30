@@ -27,3 +27,18 @@ export function busySentence(retryAfterSec: number | null): string {
     ? `Too many attempts from this network. Try again in ${waitWords(retryAfterSec)}.`
     : "Too many attempts from this network. Wait a little, then try again.";
 }
+
+/** The api answers a request for a workspace still taking this version's
+ *  migrations at once, 503 with this header, rather than hold it for the
+ *  migration (workspace-updating.ts). The request did nothing, so it is sent
+ *  again after the wait the api asked for, for about a minute in all. */
+export const WORKSPACE_UPDATING_HEADER = "x-cobblr-workspace-updating";
+const UPDATING_TRIES = 20;
+
+export async function fetchThroughUpdating(send: () => Promise<Response>, sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))): Promise<Response> {
+  for (let i = 1; ; i++) {
+    const res = await send();
+    if (res.status !== 503 || res.headers.get(WORKSPACE_UPDATING_HEADER) !== "1" || i >= UPDATING_TRIES) return res;
+    await sleep((parseRetryAfter(res.headers.get("retry-after")) ?? 3) * 1000);
+  }
+}

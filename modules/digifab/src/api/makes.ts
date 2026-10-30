@@ -36,6 +36,7 @@ import {
   type StepWrite,
 } from "../makes-core.js";
 import { requireFamilyPrinting } from "../core/families.js";
+import { DESIGN_SOURCE_LANGS } from "../core/printing.js";
 
 export const makesRouter = Router({ mergeParams: true });
 
@@ -281,7 +282,7 @@ const PrintThisBody = z
     make_id: z.string().uuid().optional(),
     prompt: z.string().trim().min(1).max(8000).optional(),
     source: z.string().trim().min(1).max(200000).optional(),
-    source_lang: z.enum(["build123d", "openscad"]).optional(),
+    source_lang: z.enum(DESIGN_SOURCE_LANGS).optional(),
     template: z.string().trim().min(1).max(200).optional(),
     params: z.record(z.unknown()).optional(),
     quantity: z.number().int().positive().max(10000).optional(),

@@ -21,18 +21,20 @@ import { requireRole } from "./util.js";
 import { parseHomebox, homeboxMetadata, locationPathKey, type HomeboxItem, type HomeboxParse } from "../services/homebox.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
-import { mapLimit } from "@cobblr/platform-contract/map-limit";
+import { platform } from "@cobblr/platform-contract";
 
 export const homeboxRouter = Router({ mergeParams: true });
 
 const INTERNAL_API = selfOrigin();
-const PART_CONCURRENCY = 6;
 
 const Body = z.object({ csv: z.string().min(1).max(20 * 1024 * 1024) });
 
 function bearer(req: Request): string {
   const a = req.headers.authorization;
   return typeof a === "string" && a.startsWith("Bearer ") ? a.slice(7) : "";
+}
+function orgIdOf(req: Request): string {
+  return (req as unknown as { tenant: { org: { id: string } } }).tenant.org.id;
 }
 function slugOf(req: Request): string {
   return String((req.params as { slug?: string }).slug ?? "");
@@ -170,7 +172,7 @@ homeboxRouter.post("/homebox", (req, res, next) => {
     // 2. Items → inventory parts.
     const errors: { row: number; message: string }[] = [];
     let tagsFailed = 0;
-    const results = await mapLimit(p.items, PART_CONCURRENCY, async (it: HomeboxItem) => {
+    const results = await platform().db.fanOut(orgIdOf(req), p.items, async (it: HomeboxItem) => {
       const locationId = it.location_path ? loc.map.get(locationPathKey(it.location_path)) ?? null : null;
       const meta = homeboxMetadata(it);
       const r = await api<{ id: string }>("POST", `/api/v1/orgs/${slug}/modules/inventory/parts`, token, {

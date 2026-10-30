@@ -17,6 +17,12 @@
 // for more than a day when the watch first sees it is an abandoned install, not
 // news, and telling everyone about every one of those on the first deploy would
 // teach them to ignore the notice.
+//
+// A bridge's silence counts only from when this server could hear it
+// (server-hearing.ts): while the server's own database is failing, heartbeats
+// cannot land, and a bridge that never stopped would be called dead. The notice
+// waits until the server has been well for the whole ten minutes, and a bridge
+// that was answering all along has written its heartbeat again by then.
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
@@ -24,6 +30,7 @@ import { dispatch } from "./notifications.js";
 import { howLongAgo } from "./edge.js";
 import { bridgeDisplayName } from "@cobblr/platform-contract/edge-channel";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { couldNotHear, heardWellSince } from "./server-hearing.js";
 
 export const OFFLINE_NOTICE_AFTER_MS = 10 * 60_000;
 const ABANDONED_AFTER_MS = 24 * 60 * 60_000;
@@ -71,11 +78,15 @@ export async function noticeBridgeOutages(
   /** Only channel keys LIKE this. A caller that does not deliver what it
    *  claims (a test) must scope itself, or it swallows real notices. */
   keyLike?: string,
+  /** Since when this server could hear its bridges; a test passes its own. */
+  hearingSince: Date = heardWellSince(),
 ): Promise<BridgeOutageNotice[]> {
   const quietSince = new Date(now.getTime() - OFFLINE_NOTICE_AFTER_MS);
   const abandonedBefore = new Date(now.getTime() - ABANDONED_AFTER_MS);
+  // Not ten minutes of hearing well yet: no silence is the bridge's to answer for.
+  const couldHearItAll = hearingSince <= quietSince;
 
-  const wentQuiet = await meta
+  const wentQuiet = !couldHearItAll ? [] : await meta
     .updateTable("edge_bridges")
     .set({ offline_noticed_at: now })
     .where("offline_noticed_at", "is", null)
@@ -151,10 +162,17 @@ export function startBridgeOutageWatch(): void {
   // SINGLE-PROCESS-SAFE: every notice is claimed by an UPDATE whose WHERE
   // Postgres re-checks under the row lock, so two processes running the same
   // round never both send one.
+  let lastRound = Date.now();
   watching = setInterval(() => {
-    void noticeBridgeOutages().catch((err) =>
-      console.error("[edge] bridge outage watch failed:", (err as Error)?.message ?? err),
-    );
+    // A round that comes far later than asked is a process that was stalled or
+    // paused, and heard nothing in between.
+    const at = Date.now();
+    if (at - lastRound > 2 * WATCH_EVERY_MS) couldNotHear(at);
+    lastRound = at;
+    void noticeBridgeOutages().catch((err) => {
+      couldNotHear();
+      console.error("[edge] bridge outage watch failed:", (err as Error)?.message ?? err);
+    });
   }, WATCH_EVERY_MS);
   watching.unref?.();
 }

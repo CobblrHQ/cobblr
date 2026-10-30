@@ -5,11 +5,6 @@
 import { Router } from "express";
 import { z } from "zod";
 import { placeLine, platform } from "@cobblr/platform-contract";
-import { mapLimit } from "@cobblr/platform-contract/map-limit";
-
-/** Kinds a search asks at once: no more than the smallest workspace pool
- *  (CI keeps 3 connections a workspace, a server 5). */
-const KINDS_AT_ONCE = 3;
 
 const router = Router({ mergeParams: true });
 
@@ -84,34 +79,41 @@ router.get("/search", (req, res, next) => {
     // a book or a grocery while the page's own kind chips (org-aware) showed
     // both. list() returns { items: [] } for kinds without a list resolver,
     // so those fall out of kinds_searched naturally.
-    const allKinds = await platform().entities.listKindsForOrg(orgId);
-    const candidateIds = kindsParam
-      ? allKinds.filter((k) => kindsParam.includes(k.id)).map((k) => k.id)
-      : allKinds.map((k) => k.id);
+    // Only reads from here to the answer, so the workspace's kinds, instances
+    // and field scopes are asked once for the search, not once per kind (#8898).
+    const { candidateIds, perKindResults } = await platform().entities.readingOnly(async () => {
+      const allKinds = await platform().entities.listKindsForOrg(orgId);
+      const candidateIds = kindsParam
+        ? allKinds.filter((k) => kindsParam.includes(k.id)).map((k) => k.id)
+        : allKinds.map((k) => k.id);
 
-    // Fan out, a few kinds at a time. Each kind's list resolver is
-    // independent, but they share the workspace's database pool (3 to 5
-    // connections): every kind at once queued dozens behind it, and on a busy
-    // server the ones at the back waited out the pool's own timeout and came
-    // back failed, twelve kinds "couldn't be searched" in one search (#7682).
-    // A resolver that throws comes back `failed`, and is NAMED in
-    // `kinds_failed` rather than counted as "no matches": a search that could
-    // not ask two kinds looked exactly like one that asked and found nothing,
-    // for three weeks (#3824).
-    const perKindResults = await mapLimit(candidateIds, KINDS_AT_ONCE, async (kind) => {
-        // Search finds what was retired too: "where is my old drill" is a
-        // question about something archived, and a search that cannot find
-        // it lies by omission. Lists and views leave retired records out
-        // unless asked; search asks, and ranks them below the live ones.
-        const result = await platform().entities.list(orgId, kind, {
-          q,
-          limit: per_kind,
-          offset,
-          filter: tag ? { _tag: tag } : undefined,
-          include_retired: true,
-        }, viewer);
-        if (tag && result.unapplied?.some((p) => p.col === "_tag")) return { items: [], failed: false, total: undefined };
-        return { items: result.items.map((item) => ({ ...item, kind })), failed: result.failed === true, total: result.total };
+      // Fan out within the workspace's pool, less two connections. Each kind's
+      // list resolver is independent, but they share the workspace's pool (3
+      // to 5 connections): every kind at once queued dozens behind it, and on
+      // a busy server the ones at the back waited out the pool's own timeout
+      // and came back failed, twelve kinds "couldn't be searched" in one
+      // search (#7682). Three kinds at a time still held all five, and the
+      // workspace's next request waited behind the search (#8966).
+      // A resolver that throws comes back `failed`, and is NAMED in
+      // `kinds_failed` rather than counted as "no matches": a search that could
+      // not ask two kinds looked exactly like one that asked and found nothing,
+      // for three weeks (#3824).
+      const perKindResults = await platform().db.fanOut(orgId, candidateIds, async (kind) => {
+          // Search finds what was retired too: "where is my old drill" is a
+          // question about something archived, and a search that cannot find
+          // it lies by omission. Lists and views leave retired records out
+          // unless asked; search asks, and ranks them below the live ones.
+          const result = await platform().entities.list(orgId, kind, {
+            q,
+            limit: per_kind,
+            offset,
+            filter: tag ? { _tag: tag } : undefined,
+            include_retired: true,
+          }, viewer);
+          if (tag && result.unapplied?.some((p) => p.col === "_tag")) return { items: [], failed: false, total: undefined };
+          return { items: result.items.map((item) => ({ ...item, kind })), failed: result.failed === true, total: result.total };
+      });
+      return { candidateIds, perKindResults };
     });
     const kindsFailed = candidateIds.filter((_, i) => perKindResults[i]!.failed);
     const perKind = perKindResults.map((r) => r.items);

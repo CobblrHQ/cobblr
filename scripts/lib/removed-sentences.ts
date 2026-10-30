@@ -32,16 +32,34 @@ export function removedLines(diff: string): RemovedLine[] {
   return out;
 }
 
-/** Every spec text a removed line held and the tree no longer holds anywhere. */
-export function check(removed: RemovedLine[], specs: SpecText[], inTree: (text: string) => boolean): Violation[] {
+/** The lines a unified diff adds, with the file each went to. */
+export function addedLines(diff: string): RemovedLine[] {
+  const out: RemovedLine[] = [];
+  let file = "";
+  for (const line of diff.split("\n")) {
+    const m = /^\+\+\+ b\/(.+)$/.exec(line);
+    if (m) {
+      file = m[1]!;
+      continue;
+    }
+    if (line.startsWith("+") && !line.startsWith("+++") && file) out.push({ file, text: line.slice(1) });
+  }
+  return out;
+}
+
+/** Every spec text this change removes more often than it adds back. A
+ *  sentence that moved is added where it went, in the same change; one that
+ *  some other file happens to hold is not that (5e373c45b4 dropped the order
+ *  page's "Payment date:" while the invoice PDF still said "Payment date",
+ *  and the walk of the page went red). */
+export function check(removed: RemovedLine[], added: RemovedLine[], specs: SpecText[]): Violation[] {
   const out: Violation[] = [];
-  const gone = new Map<string, boolean>();
+  const count = (lines: RemovedLine[], text: string) => lines.filter((l) => l.text.includes(text)).length;
   for (const s of specs) {
     if (s.text.length < MIN_SENTENCE) continue;
     const from = removed.find((r) => r.text.includes(s.text));
     if (!from) continue;
-    if (!gone.has(s.text)) gone.set(s.text, !inTree(s.text));
-    if (gone.get(s.text)) out.push({ spec: s.spec, text: s.text, file: from.file });
+    if (count(removed, s.text) > count(added, s.text)) out.push({ spec: s.spec, text: s.text, file: from.file });
   }
   return out;
 }

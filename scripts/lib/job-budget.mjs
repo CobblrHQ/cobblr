@@ -52,7 +52,11 @@ export const SHARE = 0.5;
 // capped typecheck died in V8 with 700 MiB of its cap unused, and main went
 // red). So the heap is set, never left to the default, and a cap that cannot
 // hold it fails by name.
-export const HEAP_NEED_MIB = { tsc: 1536 };
+// 3072 since 2026-10-30 (#8950): api's `tsc --noEmit -p tsconfig.tests.json`
+// uses 2155 MiB of heap (--extendedDiagnostics "Memory used", main at 2f7779597)
+// and dies at node's 2048 MiB default, which the old 1536 never raised: the
+// tracker's typecheck-tsc was red on 13 runs of main in a row.
+export const HEAP_NEED_MIB = { tsc: 3072 };
 const HEAP_OVERHEAD_MIB = 256;
 export const CAPPED_SHARE = 0.8;
 const SHARE_ENV = "COBBLR_JOB_BUDGET_SHARE";

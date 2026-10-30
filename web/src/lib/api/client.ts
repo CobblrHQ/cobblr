@@ -15,7 +15,7 @@ import { AI_AVAILABILITY_WRITE } from "../ai-availability-keys";
 import { awaitBlockedAction, carriesOnItself, isMutating, raiseBlockedAction, refusedRequestFor } from "../blocked-action";
 import { GUEST_NOT_SHARED, refusedForGuest } from "../acting-role";
 import { isPageLeaving } from "../page-leaving";
-import { busySentence, parseRetryAfter } from "../request-wait";
+import { busySentence, fetchThroughUpdating, parseRetryAfter } from "../request-wait";
 import { markSandboxEnded } from "../sandbox-session";
 import { markWorkspaceUnavailable } from "../workspace-unavailable";
 import { markWorkspaceUnfinished, slugOfRequest } from "../workspace-unfinished";
@@ -357,11 +357,13 @@ async function sendRequest<T>(
     res = primed
       ? new Response(JSON.stringify(primed.body), { status: primed.status, headers: { "content-type": "application/json" } })
       : await sharedRead(method, `${token ?? ""} ${impToken ?? ""} ${path}`, () =>
-          fetch(`/api/v1${path}`, {
-            method,
-            headers,
-            body: bodyText,
-          }),
+          fetchThroughUpdating(() =>
+            fetch(`/api/v1${path}`, {
+              method,
+              headers,
+              body: bodyText,
+            }),
+          ),
         );
   } catch {
     write?.settle("unknown");

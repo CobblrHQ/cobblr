@@ -222,7 +222,7 @@ async function startDesign(db: Kysely<DigifabDB>, orgId: string, userId: string 
   if (existing) return { ok: false, code: "design_exists", error: "This Make already has a design. Make it again from Design to change it.", make_id: make.id };
   const request = await db.selectFrom("digifab_make_steps").select("data").where("make_id", "=", make.id).where("step", "=", "request").executeTakeFirst();
   const prompt = ask.prompt ?? (request?.data as Record<string, unknown> | undefined)?.prompt;
-  const input = { ...(typeof prompt === "string" ? { prompt } : {}), ...(ask.source ? { source: ask.source, source_lang: ask.source_lang ?? "build123d" } : {}), ...(ask.template ? { template: ask.template } : {}), params: ask.params ?? {}, material: ask.material, units: "mm" };
+  const input = { ...(typeof prompt === "string" ? { prompt } : {}), ...(ask.source ? { source: ask.source, source_lang: ask.source_lang ?? "solidcraft" } : {}), ...(ask.template ? { template: ask.template } : {}), params: ask.params ?? {}, material: ask.material, units: "mm" };
   const id = await recordMakeStep(db, orgId, userId, make, "design", { status: "running", data: { input, invocation: { input }, material: ask.material, color: ask.color ?? null, quantity: ask.quantity ?? 1 }, produced_by: { kind: "service", capability: DESIGN_CAPABILITY } });
   try {
     const job = await platform().services.invoke({ orgId, capability: DESIGN_CAPABILITY, input, attachTo: { kind: "digifab:make-step", id }, idempotencyKey: `make-design:${make.id}:${id}` });
@@ -538,8 +538,9 @@ export function registerPrintThis(): void {
       file_id: typeof a.file_id === "string" ? a.file_id : undefined,
       make_id: typeof a.make_id === "string" ? a.make_id : undefined,
       prompt: typeof a.prompt === "string" ? a.prompt : undefined,
-      source: typeof a.source === "string" ? a.source : undefined,
-      source_lang: a.source_lang === "openscad" ? "openscad" : "build123d",
+      // A SolidCraft script is JSON, and a model may pass it as an object.
+      source: typeof a.source === "string" ? a.source : a.source && typeof a.source === "object" ? JSON.stringify(a.source) : undefined,
+      source_lang: a.source_lang === "openscad" ? "openscad" : "solidcraft",
       template: typeof a.template === "string" ? a.template : undefined,
       quantity: typeof a.quantity === "number" ? a.quantity : undefined,
       params: a.params && typeof a.params === "object" && !Array.isArray(a.params) ? a.params as Record<string, unknown> : undefined,

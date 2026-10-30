@@ -25,13 +25,16 @@ export function lazyWithPreload<C extends ComponentType<any>>(factory: () => Pro
 }
 
 /** A piece drawn only after a tap or inside a page, never in the shell's
- *  first paint: its code loads later, and it holds its own (empty) place
- *  while it does, so nothing around it suspends. The dashboard's first load
- *  had 0.2 KB left of its budget with these in the shell (#4945). */
-export function deferredPiece<C extends ComponentType<any>>(factory: () => Promise<{ default: C }>): ((props: ComponentProps<C>) => ReactElement) & { preload: () => Promise<unknown> } {
+ *  first paint: its code loads later, and it holds its own place while it
+ *  does, so nothing around it suspends. The dashboard's first load had 0.2 KB
+ *  left of its budget with these in the shell (#4945). `holds` is what stands
+ *  in its place meanwhile: a piece drawn in a page's flow passes something of
+ *  its own size, or the controls under it move down when it arrives (a
+ *  record's "Scan to fill" pushed its buttons 56 px down a second in). */
+export function deferredPiece<C extends ComponentType<any>>(factory: () => Promise<{ default: C }>, holds: ReactElement | null = null): ((props: ComponentProps<C>) => ReactElement) & { preload: () => Promise<unknown> } {
   const Piece = lazyWithPreload(factory);
   const Held = (props: ComponentProps<C>) => (
-    <Suspense fallback={null}>
+    <Suspense fallback={holds}>
       <Piece {...props} />
     </Suspense>
   );

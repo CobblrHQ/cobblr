@@ -127,6 +127,10 @@ export function tokensOf(s: string): Set<string> {
   return out;
 }
 
+/** Every word and number in order, lowercased, stop words kept: the whole
+ *  of a name as said, so "Shelf A" is not "Shelf". */
+const phraseOf = (s: string): string => s.toLowerCase().split(/[^\p{L}\p{M}\p{N}]+/u).filter(Boolean).join(" ");
+
 /** Every string the record carries, at any depth a search result has. */
 function textOf(v: unknown, depth = 0): string {
   if (v == null || depth > 3) return "";
@@ -314,13 +318,20 @@ export function rankedNotAsked(
   const company = companyOf(userText, search, chosen);
   if (!company || company.peers.length === 0) return null;
   const { ref, peers } = company;
+  // "Shelf A" said whole names Shelf A even though "a" is a stop word and
+  // Shelf B and Shelf C came back from the same search (the corpus nightly,
+  // 2026-10-30): a name the person said, that no rival's name carries, is
+  // their choice.
+  const said = ` ${phraseOf(userText)} `;
+  const name = phraseOf(chosen.label);
+  if (name && said.includes(` ${name} `) && !peers.some((p) => ` ${phraseOf(p.label)} `.includes(` ${name} `))) return null;
   // What sets the chosen record apart from every other hit: its row, and
   // everything else the turn read about it.
   const allOf = (h: Hit) => tokensOf(`${h.label} ${h.text} ${facts.get(h.id)?.text.join(" ") ?? ""}`);
   const own = allOf(chosen);
   for (const p of peers) for (const t of allOf(p)) own.delete(t);
-  const said = tokensOf(userText);
-  for (const t of own) if (said.has(t)) return null;
+  const words = tokensOf(userText);
+  for (const t of own) if (words.has(t)) return null;
   const a = (call.args ?? {}) as Record<string, unknown>;
   const what = call.name === "invoke_action" ? String(a.action_id ?? "the action") : call.name === "delete_record" ? "delete" : "update";
   const all = search.hits.filter((h) => h.id === chosen.id || peers.includes(h));

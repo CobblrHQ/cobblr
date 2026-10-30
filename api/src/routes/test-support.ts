@@ -25,7 +25,7 @@ import { meta, metaPool } from "../db/meta.js";
 import { getTenantDb, tenantPoolStats } from "../db/tenant.js";
 import { poolCounts } from "../db/pool-stats.js";
 import { readProbe } from "../platform/meta-probe.js";
-import { poolHolders, poolPeak } from "../db/client-error-guard.js";
+import { forgetPoolPeak, poolHolders, poolPeak } from "../db/client-error-guard.js";
 import { forgetOrgInTtlCaches } from "../lib/ttl-cache.js";
 import { sql } from "kysely";
 import {
@@ -419,6 +419,25 @@ testSupportRouter.get("/test-support/backup-heavy", async (_req, res, next) => {
     const id = heavyBackupHolder();
     const o = id ? await meta.selectFrom("orgs").select("slug").where("id", "=", id).executeTakeFirst() : undefined;
     res.json({ holder: o?.slug ?? null });
+  } catch (err) {
+    next(err);
+  }
+});
+// A workspace pool's worst moment since the last forget: how many callers
+// waited for one of its connections at once, and who held them (#8898).
+// `forget: true` clears it first, so a test reads only what it does next.
+testSupportRouter.post("/test-support/tenant-pool-peak", async (req, res, next) => {
+  try {
+    const { slug, forget } = (req.body ?? {}) as { slug?: string; forget?: boolean };
+    const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
+    if (!o) {
+      res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace required" } });
+      return;
+    }
+    const { getTenantPool, TENANT_POOL_MAX } = await import("../db/tenant.js");
+    const pool = await getTenantPool(o.id);
+    if (forget) forgetPoolPeak(pool);
+    res.json({ pool_max: TENANT_POOL_MAX, peak: poolPeak(pool) });
   } catch (err) {
     next(err);
   }

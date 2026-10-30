@@ -50,6 +50,15 @@
 #      and busybox quietly fall back to UTC for a name they do not know, which
 #      is this same error with no message. Without BACKUP_TZ the container's own
 #      zone is used (TZ, or a mounted /etc/localtime), and the log says which.
+#   7. A DUMP NEVER FILLS THE DISK IT READS FROM. Retention counted files, so
+#      when one table made each dump ten times bigger (2026-10-19) thirty slots
+#      became 42 GB, the disk the database lives on reached 0 bytes free, and
+#      the 03:00 dump itself took the database into crash recovery (#8940).
+#      Before a dump the loop wants twice the last dump plus a reserve free; it
+#      makes room from failed partials, then from the oldest dumps (never the
+#      newest BACKUP_DAILY_FLOOR), and if that is not enough it skips the dump
+#      and fails loudly: a missed day, never a crashed database.
+#      BACKUP_DAILY_MAX_BYTES caps what the daily dumps may hold in all.
 #
 # Env (every one has a default; a compose file overrides what it needs):
 #   BACKUP_AT               local HH:MM to dump at, or "interval" to keep the
@@ -63,6 +72,12 @@
 #   BACKUP_MIN_BYTES        the size floor a dump must clear (default 1000000)
 #   BACKUP_DAILY_RETENTION  usable daily dumps to keep (default 30)
 #   BACKUP_WEEKLY_RETENTION Sunday copies to keep (default 12)
+#   BACKUP_MIN_FREE_BYTES   free space to leave on the disk after a dump the
+#                           size of twice the last one (default 2147483648)
+#   BACKUP_DAILY_MAX_BYTES  most bytes the daily dumps may hold together
+#                           (default 0: no cap beyond the count)
+#   BACKUP_DAILY_FLOOR      newest daily dumps space-pruning never removes
+#                           (default 3)
 #   PG*                     passed to pg_dumpall as usual
 #
 # scripts/backup-loop.test.ts drives it with a fake pg_dumpall and a fake clock.
@@ -74,6 +89,9 @@ AT="${BACKUP_AT:-03:00}"
 MIN="${BACKUP_MIN_BYTES:-1000000}"
 DAILY="${BACKUP_DAILY_RETENTION:-30}"
 WEEKLY="${BACKUP_WEEKLY_RETENTION:-12}"
+RESERVE="${BACKUP_MIN_FREE_BYTES:-2147483648}"
+DAILY_MAX="${BACKUP_DAILY_MAX_BYTES:-0}"
+FLOOR="${BACKUP_DAILY_FLOOR:-3}"
 
 # The clock BACKUP_AT is read on. Validated against the zone files rather than
 # trusted, because an unknown name is silently UTC (see 6 above).
@@ -170,10 +188,41 @@ verified_dump() {
   gzip -dc "$file" 2>/dev/null | tail -n 12 | grep -Fx -- '-- PostgreSQL database cluster dump complete' >/dev/null
 }
 
+free_bytes() { df -PB1 "$DIR/daily" 2>/dev/null | awk 'NR==2{print $4}'; }
+
+# The daily dumps, newest first, past the floor: what space-pruning may take.
+removable_dailies() { ls -1t "$DIR"/daily/*.sql.gz 2>/dev/null | tail -n +$(( FLOOR + 1 )); }
+
+# Room for the next dump (7 above): failed partials go first, then the oldest
+# dumps past the floor. Returns 1 when even that leaves too little.
+make_room() {
+  local last need free f
+  last=$(ls -1t "$DIR"/daily/*.sql.gz 2>/dev/null | head -n1)
+  need=$(( RESERVE + 2 * $( [ -n "$last" ] && stat -c%s "$last" 2>/dev/null || echo 0) ))
+  free=$(free_bytes)
+  [ -n "$free" ] || { echo "[backup] could not read free space on $DIR; dumping without the check"; return 0; }
+  [ "$free" -ge "$need" ] && return 0
+  echo "[backup] $free bytes free on $DIR, a dump wants $need: making room"
+  for f in "$DIR"/daily/*.failed "$DIR"/daily/*.partial.*; do
+    [ -e "$f" ] || continue
+    rm -f "$f" && echo "[backup] removed $f for space"
+    free=$(free_bytes); [ "$free" -ge "$need" ] && return 0
+  done
+  while f=$(removable_dailies | tail -n1) && [ -n "$f" ]; do
+    rm -f "$f" && echo "[backup] removed the oldest dump $f for space"
+    free=$(free_bytes); [ "$free" -ge "$need" ] && return 0
+  done
+  return 1
+}
+
 # One dump, judged. Prints its verdict; returns 0 only for a usable dump.
 dump_once() {
   local stamp out partial failed ok sz
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  if ! make_room; then
+    echo "[backup] $stamp SKIPPED - only $(free_bytes) bytes free on $DIR and nothing past the newest $FLOOR dumps left to remove; the database's disk is kept, not this dump"
+    return 1
+  fi
   out="$DIR/daily/$PREFIX-$stamp.sql.gz"
   echo "[backup] $stamp -> pg_dumpall -> $out"
   ok=1
@@ -211,6 +260,13 @@ prune() {
   { ls -1t "$DIR"/weekly/*.sql.gz 2>/dev/null \
     | while read -r f; do verified_dump "$f" && echo "$f"; done \
     | tail -n +$(( WEEKLY + 1 )) | xargs -r rm -f; } || true
+  if [ "$DAILY_MAX" -gt 0 ]; then
+    local total f
+    total=$(stat -c%s "$DIR"/daily/*.sql.gz 2>/dev/null | awk '{t+=$1} END{print t+0}')
+    while [ "$total" -gt "$DAILY_MAX" ] && f=$(removable_dailies | tail -n1) && [ -n "$f" ]; do
+      total=$(( total - $(stat -c%s "$f") )); rm -f "$f" && echo "[backup] removed $f: daily dumps over BACKUP_DAILY_MAX_BYTES ($DAILY_MAX)"
+    done
+  fi
 }
 
 if [ "$ONCE" = "1" ]; then

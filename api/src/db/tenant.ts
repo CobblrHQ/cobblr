@@ -159,6 +159,13 @@ const tenantConnections = createConnectionLimit({
   },
 });
 
+/** Whether a workspace checkout is waiting for a connection, or one more
+ *  workspace's pool would not fit: background work that can wait yields then. */
+export function tenantConnectionsContended(): boolean {
+  if (tenantConnections.waiting() > 0 || tenantPoolStats().waiting > 0) return true;
+  return MAX_TENANT_POOLS * TENANT_POOL_MAX - tenantConnections.open() < TENANT_POOL_MAX;
+}
+
 /** Lower the cap to what the server can hold (connection-budget.ts, at boot). */
 export function setTenantPoolCap(n: number): void {
   MAX_TENANT_POOLS = Math.max(2, Math.min(CONFIGURED_TENANT_POOLS, Math.floor(n)));
@@ -256,8 +263,26 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
   return { pool, db };
 }
 
+/** What a workspace waits for before its database is handed out: its
+ *  migrations, when the boot walk ran out of time before reaching it (#8921).
+ *  Registered by the module layer (modules/enable.ts); null means go ahead. */
+type TenantOpenGate = (orgId: string) => Promise<void> | null;
+let openGate: TenantOpenGate | null = null;
+export function setTenantOpenGate(gate: TenantOpenGate | null): void {
+  openGate = gate;
+}
+
+/** What a workspace still waits for before it is handed out, starting it now
+ *  if it has not started, or null when nothing. A request asks this first and
+ *  answers "updating" rather than wait out a migration. */
+export function tenantOpenWait(orgId: string): Promise<void> | null {
+  return openGate?.(orgId) ?? null;
+}
+
 export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
   if (deleting.has(orgId)) throw new WorkspaceDeletingError(orgId);
+  const wait = openGate?.(orgId);
+  if (wait) await wait;
   // Stamp BEFORE the await: the grace window must cover from the moment we
   // commit to handing out this pool, not from when the promise resolves.
   lastAccess.set(orgId, Date.now());

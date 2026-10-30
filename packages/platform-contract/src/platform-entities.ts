@@ -212,6 +212,12 @@ export interface PlatformEntities {
     query?: EntityListQuery,
     viewer?: EntityViewer,
   ): Promise<EntityListResult>;
+  /** Run fn, which only reads, with the workspace's side of each read asked
+   *  once: its kinds, instances and field scopes. A search lists every kind,
+   *  and each list asked them again, a workspace search 20-30% slower than
+   *  it was (#8898). Never wrap a write in it: a read after the write would
+   *  answer from before it. */
+  readingOnly<T>(fn: () => Promise<T>): Promise<T>;
   /** Every record the query answers, walked a page at a time (list() answers
    *  one page, usually 50, when no limit is asked). `total` is the
    *  resolver's count, else the walked count once complete, else null;

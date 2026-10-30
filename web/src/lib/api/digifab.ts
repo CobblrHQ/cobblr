@@ -1000,7 +1000,7 @@ export const digifabApi = {
   listMakes: (slug: string, q?: string) =>
     request<{ items: MakeSummary[] }>("GET", `/orgs/${slug}/modules/digifab/makes${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   /** Print this: a Make for the model, the printer it fits, a slice. Sends nothing. */
-  printThis: (slug: string, body: { file_id?: string; make_id?: string; prompt?: string; source?: string; source_lang?: "build123d" | "openscad"; template?: string; params?: Record<string, unknown>; material: string; color?: string; quantity?: number }) =>
+  printThis: (slug: string, body: { file_id?: string; make_id?: string; prompt?: string; source?: string; source_lang?: "solidcraft" | "openscad"; template?: string; params?: Record<string, unknown>; material: string; color?: string; quantity?: number }) =>
     request<PrintThisStarted>("POST", `/orgs/${slug}/modules/digifab/makes/print-this`, body),
   /** The one yes: start a Make's waiting print. */
   startMakePrint: (slug: string, makeId: string, confirmHash: string) => request<{ ok: true; status: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${makeId}/print/start`, { confirm_hash: confirmHash }),

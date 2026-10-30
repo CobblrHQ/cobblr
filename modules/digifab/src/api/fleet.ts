@@ -42,7 +42,6 @@ import type { DigifabDB } from "../db.js";
 import { readCachedList, readCachedInfo, refreshList, ensureInfo, ensureWarming } from "../printer-file-cache.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 import { fetchDevicesCached, withTimeout } from "./fleet-device-cache.js";
-import { mapLimit } from "@cobblr/platform-contract/map-limit";
 
 export const fleetRouter = Router({ mergeParams: true });
 
@@ -50,6 +49,8 @@ const TERMINAL = ["completed", "failed", "cancelled"];
 
 // F-11 — the fan-out's third guard: at most this many managers asked at once,
 // however big the fleet (the cache and the timeout live in fleet-device-cache.ts).
+// Their database reads come out of the workspace fan-out's share, so a floor
+// refresh never holds the pool its scans and record pages need (#8966).
 const MAX_CONCURRENT_LISTS = 6;
 
 /** The driver to use for on-machine FILE ops (list / info / print-existing).
@@ -179,7 +180,7 @@ fleetRouter.get(
     // Printers lent out (record-loans.md): away, and the farm skips them.
     const lent = await lentDeviceRefs(db, orgId).catch(() => new Map<string, string>());
 
-    const connections = await mapLimit(conns, MAX_CONCURRENT_LISTS, async (c) => {
+    const connections = await platform().db.fanOut(orgId, conns, async (c) => {
         try {
           const bridge = c.type === "edge_adapter" ? (await readBridgeConfig(orgId, c.id)).bridge : undefined;
           const driver = await buildDriverById(db, orgId, c.id);
@@ -308,6 +309,7 @@ fleetRouter.get(
           };
         }
       },
+      { atOnce: MAX_CONCURRENT_LISTS },
     );
 
     const all = connections.flatMap((c) => c.devices);

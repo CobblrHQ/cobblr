@@ -256,9 +256,19 @@ async function rollForwardLocked(
   }
 }
 
-/** Every schedule in the workspace brought up to date: the sweeper's pass. */
-export async function reconcileSchedules(db: Db, orgId: string, now = new Date()): Promise<{ schedules: number; reasons: Map<string, string> }> {
-  const rows = await db.selectFrom("core_maintenance_schedules").selectAll().execute();
+/** The records a read shows; a read of one record's history names it. */
+export type ScheduleScope = { entity_module?: string; entity_type?: string; entity_id?: string };
+
+/** The schedules in scope brought up to date; with no scope, every schedule in
+ *  the workspace (the sweeper's pass). A read of one record reconciles that
+ *  record's schedules only: reconciling all 120 of a workspace's took 9 to 13
+ *  seconds per record read. */
+export async function reconcileSchedules(db: Db, orgId: string, now = new Date(), scope: ScheduleScope = {}): Promise<{ schedules: number; reasons: Map<string, string> }> {
+  let query = db.selectFrom("core_maintenance_schedules").selectAll();
+  if (scope.entity_module) query = query.where("entity_module", "=", scope.entity_module);
+  if (scope.entity_type) query = query.where("entity_type", "=", scope.entity_type);
+  if (scope.entity_id) query = query.where("entity_id", "=", scope.entity_id);
+  const rows = await query.execute();
   const reasons = new Map<string, string>();
   for (const original of rows) {
     try {

@@ -14,12 +14,14 @@ import { decodeBarcodeImage } from "./lib/decode-barcode-image";
 import { photoSuggestionsWhenOn } from "./lib/photoSuggestionsWhenOn";
 import { deferredPiece } from "./lib/lazy-preload";
 import { CobbHead } from "./components/CobbHead";
+import { ScanToFillPlace } from "./components/scan-to-fill-place";
 
 // The record pieces a module draws in its own pages load after the shell (#4945).
 const RecordPhoto = deferredPiece(() => import("./components/RecordPhoto").then((m) => ({ default: m.RecordPhoto })));
 const LocationTreePicker = deferredPiece(() => import("./components/LocationTreePicker").then((m) => ({ default: m.LocationTreePicker })));
 const LocationChipPicker = deferredPiece(() => import("./components/LocationChipPicker").then((m) => ({ default: m.LocationChipPicker })));
-const FormBarcodeCapture = deferredPiece(() => import("./components/FormBarcodeCapture").then((m) => ({ default: m.FormBarcodeCapture })));
+// Drawn in a form's flow, so it holds its own size while it loads.
+const FormBarcodeCapture = deferredPiece(() => import("./components/FormBarcodeCapture").then((m) => ({ default: m.FormBarcodeCapture })), <ScanToFillPlace />);
 const DEFERRED_PIECES = [RecordPhoto, LocationTreePicker, LocationChipPicker, FormBarcodeCapture];
 // Flows load when one is opened (the flow host gives each a boundary).
 const NewFromTemplateFlow = lazy(() => import("./flows/NewFromTemplateFlow").then((m) => ({ default: m.NewFromTemplateFlow })));

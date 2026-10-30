@@ -30,7 +30,7 @@ const actions: ModuleActionInput[] = await Promise.all(
 
 export default defineModule({
   name: "core-scan",
-  version: "0.77.13",
+  version: "0.77.14",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
