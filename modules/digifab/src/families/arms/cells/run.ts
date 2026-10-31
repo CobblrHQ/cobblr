@@ -1,3 +1,4 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 // Running a cell's job: Cobblr starts it once at the cell's station, the
 // bridge runs every step, and Cobblr records what the bridge reports. A
 // start is a person's check at the cell bound to the job and each arm's
@@ -246,7 +247,7 @@ export async function watchCell(db: Kysely<DigifabDB>, orgId: string, machineId:
 }
 
 export function registerCellMonitor(): void {
-  platform().sweeps.register({ name: "digifab.cell-monitor", module: "digifab", everyMs: 5_000, firstAfterMs: 10_000,
+  platform().sweeps.register(narrowSweep({ name: "digifab.cell-monitor", module: "digifab", everyMs: 5_000, firstAfterMs: 10_000,
     visit: async ({ orgId, db }) => {
       // A workspace with robot arms off has its cells hidden, not watched.
       if (!(await platform().parts.isOn(orgId, "digifab", "arms"))) return;
@@ -257,7 +258,7 @@ export function registerCellMonitor(): void {
         catch (err) { platform().health.notePassFailure("digifab.cell-monitor", `${orgId}:${c.machine_id}`, err); }
       }));
     },
-  });
+  }, hasCellWork));
 }
 
 /** A machine in an open cell job takes no other work from Cobblr. */
@@ -266,4 +267,10 @@ export async function cellHoldRefusal(db: Kysely<DigifabDB>, connectionId: strin
   if (deviceId) q = q.where("m.device_id", "=", deviceId);
   const held = await q.executeTakeFirst();
   return held ? `This machine is ${held.role} in a cell's job. Stop that job first; pause and stop still reach it.` : null;
+}
+
+export async function hasCellWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<DigifabDB>).selectFrom("digifab_cell_jobs").select("id")
+    .where(eb => eb.or([eb("status", "<>", "ended"), eb("cycles", ">", eb.ref("stock_cycles"))]))
+    .limit(1).executeTakeFirst();
 }

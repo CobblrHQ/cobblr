@@ -10,6 +10,7 @@
 
 import { keepActivityReferenceTitles } from "./activity-references.js";
 import { currentHistoryWrite, historyDiff, noteCreatedLog } from "./record-history.js";
+import { diesHereForTests, insertLine, keepLine, metaRefusedForTests, type ActivityLine } from "./activity-trace.js";
 import { changesOf } from "@cobblr/platform-contract/activity-changes";
 import { secretHistoryDiff } from "@cobblr/platform-contract/secret-field";
 import { sql, type Kysely } from "kysely";
@@ -82,22 +83,35 @@ export async function log(p: LogParams, db: Kysely<MetaDB> = meta): Promise<void
 
   const diff = await keepActivityReferenceTitles(p.orgId, [`${p.ref.module}:${p.ref.entityType}`], secretHistoryDiff(rawDiff));
 
-  await db
-    .insertInto("activity_log")
-    .values({
-      org_id: p.orgId,
-      user_id: userId,
-      module_name: p.ref.module,
-      action: p.action,
-      entity_type: p.ref.entityType,
-      entity_id: p.ref.entityId,
-      diff: diff === undefined ? null : (secretHistoryDiff(diff) as object),
-      auth_method: authMethod,
-      api_token_id: apiTokenId,
-      via_kind: via?.kind ?? null,
-      via_label: via?.label ?? null,
-    })
-    .execute();
+  const traceId = write && !write.logged ? write.traceId ?? null : null;
+  if (traceId && diesHereForTests(p.orgId)) throw new Error("the api died between the change and its History line (test)");
+  const line: ActivityLine = {
+    org_id: p.orgId,
+    user_id: userId,
+    module_name: p.ref.module,
+    action: p.action,
+    entity_type: p.ref.entityType,
+    entity_id: p.ref.entityId,
+    diff: diff === undefined ? null : secretHistoryDiff(diff),
+    auth_method: authMethod,
+    api_token_id: apiTokenId,
+    via_kind: via?.kind ?? null,
+    via_label: via?.label ?? null,
+    trace_id: traceId,
+    occurred_at: null,
+  };
+  if (db === meta) {
+    // The change this records has already been made in the workspace: a
+    // line the server's database refuses is kept there, never lost.
+    try {
+      if (metaRefusedForTests(p.orgId)) throw new Error("the server's database refused the History line (test)");
+      await insertLine(line);
+    } catch (err) {
+      if (!(await keepLine(line, err))) throw err;
+    }
+  } else {
+    await insertLine(line, db);
+  }
   if (write) write.logged = true;
   if (p.action.endsWith("_created")) noteCreatedLog(p.ref.module, p.ref.entityType, p.ref.entityId);
   for (const fn of writeObservers) {
@@ -217,23 +231,36 @@ export async function logMany(p: { orgId: string; userId?: string | null; rows: 
   const apiTokenId = actor?.apiTokenId ?? null;
   const via = currentVia();
   const CHUNK = 500;
-  for (let i = 0; i < p.rows.length; i += CHUNK) {
-    await meta
-      .insertInto("activity_log")
-      .values(p.rows.slice(i, i + CHUNK).map((r) => ({
-        org_id: p.orgId,
-        user_id: userId,
-        module_name: r.ref.module,
-        action: r.action,
-        entity_type: r.ref.entityType,
-        entity_id: r.ref.entityId,
-        diff: secretHistoryDiff({ ...(r.diff ?? {}), [IMPORT_ROW]: true }) as object,
-        auth_method: authMethod,
-        api_token_id: apiTokenId,
-        via_kind: via?.kind ?? null,
-        via_label: via?.label ?? null,
-      })))
-      .execute();
+  const lines: ActivityLine[] = [];
+  for (const r of p.rows) {
+    const line: ActivityLine = {
+      org_id: p.orgId,
+      user_id: userId,
+      module_name: r.ref.module,
+      action: r.action,
+      entity_type: r.ref.entityType,
+      entity_id: r.ref.entityId,
+      diff: secretHistoryDiff({ ...(r.diff ?? {}), [IMPORT_ROW]: true }),
+      auth_method: authMethod,
+      api_token_id: apiTokenId,
+      via_kind: via?.kind ?? null,
+      via_label: via?.label ?? null,
+      trace_id: null,
+      occurred_at: null,
+    };
+    lines.push(line);
+  }
+  for (let i = 0; i < lines.length; i += CHUNK) {
+    const chunk = lines.slice(i, i + CHUNK);
+    try {
+      if (metaRefusedForTests(p.orgId)) throw new Error("the server's database refused the History lines (test)");
+      await meta
+        .insertInto("activity_log")
+        .values(chunk.map(({ trace_id: _t, occurred_at: _o, ...l }) => ({ ...l, diff: l.diff as object, auth_method: l.auth_method as AuthMethod })))
+        .execute();
+    } catch (err) {
+      for (const l of chunk) if (!(await keepLine(l, err))) throw err;
+    }
   }
   for (const r of p.rows) {
     if (r.action.endsWith("_created")) noteCreatedLog(r.ref.module, r.ref.entityType, r.ref.entityId);

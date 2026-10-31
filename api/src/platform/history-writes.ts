@@ -51,5 +51,13 @@ export async function recordHistoryWrite(orgId: string, kind: string, id: string
   const before = await read();
   if (!before) return work();
   const write: HistoryWrite = { orgId, kind, id, before, readAfter: read, logged: false, forceLog };
-  await runHistoryWrite(write, async () => { await work(); await finishHistoryWrite(write); });
+  const trace = await import("./activity-trace.js");
+  write.traceId = await trace.beginIntent(orgId, kind, id, before, forceLog);
+  try {
+    await runHistoryWrite(write, async () => { await work(); await finishHistoryWrite(write); });
+  } catch (err) {
+    if (write.traceId) trace.leaveIntent(orgId);
+    throw err;
+  }
+  if (write.traceId) await trace.endIntent(orgId, write.traceId);
 }

@@ -90,15 +90,20 @@ export function queryShowsRecord(query: Pick<Query, "queryKey">, entityId: strin
 /** Refresh everything that showed the affected records, and the record the
  *  action ran on. No kinds (a workspace action) refreshes every query, since
  *  anything may have moved. */
-export function refreshAfterAction(qc: QueryClient, kinds: readonly string[], entityId?: string | null): void {
-  if (kinds.length === 0) {
-    void qc.invalidateQueries();
-    return;
-  }
-  void qc.invalidateQueries({ predicate: (q) => queryShowsKinds(q, kinds) || queryShowsRecord(q, entityId) });
+export function refreshAfterAction(qc: QueryClient, kinds: readonly string[], entityId?: string | null): Promise<void> {
+  if (kinds.length === 0) return qc.invalidateQueries();
+  return qc.invalidateQueries({ predicate: (q) => queryShowsKinds(q, kinds) || queryShowsRecord(q, entityId) });
 }
 
-/** Invoke, then refresh what the action touched. The one door. */
+const shownBy = new WeakMap<object, Promise<void>>();
+
+/** When the page shows an outcome: its refresh has its answers. */
+export function shownOf(outcome: unknown): Promise<void> | undefined {
+  return outcome && typeof outcome === "object" ? shownBy.get(outcome) : undefined;
+}
+
+/** Invoke, then refresh what the action touched. The one door. It answers at
+ *  once; shownOf(outcome) says when the page shows the change. */
 export async function runAction(
   api: Pick<PlatformWebApi, "invokeAction">,
   qc: QueryClient,
@@ -106,7 +111,8 @@ export async function runAction(
   body: ActionBody,
 ): Promise<ActionRun> {
   const outcome = (await api.invokeAction(orgSlug, body)) as ActionRun;
-  refreshAfterAction(qc, affectedKindsOf(outcome, body), outcome?.affected?.entity?.id ?? body.entityId);
+  const shown = refreshAfterAction(qc, affectedKindsOf(outcome, body), outcome?.affected?.entity?.id ?? body.entityId);
+  if (outcome && typeof outcome === "object") shownBy.set(outcome, shown);
   return outcome;
 }
 
@@ -163,6 +169,10 @@ export function offerUndo(
   toast.action(done ?? verdictOf(outcome?.result, "Done."), {
     actionLabel: "Undo",
     duration: 8000,
+    // Its time starts once the page shows the change: started at the server's
+    // answer, at 2.5 s a round trip it ran 5.5 of its 8 s beside the old
+    // figure, and the nightly walk found it gone before it could press it (#6881).
+    startsAfter: shownOf(outcome),
     onAction: async () => {
       try {
         await runUndoSteps(runBack, steps);

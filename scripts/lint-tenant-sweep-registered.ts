@@ -15,7 +15,10 @@
 //   1. a repeating timer of its own (`setInterval(`),
 //   2. a walk of the workspaces (`selectFrom("orgs")` or `of orgs)`), and
 //   3. a tenant open (`tenants.getDb(`, `tenants.withDb(`, `getTenantDb(`,
-//      `withTenantDbForSweep(`)
+//      `withTenantDbForSweep(`), or a registry of callbacks that open one for
+//      it (`recurrence.listScanners(`: each scanner opens its module's
+//      workspace). That second form is how the recurrence tick opened every
+//      workspace a minute with no tenant open of its own in the file (#9013).
 // is a private tenant walker and is refused. The scheduler itself is exempt.
 // A per-org queue worker (no walk) is not this shape and passes.
 //
@@ -70,7 +73,7 @@ function* walk(dir: string): Generator<string> {
 
 const TIMER = /\bsetInterval\s*\(/;
 const WALK = /selectFrom\(\s*["']orgs["']\s*\)|\bof orgs\)/;
-const OPEN = /tenants\.getDb\(|tenants\.withDb\(|\bgetTenantDb\(|withTenantDbForSweep\(/;
+const OPEN = /tenants\.getDb\(|tenants\.withDb\(|\bgetTenantDb\(|withTenantDbForSweep\(|recurrence\.listScanners\(/;
 
 function check(file: string, src: string): Violation[] {
   if (file === SCHEDULER) return [];

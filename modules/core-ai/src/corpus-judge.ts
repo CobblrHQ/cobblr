@@ -236,7 +236,8 @@ function judgeOne(ai: string, v: Verdict, knownActions: Set<string>): Judgement 
     // projects:mark-task-done" and never "got X (got X)".
     case "create": {
       if (v.picked === null && askedWhich(v.text, v.lookAlikes ?? [])) return { ok: true, why: `asked which of ${v.lookAlikes!.length} look-alikes a search found (the app's own rule)` };
-      const ok = v.picked === "(create_record)" || v.picked === "(create_records)";
+      // add_thing is the app's create of a thing (chat.ts writeRequestOf).
+      const ok = v.picked === "(create_record)" || v.picked === "(create_records)" || v.picked === "(add_thing)";
       return { ok, why: ok ? "created the record" : `wanted a record create, got ${gotWord(v.picked)}` };
     }
     case "update": {

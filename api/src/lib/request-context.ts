@@ -83,6 +83,10 @@ export function currentVia(): Via | null {
 export interface RequestScope {
   memo: Map<string, Promise<unknown>>;
   meta: Map<string, number>;
+  /** The workspace statements this request ran, counted like `meta`: the
+   *  dashboard named 100 records one statement at a time, 1,968 statements a
+   *  request on staging (#9021), and nothing counted them. */
+  workspace?: Map<string, number>;
   /** Set by a handler that only READS (the activity feed): reads wrapped in
    *  perReadRequest are then asked once per request instead of once per row. */
   readOnly?: boolean;
@@ -95,6 +99,9 @@ export interface RequestScope {
   /** Set once the response is sent: work still running in this scope is
    *  background now (the compute ledger counts it so, #7716). */
   answered?: boolean;
+  /** The request's method: a read made of other reads shares its memo with
+   *  them (selfFetch), a write never does. */
+  method?: string;
 }
 const scopeStorage = new AsyncLocalStorage<RequestScope>();
 
@@ -112,8 +119,9 @@ export function requestLabel(method: string, path: string, testFile?: string | n
 }
 
 /** Run fn as one request: its own memo and its own meta statement count. */
-export function runRequestScope<T>(fn: () => T, scope: RequestScope = { memo: new Map(), meta: new Map() }): T {
-  return scopeStorage.run(scope, fn);
+export function runRequestScope<T>(fn: () => T, scope?: RequestScope): T {
+  const carried = countsStorage.getStore();
+  return scopeStorage.run(scope ?? { memo: carried?.memo ?? new Map(), meta: carried?.meta ?? new Map(), workspace: carried?.workspace ?? new Map() }, fn);
 }
 
 /** Detached housekeeping must not retain a response's memo or change its
@@ -165,7 +173,7 @@ export function markRequestReadOnly(): void {
  *  reads a remembered answer. Its statements still count to the request. */
 export function readingOnly<T>(fn: () => Promise<T>): Promise<T> {
   const parent = scopeStorage.getStore();
-  return scopeStorage.run({ memo: new Map(), meta: parent?.meta ?? new Map(), readOnly: true, label: parent?.label, coldTtlCaches: parent?.coldTtlCaches }, fn);
+  return scopeStorage.run({ memo: new Map(), meta: parent?.meta ?? new Map(), workspace: parent?.workspace, readOnly: true, label: parent?.label, coldTtlCaches: parent?.coldTtlCaches }, fn);
 }
 
 /** `perRequest`, but only in a request that said it only reads. Otherwise the
@@ -175,7 +183,43 @@ export function readingOnly<T>(fn: () => Promise<T>): Promise<T> {
  *  instance and an override once per row (180 statements for 100 rows, main red
  *  on run 37212): in a read-only request it asks once. */
 export function perReadRequest<T>(key: string, load: () => Promise<T>): Promise<T> {
-  return scopeStorage.getStore()?.readOnly ? perRequest(key, load) : load();
+  // A GET is a read too: the dashboard's per-collection reads, sharing its
+  // memo (#9024), asked for each collection's instance row again and again.
+  const scope = scopeStorage.getStore();
+  return scope?.readOnly || scope?.method === "GET" ? perRequest(key, load) : load();
+}
+
+/** The counts a request made through the api's own routes adds to: selfFetch
+ *  runs the inner request inside this, so a page composed of other reads (the
+ *  dashboard) is counted whole. */
+type Carried = { meta: Map<string, number>; workspace: Map<string, number>; memo?: Map<string, Promise<unknown>> };
+const countsStorage = new AsyncLocalStorage<Carried>();
+
+/** Run fn (an inner request's start) counting into the current request's statements. */
+export function countingInto<T>(counts: Carried | null, fn: () => T): T {
+  return counts ? countsStorage.run(counts, fn) : fn();
+}
+
+/** The current request's counts, for selfFetch to carry, or null outside a
+ *  request. A read asking a read (`innerMethod` GET from a GET) carries its
+ *  memo too: the dashboard's ninety reads each resolved the caller, the
+ *  workspace and the same field definitions again on meta, about 5,000
+ *  statements a page (#9024). A write, or a read inside a write, asks afresh. */
+export function currentCounts(innerMethod = "GET"): Carried | null {
+  const scope = scopeStorage.getStore();
+  if (!scope) return null;
+  scope.workspace ??= new Map();
+  const shares = scope.method === "GET" && innerMethod.toUpperCase() === "GET" && !scope.answered;
+  return { meta: scope.meta, workspace: scope.workspace, ...(shares ? { memo: scope.memo } : {}) };
+}
+
+/** Note one workspace statement for the current request (client-error-guard). */
+export function noteWorkspaceStatement(text: string): void {
+  const scope = scopeStorage.getStore();
+  if (!scope) return;
+  const key = text.replace(/\s+/g, " ").trim().slice(0, 160);
+  scope.workspace ??= new Map();
+  scope.workspace.set(key, (scope.workspace.get(key) ?? 0) + 1);
 }
 
 /** Note one meta statement for the current request (client-error-guard). */

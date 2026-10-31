@@ -1,3 +1,4 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { sql, type Kysely, type Selectable } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -185,7 +186,7 @@ export async function watchArm(db: Kysely<DigifabDB>, orgId: string, machineId: 
 }
 
 export function registerArmMonitor(): void {
- platform().sweeps.register({ name: "digifab.arm-monitor", module: "digifab", everyMs: 10_000, firstAfterMs: 10_000,
+ platform().sweeps.register(narrowSweep({ name: "digifab.arm-monitor", module: "digifab", everyMs: 10_000, firstAfterMs: 10_000,
   visit: async ({ orgId, db }) => {
    // A workspace with robot arms off has its arms hidden, not watched.
    if (!(await platform().parts.isOn(orgId, "digifab", "arms"))) return;
@@ -196,5 +197,10 @@ export function registerArmMonitor(): void {
     catch (err) { platform().health.notePassFailure("digifab.arm-monitor", `${orgId}:${u.machine_id}`, err); }
    }));
   },
- });
+ }, hasArmWork));
+}
+
+export async function hasArmWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<DigifabDB>).selectFrom("digifab_arm_units").select("machine_id")
+    .where("connection_id", "is not", null).where("device_id", "is not", null).limit(1).executeTakeFirst();
 }

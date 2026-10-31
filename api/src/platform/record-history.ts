@@ -51,6 +51,9 @@ export interface HistoryWrite {
   readAfter: () => Promise<Record<string, unknown> | null>;
   logged: boolean;
   forceLog?: boolean;
+  /** The intent this write left in the workspace (activity-trace.ts): its
+   *  line carries it, so a round that finds the intent never lands a second. */
+  traceId?: string | null;
 }
 const writes = new AsyncLocalStorage<HistoryWrite>();
 export function runHistoryWrite<T>(write: HistoryWrite, fn: () => T): T { return writes.run(write, fn); }

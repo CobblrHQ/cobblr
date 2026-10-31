@@ -63,6 +63,15 @@ export type EntityResolver = (
   id: string,
 ) => Promise<ResolvedEntity | null>;
 
+/** The same answer as EntityResolver for many ids at once: one read for a page
+ *  of records, keyed by id, missing ids absent. A list that names its records
+ *  (the activity feed under the dashboard) read each one on its own, several
+ *  statements each, 1,968 a request on staging (#9021). */
+export type EntityManyResolver = (
+  orgId: string,
+  ids: readonly string[],
+) => Promise<Map<string, ResolvedEntity>>;
+
 /** Comparison-operator predicate for the `where` field of
  *  EntityListQuery. Supports literal comparisons, column-to-column
  *  comparisons (`{ ref_col }`), and the `'now'` sentinel for date
@@ -359,6 +368,13 @@ export type EntityInstanceResolver = (
   instance: string,
   id: string,
 ) => Promise<ResolvedEntity | null>;
+
+/** EntityInstanceResolver for many ids at once, as EntityManyResolver is. */
+export type EntityInstanceManyResolver = (
+  orgId: string,
+  instance: string,
+  ids: readonly string[],
+) => Promise<Map<string, ResolvedEntity>>;
 
 /** Tier-2 context provider for computed fields. Given an entity, returns
  *  a namespaced bag of related/aggregated data referenced in a computed

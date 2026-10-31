@@ -1,4 +1,4 @@
-import { RecordFormModal, Modal, editOf, isShortcut, stillAsking, useImageSrc, useToast } from "@cobblr/platform-web";
+import { RecordFormModal, Modal, editOf, isShortcut, stillAsking, useImageSrc, useToast, type Edit } from "@cobblr/platform-web";
 // The floor plan — a location's children drawn where they physically stand.
 // Third lens on the same hierarchy the tree and the scanner use; every rect
 // IS a location record. Spec: docs/design-decisions/location-floor-plan.md.
@@ -725,10 +725,13 @@ function PlanFor({
     if (!k || !tmpl) return null;
     return `/orgs/${slug}/${k.instance_name ? `instances/${k.instance_name}` : `modules/${k.module_name}`}${tmpl.replace("{id}", ent.id)}`;
   };
-  const patchEntity = async (ent: PlanEntity, body: Record<string, unknown>) => {
+  /** A write to a thing on the plan says what it moved it from, as a place's
+   *  does (#7925): a nudge from a plan read before someone moved it is refused,
+   *  never written over the newer move. */
+  const patchEntity = async (ent: PlanEntity, edit: Edit<Record<string, unknown>>) => {
     const path = entityPath(ent);
     if (!path) throw new ApiError(400, "not_writable", `${ent.kind} declares no update endpoint`);
-    await api.request("PATCH", path, body);
+    await api.request("PATCH", path, edit.body, edit.headers);
   };
   /** Record a write to a thing on the plan: the full next value of each field
    *  it sets, and each as it was (undo and redo send the difference between
@@ -750,8 +753,8 @@ function PlanFor({
       old ? { ...old, items: old.items.map((r) => (r.id === ent.id ? { ...r, ...next } : r)) } : old,
     );
   const saveEntity = useMutation({
-    mutationFn: (p: { ent: PlanEntity; body: Record<string, unknown>; label?: string; next?: Record<string, unknown> }) =>
-      patchEntity(p.ent, p.body),
+    mutationFn: (p: { ent: PlanEntity; edit: Edit<Record<string, unknown>>; label?: string; next?: Record<string, unknown> }) =>
+      patchEntity(p.ent, p.edit),
     onMutate: async (p) => {
       if (!p.next) return {};
       await qc.cancelQueries({ queryKey: ["kind-list", slug, p.ent.kind] });
@@ -769,6 +772,8 @@ function PlanFor({
       const sent = p.next?.metadata;
       if (sent && typeof sent === "object") settleMeta(`${p.ent.kind}:${p.ent.id}`, sent as Record<string, unknown>);
       if (ctx?.was) patchEntityCached(p.ent, ctx.was);
+      // A refused write may mean someone moved it since: show where it is now.
+      void qc.invalidateQueries({ queryKey: ["kind-list", slug] });
       toast.error(e instanceof ApiError ? e.message : String(e));
     },
   });
@@ -779,7 +784,7 @@ function PlanFor({
     const metadata = change(base);
     noteEntity(label, { ...ent, metadata: base }, { metadata });
     rememberMeta(entKey(ent), metadata);
-    saveEntity.mutate({ ent, body: { metadata: jsonbPatchBetween(base, metadata) }, next: { metadata } });
+    saveEntity.mutate({ ent, edit: editOf({ metadata: base }, { metadata: jsonbPatchBetween(base, metadata) }), next: { metadata } });
   };
   const saveEntityRect = (ent: PlanEntity, rect: FpRect | null) =>
     saveEntityMeta(ent, rect ? `Put ${ent.name} on the plan` : `Took ${ent.name} off the plan`, (base) => withRect(base, rect));
@@ -884,7 +889,7 @@ function PlanFor({
         rememberMeta(entKey(ent), meta);
         saveEntity.mutate({
           ent,
-          body: { metadata: jsonbPatchBetween(base, meta), ...(moved ? { location_id: targetLocId } : {}) },
+          edit: editOf({ metadata: base, location_id: ent.location_id }, { metadata: jsonbPatchBetween(base, meta), ...(moved ? { location_id: targetLocId } : {}) }),
           label: moved ? `Moved into ${byId.get(targetLocId!)?.name ?? room.name}` : undefined,
           next,
         });

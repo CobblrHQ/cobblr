@@ -3,6 +3,7 @@ type: feature
 scope: sales
 date: 2026-10-28
 docs_target: docs/modules/sales.md#Automatic order intake
+docs_published: 2026-10-31
 ---
 
 Sales orders are paid by a list of payments (part payment and split cash and card), Home and Sales say what you are owed and who owes it, and a draft order can hold its stock for a customer so it is never sold twice.

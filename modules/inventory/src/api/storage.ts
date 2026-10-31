@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import type { Kysely } from "kysely";
+import type { Kysely, Selectable } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { MslSchema, changeStorage, initialStorage, storageReadiness } from "../stock-storage.js";
@@ -17,21 +17,46 @@ const Change = z.object({
 });
 
 export async function storageView(db: Kysely<InventoryDB>, orgId: string, id: string, now = new Date()) {
-  const stored = await db.selectFrom("inventory_stock_storage").selectAll().where("part_id", "=", id).executeTakeFirst();
-  const part = await db.selectFrom("inventory_parts").select(["metadata", "instance"]).where("id", "=", id).executeTakeFirst();
+  const part = await db.selectFrom("inventory_parts").select(["id", "metadata", "instance"]).where("id", "=", id).executeTakeFirst();
   if (!part) return null;
-  if (!stored) {
-    const config = await platform().instances.configOf(orgId, part.instance);
-    const tracking = config?.package_receiving as { storage_tracking?: boolean } | undefined;
-    if (!tracking?.storage_tracking) return null;
-    return { part_id: id, revision: 0, state: initialStorage(now), msl: null, exposed_ms: 0, remaining_hours: null, usable: false, reason: "Record this package's storage history before use." };
+  return (await storageViews(db, orgId, [part], now)).get(id) ?? null;
+}
+
+type StoragePart = { id: string; metadata: Record<string, unknown>; instance: string };
+
+/** storageView for a page of parts in a few statements, not three per part:
+ *  a record list that names its parts (the dashboard's activity) read each
+ *  one's storage on its own (#9021). Parts with no readiness are absent. */
+export async function storageViews(db: Kysely<InventoryDB>, orgId: string, parts: readonly StoragePart[], now = new Date()) {
+  type View = NonNullable<ReturnType<typeof readinessOf>>;
+  const out = new Map<string, View>();
+  if (!parts.length) return out;
+  const stored = new Map((await db.selectFrom("inventory_stock_storage").selectAll().where("part_id", "in", parts.map((p) => p.id)).execute()).map((r) => [r.part_id, r]));
+  const untracked = [...new Set(parts.filter((p) => !stored.has(p.id)).map((p) => p.instance))];
+  const tracking = new Map(await Promise.all(untracked.map(async (instance) => {
+    const config = await platform().instances.configOf(orgId, instance);
+    return [instance, !!(config?.package_receiving as { storage_tracking?: boolean } | undefined)?.storage_tracking] as const;
+  })));
+  const withStore = parts.filter((p) => stored.has(p.id));
+  const pairs = withStore.length ? await platform().pairings.findBySources({ orgId, sourceKind: "inventory:part", sourceIds: withStore.map((p) => p.id), targetKind: "inventory:part", relationshipKind: "instance-of" }) : [];
+  const typeOf = new Map(pairs.map((p) => [p.sourceId, p.targetId]));
+  const typeIds = [...new Set(typeOf.values())];
+  const types = new Map(typeIds.length ? (await db.selectFrom("inventory_parts").select(["id", "metadata"]).where("id", "in", typeIds).execute()).map((r) => [r.id, r.metadata]) : []);
+  for (const part of parts) {
+    const view = readinessOf(part, stored.get(part.id), types.get(typeOf.get(part.id) ?? "") ?? null, tracking.get(part.instance) ?? false, now);
+    if (view) out.set(part.id, view);
   }
-  const pairs = await platform().pairings.findBySources({ orgId, sourceKind: "inventory:part", sourceIds: [id], targetKind: "inventory:part", relationshipKind: "instance-of" });
-  const typeId = pairs[0]?.targetId;
-  const parent = typeId ? await db.selectFrom("inventory_parts").select("metadata").where("id", "=", typeId).executeTakeFirst() : null;
-  const msl = MslSchema.safeParse(parent?.metadata.msl ?? part.metadata.msl);
+  return out;
+}
+
+function readinessOf(part: StoragePart, stored: Selectable<InventoryDB["inventory_stock_storage"]> | undefined, parentMetadata: Record<string, unknown> | null, tracked: boolean, now: Date) {
+  if (!stored) {
+    if (!tracked) return null;
+    return { part_id: part.id, revision: 0, state: initialStorage(now), msl: null, exposed_ms: 0, remaining_hours: null, usable: false, reason: "Record this package's storage history before use." };
+  }
+  const msl = MslSchema.safeParse(parentMetadata?.msl ?? part.metadata.msl);
   const floor = Number(part.metadata.msl_floor_hours);
-  return { part_id: id, revision: stored.revision, state: stored.state, msl: msl.success ? msl.data : null,
+  return { part_id: part.id, revision: stored.revision, state: stored.state, msl: msl.success ? msl.data : null,
     ...storageReadiness(stored.state, msl.success ? msl.data : null, now, Number.isFinite(floor) && floor > 0 ? floor : null) };
 }
 

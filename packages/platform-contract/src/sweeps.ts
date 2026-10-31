@@ -74,6 +74,12 @@ export interface TenantSweepPass {
    *  workspace): a gate that skips what it already visited must not skip a
    *  workspace somebody asked for. */
   candidates?: (orgIds: string[], opts: { named: boolean }) => Promise<string[] | null>;
+  /** A pass that runs more often than every ten minutes and has no
+   *  `candidates` opens every workspace in scope each round; it says why that
+   *  is right here, or registering it is refused. One such pass, the
+   *  recurrence scan, opened every workspace a minute and staging's database
+   *  spent 90 minutes at 200-380% CPU starting connections (#9013). */
+  everyWorkspace?: string;
   /** One workspace, its db open (a Kysely instance, cast to the module's
    *  schema). Throwing fails this visit only; the walk continues. */
   visit: (ctx: TenantSweepVisit) => Promise<TenantSweepVisitResult | void>;

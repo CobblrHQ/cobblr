@@ -14,9 +14,14 @@ import type { Request, Response } from "express";
 import { EDITED_FROM_HEADER, agoWords, decodeEditedFrom, staleFields } from "@cobblr/platform-contract/edited-from";
 import { changesIn } from "@cobblr/platform-contract/activity-changes";
 
+/** The platform's own keys in a record's bag, in a person's words. */
+const OWN_KEYS: Record<string, string> = { floorplan: "where it is on the plan" };
+
 /** How a field reads in a sentence: its own words, not its column. */
 function said(field: string): string {
-  const name = field.replace(/^metadata\./, "").replace(/_id$/, "").replace(/_/g, " ");
+  const key = field.replace(/^metadata\./, "");
+  if (OWN_KEYS[key]) return OWN_KEYS[key];
+  const name = key.replace(/_id$/, "").replace(/_/g, " ");
   return name === "parent" ? "where it is" : name;
 }
 

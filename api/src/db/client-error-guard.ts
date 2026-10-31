@@ -3,7 +3,7 @@ import { stopAtGate } from "../lib/gate-probe.js";
 import { Client, Pool, types } from "pg";
 import { isConnectionRefusal, noteConnectionRefused } from "./connection-budget.js";
 import type { ClientConfig, CustomTypesConfig, PoolConfig } from "pg";
-import { currentRequestScope, noteCommittedWrite, noteMetaStatement } from "../lib/request-context.js";
+import { currentRequestScope, noteCommittedWrite, noteMetaStatement, noteWorkspaceStatement } from "../lib/request-context.js";
 import { noteBackgroundWork } from "../platform/compute-ledger.js";
 
 /**
@@ -100,6 +100,7 @@ function bornGuarded(label: string, Base: ClientClass): ClientClass {
         LAST.set(this, { text, at: Date.now() });
         // Counted against the request that asked, for the per-request bound (#4876).
         if (label === "meta-pool") noteMetaStatement(text);
+        else if (label.startsWith("tenant-pool")) noteWorkspaceStatement(text);
         const scope = currentRequestScope();
         if (!scope || scope.answered) noteBackgroundWork();
         // A held delete's probe stops before the route's first write (#7909).
@@ -312,18 +313,51 @@ export function poolHolders(pool: Pool, now = Date.now()): string[] {
     });
 }
 
-/** Count every connection the server refused (53300), whichever pool asked:
- *  /healthz reports it and a roll that drew one fails (connection-budget.ts). */
+// Every connection this api has open, by kind: each pool's, and each bare
+// client's from its connect to its end. Staging's server refused 36,675
+// connections in nine minutes with this api planned at 46 of 100, and nothing
+// said which part of the api held the rest (10-31): a refusal now says.
+const openPools = new Map<Pool, string>();
+const openBare = new Map<string, number>();
+
+/** This api's open connections, by the kind each calls itself in pg_stat_activity. */
+export function openConnections(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [pool, kind] of openPools) if (pool.totalCount) out[kind] = (out[kind] ?? 0) + pool.totalCount;
+  for (const [kind, n] of openBare) if (n) out[kind] = (out[kind] ?? 0) + n;
+  return out;
+}
+
+/** "57: tenant-pool 25, advisory-lock 22, meta 10", largest first. */
+export function openConnectionsLine(open = openConnections()): string {
+  const rows = Object.entries(open).sort((a, b) => b[1] - a[1]);
+  return `${rows.reduce((n, [, c]) => n + c, 0)}: ${rows.map(([k, c]) => `${k} ${c}`).join(", ") || "none"}`;
+}
+
+let lastRefusalLog = 0;
+/** A connection the server refused (53300): counted for /healthz and a roll
+ *  (connection-budget.ts), and said once a minute with what this api holds. */
+function refused(err: unknown): void {
+  if (!isConnectionRefusal(err)) return;
+  noteConnectionRefused();
+  if (Date.now() - lastRefusalLog < 60_000) return;
+  lastRefusalLog = Date.now();
+  console.warn(`[db] the server refused a connection (${(err as Error).message}); this api holds ${openConnectionsLine()}`);
+}
+
+/** Count every connection the server refused, whichever pool asked. */
 function countRefusals(pool: Pool): void {
   const connect = pool.connect.bind(pool) as (cb?: (err: Error | undefined, ...rest: unknown[]) => void) => unknown;
   (pool as unknown as { connect: unknown }).connect = (cb?: (err: Error | undefined, ...rest: unknown[]) => void) => {
-    if (cb) return connect((err, ...rest) => { if (isConnectionRefusal(err)) noteConnectionRefused(); cb(err, ...rest); });
+    if (cb) return connect((err, ...rest) => { refused(err); cb(err, ...rest); });
     return (connect() as Promise<unknown>).catch((err: unknown) => {
-      if (isConnectionRefusal(err)) noteConnectionRefused();
+      refused(err);
       throw err;
     });
   };
 }
+
+const kindOf = (label: string) => label.split(" ")[0] ?? label;
 
 /** What a connection calls itself in pg_stat_activity: its kind, without the
  *  workspace or lock it serves ("tenant-pool", "advisory-lock"), so a server
@@ -341,6 +375,12 @@ export function createPool(config: PoolConfig, label: string): Pool {
   const pool = new Pool({ connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS, types: DAYS_STAY_DAYS, application_name: appName(label), ...config, Client: bornGuarded(label, Base) });
   traceCheckouts(pool);
   countRefusals(pool);
+  openPools.set(pool, kindOf(label));
+  const end = pool.end.bind(pool) as (...a: unknown[]) => unknown;
+  (pool as unknown as { end: unknown }).end = (...a: unknown[]) => {
+    openPools.delete(pool);
+    return end(...a);
+  };
   budgetCheckouts(pool);
   // pg-pool re-emits an idle client's error on the pool and, being an
   // EventEmitter, throws if nobody listens there either. The client's own
@@ -354,14 +394,27 @@ export function createClient(config: ClientConfig | string, label: string): Clie
   const base: ClientConfig = typeof config === "string" ? { connectionString: config } : config;
   const client = new Client({ application_name: appName(label), ...base, types: base.types ?? DAYS_STAY_DAYS });
   client.on("error", onClientError(label));
+  const kind = kindOf(label);
+  // A test's stand-in for pg may be no EventEmitter; it then counts nothing.
+  if (typeof client.once === "function") {
+    client.once("connect", () => {
+      openBare.set(kind, (openBare.get(kind) ?? 0) + 1);
+      client.once("end", () => openBare.set(kind, Math.max(0, (openBare.get(kind) ?? 1) - 1)));
+    });
+  }
   // A connection opened for one request (a handshake, a password exchange, a
   // disconnect) is counted against it like a statement, so a per-operation
   // bound sees it: opening one per record deleted was most of that delete's
   // time (#5286).
   const connect = client.connect.bind(client) as unknown as (...a: unknown[]) => unknown;
   (client as unknown as { connect: unknown }).connect = (...a: unknown[]) => {
-    noteMetaStatement(`(new connection: ${label.split(" ")[0]})`);
-    return connect(...a);
+    noteMetaStatement(`(new connection: ${kind})`);
+    const cb = a[0] as ((err?: Error) => void) | undefined;
+    if (typeof cb === "function") return connect((err?: Error) => { refused(err); cb(err); });
+    return (connect() as Promise<unknown>).catch((err: unknown) => {
+      refused(err);
+      throw err;
+    });
   };
   return client;
 }

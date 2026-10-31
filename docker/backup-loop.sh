@@ -59,6 +59,12 @@
 #      newest BACKUP_DAILY_FLOOR), and if that is not enough it skips the dump
 #      and fails loudly: a missed day, never a crashed database.
 #      BACKUP_DAILY_MAX_BYTES caps what the daily dumps may hold in all.
+#   8. TONIGHT'S DUMP IS MOSTLY LAST NIGHT'S BYTES. The off-box copy (restic)
+#      stores only chunks it has not seen, and a plain gzip stream is new bytes
+#      from the first changed row on, so a 1.5 GB dump of a database that
+#      barely moved was 1.5 GB of new chunks a night. On 2026-10-31 that copy,
+#      on the same disk, filled it after the dump had made room (#8940).
+#      gzip --rsyncable keeps unchanged stretches byte-identical.
 #
 # Env (every one has a default; a compose file overrides what it needs):
 #   BACKUP_AT               local HH:MM to dump at, or "interval" to keep the
@@ -92,6 +98,16 @@ WEEKLY="${BACKUP_WEEKLY_RETENTION:-12}"
 RESERVE="${BACKUP_MIN_FREE_BYTES:-2147483648}"
 DAILY_MAX="${BACKUP_DAILY_MAX_BYTES:-0}"
 FLOOR="${BACKUP_DAILY_FLOOR:-3}"
+
+# --rsyncable restarts the compressor at points chosen by the content, so a
+# dump whose database barely moved is mostly the same bytes as last night's
+# and an off-box copy stores only what changed (see 8 above). The db image
+# ships GNU gzip for it; a gzip without the flag still dumps, and says so.
+GZIP_ARGS=(--rsyncable)
+if ! gzip --rsyncable -c </dev/null >/dev/null 2>&1; then
+  GZIP_ARGS=()
+  echo "[backup] this gzip has no --rsyncable: every dump is all new bytes to an off-box copy" >&2
+fi
 
 # The clock BACKUP_AT is read on. Validated against the zone files rather than
 # trusted, because an unknown name is silently UTC (see 6 above).
@@ -227,7 +243,7 @@ dump_once() {
   echo "[backup] $stamp -> pg_dumpall -> $out"
   ok=1
   partial=$(mktemp "$DIR/daily/$PREFIX-$stamp.partial.XXXXXX") || return 1 # tmp-kept: published on success, kept for triage on failure; prune removes stale partials.
-  pg_dumpall --clean --if-exists | gzip > "$partial" || ok=0
+  pg_dumpall --clean --if-exists | gzip ${GZIP_ARGS[@]+"${GZIP_ARGS[@]}"} > "$partial" || ok=0
   sz=$(stat -c%s "$partial" 2>/dev/null || echo 0)
   if [ "$ok" = "1" ] && verified_dump "$partial"; then
     [ -e "$out" ] && out="$DIR/daily/$PREFIX-$stamp-${partial##*.}.sql.gz"

@@ -11,7 +11,7 @@
 // ranks them, so the rule is tested without a farm.
 
 import { withArticle } from "@cobblr/platform-contract/plural";
-import type { LoadedSpool, PrinterCandidate, PrintingProfile } from "../../core/printing.js";
+import type { LoadedSpool, PrinterCandidate } from "../../core/printing.js";
 
 export type { LoadedSpool, PrinterCandidate, PrintingProfile } from "../../core/printing.js";
 

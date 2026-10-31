@@ -1,3 +1,4 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { serializeSpoolWrite } from "../spoolman-write-queue.js";
 import { sameSpoolLink } from "../spoolman-link.js";
 import { Router } from "express";
@@ -243,7 +244,7 @@ export function registerSpoolmanWriteBack() {
     const db = await platform().tenants.getDb(event.orgId) as Kysely<InventoryDB>;
     void publishSpool(event.orgId, db, event.partId).catch((err) => console.error("[inventory] Spoolman write-back deferred until sync:", (err as Error).message));
   });
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: "inventory.spoolman-write-back", module: "inventory", everyMs: 5 * 60 * 1000,
     visit: async ({ orgId, db: raw }) => {
       const db = raw as Kysely<InventoryDB>;
@@ -257,5 +258,10 @@ export function registerSpoolmanWriteBack() {
       }
       return { published };
     },
-  });
+  }, hasSpoolmanWork));
+}
+
+export async function hasSpoolmanWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<InventoryDB>).selectFrom("inventory_parts").select("id")
+    .where(sql`metadata->>'spoolman_mode'`, "=", "cobblr").limit(1).executeTakeFirst();
 }

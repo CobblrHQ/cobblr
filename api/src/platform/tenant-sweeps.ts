@@ -50,6 +50,8 @@ export const SWEEP_CONCURRENCY = Math.max(1, Number(process.env.COBBLR_SWEEP_CON
 /** How often the scheduler looks for due passes. A pass's own cadence is
  *  never finer than this. */
 export const SWEEP_TICK_MS = Number(process.env.COBBLR_SWEEP_TICK_MS) || 10_000;
+/** A pass more frequent than this narrows to the workspaces with work, or says why it cannot. */
+export const NARROW_BELOW_MS = 10 * 60_000;
 
 /** How a pass's last round went: what /healthz says about it. */
 export interface SweepLastRound {
@@ -140,6 +142,8 @@ export function setSweepRandomForTests(fn: () => number): void {
 export function registerTenantSweep(pass: TenantSweepPass): void {
   if (!/^[a-z0-9-]+\.[a-z0-9-]+$/.test(pass.name)) throw new Error(`tenant sweep: name must be <module>.<pass>, got "${pass.name}"`);
   if (!(pass.everyMs > 0)) throw new Error(`tenant sweep ${pass.name}: everyMs must be > 0`);
+  if (pass.everyMs < NARROW_BELOW_MS && !pass.candidates && !pass.everyWorkspace?.trim())
+    throw new Error(`tenant sweep ${pass.name}: runs every ${Math.round(pass.everyMs / 1000)} s with no candidates, so every round opens every workspace in scope. Declare candidates (the workspaces with work, from meta), or say why in everyWorkspace (#9013).`);
   const existing = registry.get(pass.name);
   registry.set(pass.name, { pass, nextDue: existing?.nextDue ?? (started ? firstDue(pass, Date.now()) : null), running: false, last: existing?.last ?? null });
 }

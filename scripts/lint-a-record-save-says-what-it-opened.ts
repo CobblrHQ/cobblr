@@ -144,6 +144,38 @@ function toAKind(file: string, path: ts.Expression | undefined, kinds: ReturnTyp
   return kinds.some((k) => k.collection === collection && (k.module === "*" ? words.includes("instances") : own === k.module || words.includes(k.module)));
 }
 
+/** A kind's update route as the registry declares it, looked up when the page
+ *  runs: `kind.endpoints.update`, or `entityEndpointPath(kind, "update", id)`. */
+const UPDATE_LOOKUP = /endpoints\??\.update\b|entityEndpointPath\((?:[^()]|\([^()]*\))*["']update["']/;
+
+/** What each name in a file is set to: a const's initializer, a function's body. */
+function declared(tree: ts.SourceFile): Map<string, ts.Node[]> {
+  const out = new Map<string, ts.Node[]>();
+  const add = (name: string, n: ts.Node) => out.set(name, [...(out.get(name) ?? []), n]);
+  const visit = (n: ts.Node) => {
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) add(n.name.text, n.initializer);
+    else if (ts.isFunctionDeclaration(n) && n.name) add(n.name.text, n);
+    ts.forEachChild(n, visit);
+  };
+  visit(tree);
+  return out;
+}
+
+/** Does this path come from a kind's declared update route, inline or through
+ *  a name (and one call) the file sets it with? */
+function fromUpdateLookup(path: ts.Expression | undefined, names: Map<string, ts.Node[]>): boolean {
+  if (!path) return false;
+  const says = (n: ts.Node) => UPDATE_LOOKUP.test(n.getText());
+  const through = (n: ts.Node, depth: number): boolean => {
+    if (says(n)) return true;
+    if (depth > 1) return false;
+    const name = ts.isIdentifier(n) ? n.text : ts.isCallExpression(n) && ts.isIdentifier(n.expression) ? n.expression.text : null;
+    return !!name && (names.get(name) ?? []).some((d) => through(d, depth + 1));
+  };
+  const parts = ts.isTemplateExpression(path) ? path.templateSpans.map((sp) => sp.expression) : [path];
+  return parts.some((p) => through(p, 0));
+}
+
 /** `x.body` beside `x.headers`: an Edit handed on whole. */
 function anEdit(body: ts.Expression | undefined, headers: ts.Expression | undefined): boolean {
   if (!body || !ts.isPropertyAccessExpression(body) || body.name.text !== "body") return false;
@@ -155,6 +187,7 @@ export function check(file: string, src: string, kinds = kindRoutes()): Violatio
   if (!/"PATCH"|"PUT"|'PATCH'|'PUT'/.test(src)) return [];
   const tree = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const lines = src.split("\n");
+  const names = declared(tree);
   const out: Violation[] = [];
   const optedOut = (node: ts.Node): boolean => {
     for (let n: ts.Node | undefined = node; n && !ts.isSourceFile(n); n = n.parent) {
@@ -172,7 +205,7 @@ export function check(file: string, src: string, kinds = kindRoutes()): Violatio
     if (ts.isCallExpression(node)) {
       const args = node.arguments;
       const m = args.findIndex((a) => isLit(a) && WRITE.has(a.text));
-      if (m >= 0 && args.length > m + 2 && toAKind(file, args[m + 1], kinds)) {
+      if (m >= 0 && args.length > m + 2 && (toAKind(file, args[m + 1], kinds) || fromUpdateLookup(args[m + 1], names))) {
         const body = args[m + 2]!;
         if (!anEdit(body, args[m + 3]) && bag(body)) report(node, (args[m] as ts.StringLiteral).text);
       }

@@ -1,10 +1,11 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { platform } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { DigifabDB } from "../../db.js";
 import { buildDriverById } from "../../jobs-core.js";
 import { TelemetrySchema } from "./model.js";
 export function registerKilnMonitor() {
- platform().sweeps.register({ name: "digifab.kiln-monitor", module: "digifab", everyMs: 15000, firstAfterMs: 10000,
+ platform().sweeps.register(narrowSweep({ name: "digifab.kiln-monitor", module: "digifab", everyMs: 15000, firstAfterMs: 10000,
   visit: async ({ orgId, db }) => {
    const tenant = db as Kysely<DigifabDB>;
    const active = await tenant.selectFrom("digifab_firings").select(["id", "connection_id", "device_id"]).where("status", "in", ["starting", "running"]).where("ended_at", "is", null).execute();
@@ -18,5 +19,11 @@ export function registerKilnMonitor() {
     } catch (err) { platform().health.notePassFailure("digifab.kiln-monitor", `${orgId}:${firing.id}`, err); }
    }));
   },
- });
+ }, hasKilnWork));
+}
+
+export async function hasKilnWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<DigifabDB>).selectFrom("digifab_firings").select("id")
+    .where("status", "in", ["starting", "running"]).where("ended_at", "is", null)
+    .where("connection_id", "is not", null).where("device_id", "is not", null).limit(1).executeTakeFirst();
 }

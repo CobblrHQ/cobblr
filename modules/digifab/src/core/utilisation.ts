@@ -5,12 +5,13 @@
 // sampling interval; a longer gap is time nobody saw, and the coverage says
 // so. OEE is not computed: it needs planned time, an ideal rate and good and
 // bad output, which a workspace does not keep yet.
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { DigifabDB } from "../db.js";
 import { buildDriverById } from "../jobs-core.js";
 import { classify } from "../state.js";
-import { familyMachineStates, type MachineStateSample } from "./families.js";
+import { familiesHaveMachines, familyMachineStates, type MachineStateSample } from "./families.js";
 import { raiseAlarm } from "./alarms.js";
 
 export const SAMPLE_MS = 60_000;
@@ -94,12 +95,12 @@ export async function sampleUtilisation(db: Kysely<DigifabDB>, orgId: string, no
 }
 
 export function registerUtilisation(): void {
-  platform().sweeps.register({ name: "digifab.utilisation", module: "digifab", everyMs: SAMPLE_MS, firstAfterMs: 20_000,
+  platform().sweeps.register(narrowSweep({ name: "digifab.utilisation", module: "digifab", everyMs: SAMPLE_MS, firstAfterMs: 20_000,
     visit: async ({ orgId, db }) => {
       try { await sampleUtilisation(db as Kysely<DigifabDB>, orgId); }
       catch (err) { platform().health.notePassFailure("digifab.utilisation", orgId, err); }
     },
-  });
+  }, hasUtilisationWork));
 }
 
 /** A machine's time over the last `hours`, and how much of it was seen. */
@@ -112,4 +113,10 @@ export async function readUtilisation(db: Kysely<DigifabDB>, machineId: string, 
   const seen = totals.run_s + totals.idle_s + totals.fault_s + totals.unknown_s;
   const last = await db.selectFrom("digifab_utilisation_last").selectAll().where("machine_id", "=", machineId).executeTakeFirst();
   return { since, window_s: window, ...totals, coverage: window ? Math.min(1, seen / window) : 0, hours: rows, now: last ?? null, oee: { available: false, needs: ["planned time", "an ideal rate", "good and bad output"] } };
+}
+
+export async function hasUtilisationWork({ db, orgId }: { db: unknown; orgId: string }): Promise<boolean> {
+  const tenant = db as Kysely<DigifabDB>;
+  return !!await tenant.selectFrom("digifab_device_links").select("machine_id")
+    .where("machine_id", "is not", null).limit(1).executeTakeFirst() || await familiesHaveMachines(tenant, orgId);
 }

@@ -94,7 +94,10 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
     mayRefuse: "a printed label still held by the workspace the backup came from; a label resolves to one workspace",
   },
   ravelry_imports: { travels: "backup" },
-  activity_log: { travels: "backup", users: ["user_id"], drop: ["id", "api_token_id"] },
+  // trace_id dedupes a line still in flight on this server; a restored line
+  // is not in flight, and the same backup restored twice must not collide.
+  activity_log: { travels: "backup", users: ["user_id"], drop: ["id", "api_token_id", "trace_id"] },
+  activity_trace_marks: { travels: "never", why: "this server's note of where to look for a History line it has not sent yet; a restored workspace is marked again by its next change" },
 
   // ── Carried by the Blueprint ──────────────────────────────────────────
   org_modules: { travels: "blueprint" },

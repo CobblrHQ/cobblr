@@ -1,4 +1,5 @@
 // EGRESS-FILE: vendor-fixed - the European Central Bank's published rates, written in the code
+import { perReadRequest } from "../lib/request-context.js";
 import { readFile } from "node:fs/promises";
 import { sql } from "kysely";
 import { platform, type DatedMoney, type PlatformMoney } from "@cobblr/platform-contract";
@@ -83,8 +84,11 @@ export function startExchangeRates(refresh: () => Promise<void> = refreshExchang
 }
 
 export async function currency(orgId: string): Promise<string> {
-  const { meta } = await import("../db/meta.js");
-  return (await meta.selectFrom("orgs").select("main_currency").where("id", "=", orgId).executeTakeFirstOrThrow()).main_currency;
+  // Once per read: a page made of other reads asked it in each (#9024).
+  return perReadRequest(`currency:${orgId}`, async () => {
+    const { meta } = await import("../db/meta.js");
+    return (await meta.selectFrom("orgs").select("main_currency").where("id", "=", orgId).executeTakeFirstOrThrow()).main_currency;
+  });
 }
 
 export async function total(orgId: string, values: readonly DatedMoney[], target?: string) {

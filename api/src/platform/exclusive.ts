@@ -155,8 +155,8 @@ export async function openLockSession(label = "walk"): Promise<LockSession> {
  */
 export async function runSerialised<T>(name: string, work: () => Promise<T>, waitMs = 60_000): Promise<T> {
   const key = lockKeyFor(name).toString();
-  const held = await lockConnection(name);
   const timeout = Math.max(1, Math.floor(waitMs));
+  const held = await lockConnection(name, Date.now() + timeout);
   let clean = true;
   try {
     // A pooled connection keeps the session's setting: set it only when it differs.
@@ -185,31 +185,54 @@ export async function runSerialised<T>(name: string, work: () => Promise<T>, wai
  *  deleting one record, about 27 ms of a 90 ms delete (#5286), and every
  *  record's delete takes one. They come from a small pool of warm ones; when
  *  none is free soon (many locks at once, a lock taken inside another's work),
- *  a fresh connection is opened as before, so a full pool only costs what
- *  every run used to cost, and never waits on itself. */
+ *  a fresh connection is opened, up to LOCK_FALLBACKS of them at once, so a
+ *  lock taken inside another's work never waits on itself. Past that a caller
+ *  waits for one to come back, until `deadline`: thirty callers waiting on one
+ *  lock opened thirty-one connections, none of them in the plan the api sizes
+ *  itself by, and on a catch-up boot the server ran out (staging, 10-31). */
 type Held = { client: Pick<Client, "query">; timeout: number | undefined; done: (clean: boolean) => void };
 let lockPool: import("pg").Pool | null = null;
-async function lockConnection(name: string): Promise<Held> {
+let fallbacksOpen = 0;
+async function lockConnection(name: string, deadline: number): Promise<Held> {
   const { env } = await import("../env.js");
   const { createClient, createPool } = await import("../db/client-error-guard.js");
   lockPool ??= createPool({ connectionString: env.DATABASE_URL, max: LOCK_POOL_SIZE, min: 0, idleTimeoutMillis: IDLE_RELEASE_MS, connectionTimeoutMillis: 2_000 }, "advisory-locks");
-  try {
-    const pooled = (await lockPool.connect()) as import("pg").PoolClient & { lockTimeout?: number };
-    return {
-      client: pooled,
-      get timeout() { return pooled.lockTimeout; },
-      set timeout(v) { pooled.lockTimeout = v; },
-      done: (clean) => pooled.release(clean ? undefined : true),
-    };
-  } catch {
-    const client: Client = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${name}`);
-    await client.connect();
-    return { client, timeout: undefined, done: () => void client.end().catch(() => {}) };
+  for (;;) {
+    try {
+      const pooled = (await lockPool.connect()) as import("pg").PoolClient & { lockTimeout?: number };
+      return {
+        client: pooled,
+        get timeout() { return pooled.lockTimeout; },
+        set timeout(v) { pooled.lockTimeout = v; },
+        done: (clean) => pooled.release(clean ? undefined : true),
+      };
+    } catch (err) {
+      if (fallbacksOpen < LOCK_FALLBACKS) break;
+      if (Date.now() >= deadline) throw new Error(`no connection free for the lock ${name}: ${(err as Error).message}`);
+    }
   }
+  fallbacksOpen++;
+  const client: Client = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${name}`);
+  let given = false;
+  const giveBack = () => {
+    if (given) return;
+    given = true;
+    fallbacksOpen--;
+    void client.end().catch(() => {});
+  };
+  try {
+    await client.connect();
+  } catch (err) {
+    giveBack();
+    throw err;
+  }
+  return { client, timeout: undefined, done: giveBack };
 }
 /** Warm connections kept for serialised runs. */
 const LOCK_POOL_SIZE = 8;
+/** Fresh connections a serialised run may open when the warm ones are all busy. */
+const LOCK_FALLBACKS = 4;
 /** What this api can hold on cobblr_meta for locks, outside the meta pool:
- *  the warm pool and the sweep walk's one session. The connection budget
- *  counts it. */
-export const LOCK_CONNECTIONS = LOCK_POOL_SIZE + 1;
+ *  the warm pool, its fresh overflow and the sweep walk's one session. The
+ *  connection budget counts it. */
+export const LOCK_CONNECTIONS = LOCK_POOL_SIZE + LOCK_FALLBACKS + 1;

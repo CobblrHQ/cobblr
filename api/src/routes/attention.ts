@@ -141,7 +141,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
       ),
       loans: listOpenLoans(req.tenant!.org.id).catch(() => []),
       maint: j<{
-        items: Array<{ id: string; name: string; entity_module: string; entity_type: string; entity_id: string; scheduled_at: string | null; schedule_id?: string | null }>;
+        items: Array<{ id: string; name: string; entity_module: string; entity_type: string; entity_id: string; entity_title?: string | null; scheduled_at: string | null; schedule_id?: string | null }>;
       }>(`/orgs/${slug}/modules/core-maintenance/entries?kind=scheduled&due_within_days=${WINDOW_DAYS}&limit=${ITEM_CAP}`, token),
       fleet: j<{ connections: Array<{ connection_id: string; devices: Array<{ id: string; name: string; needs_attention: { reason: string } | null }> }> }>(
         `/orgs/${slug}/modules/digifab/fleet`,
@@ -526,10 +526,14 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           )
         : null;
       const dueBySchedule = new Map((schedules?.items ?? []).map((sc) => [sc.id, sc.due]));
+      // The entries already name their records, in one read for the page; a
+      // record they could not name (one filed in a named instance) is looked
+      // for here. Asking again for every entry was a read per service, twice
+      // over with the entries' own (#9021).
       const titled = await Promise.all(
         maint.items.map(async (e) => {
           const kind = `${e.entity_module}:${e.entity_type}`;
-          const title = await titleForEntity(orgId, kind, e.entity_id).catch(() => null);
+          const title = e.entity_title ?? (await titleForEntity(orgId, kind, e.entity_id).catch(() => null));
           return { ...e, kind, title };
         }),
       );

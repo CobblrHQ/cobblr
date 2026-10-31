@@ -274,6 +274,7 @@ export function createApp(): AppHandles {
     runRequestScope(() => {
       const scope = currentRequestScope();
       if (scope) scope.label = requestLabel(req.method, req.path, req.header("x-test-file"));
+      if (scope) scope.method = req.method;
       res.on("finish", () => {
         if (scope) scope.answered = true;
       });

@@ -13,6 +13,7 @@ import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
 import { runAllTenantSweeps, runTenantSweep } from "../platform/tenant-sweeps.js";
 import { testSweepRound } from "./test-support-sweep-round.js";
+import { setTraceFaultForTests } from "../platform/activity-trace.js";
 import { on, setSubscriberDelayForTests } from "../platform/events.js";
 import { selfFetch } from "../platform/self-fetch.js";
 import { runWithActor } from "../lib/request-context.js";
@@ -201,6 +202,30 @@ testSupportRouter.post("/test-support/run-sweep", async (req, res, next) => {
       return;
     }
     res.json(await runTenantSweep(name, { orgIds: [org_id], ...(at ? { now: at } : {}) }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Make one workspace's History lines fail the way they can in production, so
+// a test shows none is lost (activity-trace.ts). Body: { slug, fault:
+// "refuse" (the server's database refuses its lines until cleared) | "die"
+// (the next change through a record's writer loses its line as a process
+// dying right after the change would, once) | null (clear) }.
+testSupportRouter.post("/test-support/activity-trace-fault", async (req, res, next) => {
+  try {
+    const { slug, fault } = (req.body ?? {}) as { slug?: string; fault?: string | null };
+    if (!slug || !(fault === null || fault === "refuse" || fault === "die")) {
+      res.status(400).json({ error: { code: "bad_body", message: "slug + fault (refuse|die|null) required" } });
+      return;
+    }
+    const o = await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst();
+    if (!o) {
+      res.status(404).json({ error: { code: "not_found", message: "no such workspace" } });
+      return;
+    }
+    setTraceFaultForTests(o.id, fault);
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -424,7 +449,9 @@ testSupportRouter.get("/test-support/backup-heavy", async (_req, res, next) => {
   }
 });
 // A workspace pool's worst moment since the last forget: how many callers
-// waited for one of its connections at once, and who held them (#8898).
+// waited for one of its connections at once, and who held them (#8898), and
+// how many of its connections are held now, so a test can start once the
+// work its own setup left behind is done (#8978).
 // `forget: true` clears it first, so a test reads only what it does next.
 testSupportRouter.post("/test-support/tenant-pool-peak", async (req, res, next) => {
   try {
@@ -437,7 +464,45 @@ testSupportRouter.post("/test-support/tenant-pool-peak", async (req, res, next) 
     const { getTenantPool, TENANT_POOL_MAX } = await import("../db/tenant.js");
     const pool = await getTenantPool(o.id);
     if (forget) forgetPoolPeak(pool);
-    res.json({ pool_max: TENANT_POOL_MAX, peak: poolPeak(pool) });
+    res.json({ pool_max: TENANT_POOL_MAX, in_use: pool.totalCount - pool.idleCount, peak: poolPeak(pool) });
+  } catch (err) {
+    next(err);
+  }
+});
+// Answer, then do `holds` pieces of work on the workspace's database at once,
+// each holding a connection for `ms`: the work a write sets off after it
+// answers, made long enough to see (#8978). With `id`, what finished and what
+// failed is counted, and GET …/hold-after-answer/:id reads it, so a test can
+// prove that work under a full pool still happens (#8981).
+const afterAnswerRuns = new Map<string, { done: number; failed: number; errors: string[] }>();
+testSupportRouter.get("/test-support/hold-after-answer/:id", (req, res) => {
+  res.json(afterAnswerRuns.get(req.params.id) ?? { done: 0, failed: 0, errors: [] });
+});
+testSupportRouter.post("/test-support/hold-after-answer", async (req, res, next) => {
+  try {
+    const { slug, holds, ms, id } = (req.body ?? {}) as { slug?: string; holds?: number; ms?: number; id?: string };
+    const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
+    if (!o || typeof holds !== "number" || typeof ms !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace + holds + ms required" } });
+      return;
+    }
+    const { getTenantDb } = await import("../db/tenant.js");
+    const db = await getTenantDb(o.id);
+    res.json({ holds: Math.min(holds, 16) });
+    // A timer set here keeps this request's scope, which says it answered once
+    // the answer is out: the work below is after-answer work, as a write's is.
+    setTimeout(() => {
+      const run = id ? { done: 0, failed: 0, errors: [] as string[] } : null;
+      if (id && run) afterAnswerRuns.set(id, run);
+      while (afterAnswerRuns.size > 200) afterAnswerRuns.delete(afterAnswerRuns.keys().next().value as string);
+      for (let i = 0; i < Math.min(holds, 16); i++) {
+        // DETACHED: this door's work is after-answer work by design; that is what it stands in for.
+        void sql`select pg_sleep(${Math.min(ms, 10_000) / 1000})`.execute(db).then(
+          () => { if (run) run.done++; },
+          (err: Error) => { if (run) { run.failed++; run.errors.push(err.message.slice(0, 160)); } },
+        );
+      }
+    }, 50).unref?.();
   } catch (err) {
     next(err);
   }

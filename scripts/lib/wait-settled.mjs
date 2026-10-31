@@ -86,6 +86,29 @@ export function feedbackLeftInPage(since) {
   return soonest;
 }
 
+/** Whether an offer shown since `since` (the page's clock), a toast with its
+ *  own button such as an Undo that goes by itself, is still on screen. Run in
+ *  the page; the card marks itself (packages/platform-web/src/ToastContext.tsx). */
+export function timedOfferInPage(since) {
+  return [...document.querySelectorAll("[data-timed-offer]")].some((el) => Number(el.getAttribute("data-shown-at")) >= since);
+}
+
+/**
+ * The auto checks a step runs. While an offer the step brought is still up and
+ * a later step may press it, the slow ones wait for that step, which runs them
+ * on its own page anyway. On a loaded runner 200% text and the notch alone took
+ * the rest of an Undo's eight seconds, and the next step's press found it gone:
+ * five nightly specs "not judged" for an Undo a person had all the time to
+ * press (#6881).
+ * @template {{ auto?: Function, key: string, slow?: boolean }} K
+ * @param {Iterable<K>} kinds
+ * @param {{ named: Set<string>, offerUp: boolean }} o
+ * @returns {K[]}
+ */
+export function autoKindsFor(kinds, { named, offerUp }) {
+  return [...kinds].filter((k) => k.auto && !named.has(k.key) && !(offerUp && k.slow));
+}
+
 /**
  * The wait after a step's actions: settled, unless that would outlast the
  * feedback the actions brought. On a slow connection the page kept reading

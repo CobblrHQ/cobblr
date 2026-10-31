@@ -12,7 +12,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb, sessionUser, type CoreMaintenanceDB } from "../db.js";
-import type { Kysely } from "kysely";
+import type { Kysely, Selectable } from "kysely";
 import { asyncHandler, badBody } from "./util.js";
 import { counterDefs, dueOf, ensureOccurrence, readCounter, renewalState, writeExpiry, rollForward, type ScheduleRow } from "../schedules-store.js";
 import { INTERVAL_UNITS, describeRule, hasCalendar, hasCounter, nextRenewalExpiry, nextReminderAt, cancelBy } from "../schedule.js";
@@ -81,20 +81,43 @@ export const ScheduleUpdateBody = z.object({
  *  zone and currency, and a page of fifty presented together held 46 of the
  *  api's 80 directory clients and starved the release run; eight at a time
  *  then held more than a server's pool of five. */
-export function presentEach(orgId: string, rows: readonly ScheduleRow[], timeZone?: string | null) {
-  return platform().db.fanOut(orgId, rows, (s) => present(orgId, s, timeZone));
+export async function presentEach(orgId: string, rows: readonly ScheduleRow[], timeZone?: string | null) {
+  if (!rows.length) return [];
+  // What every schedule on the page needs from the workspace, read once for
+  // the page: Needs you presented sixty overdue services with these three
+  // reads each (#9021).
+  const db = await platform().tenants.getDb(orgId) as Kysely<CoreMaintenanceDB>;
+  const ids = rows.map((s) => s.id);
+  const occurrences = new Map<string, Occurrence>();
+  for (const o of await db.selectFrom("core_maintenance_entries").select(["id", "schedule_id", "last_notified_at", "nag_snoozed_until", "nag_stopped_at"]).where("schedule_id", "in", ids).where("performed_at", "is", null).execute()) {
+    if (o.schedule_id && !occurrences.has(o.schedule_id)) occurrences.set(o.schedule_id, { id: o.id, last_notified_at: o.last_notified_at, nag_snoozed_until: o.nag_snoozed_until, nag_stopped_at: o.nag_stopped_at });
+  }
+  const preferences = await db.selectFrom("core_maintenance_preferences").selectAll().executeTakeFirst();
+  const anchored = rows.filter((s) => s.anchor).map((s) => s.id);
+  const latestTerms = new Map<string, LatestTerm>();
+  if (anchored.length) {
+    for (const t of await db.selectFrom("core_maintenance_entries").select(["id", "schedule_id", "term_start", "term_end", "cost_cents", "currency", "quantity"]).where("schedule_id", "in", anchored).where("is_term", "=", true).orderBy("schedule_id").orderBy(sql`term_end desc nulls last`).orderBy("performed_at", "desc").orderBy("id").execute()) {
+      if (t.schedule_id && !latestTerms.has(t.schedule_id)) latestTerms.set(t.schedule_id, { id: t.id, term_start: t.term_start, term_end: t.term_end, cost_cents: t.cost_cents, currency: t.currency, quantity: t.quantity });
+    }
+  }
+  return platform().db.fanOut(orgId, rows, (s) => present(orgId, s, timeZone, { occurrence: occurrences.get(s.id), preferences, latestTerm: latestTerms.get(s.id) }));
 }
 
+type Occurrence = { id: string; last_notified_at: Date | null; nag_snoozed_until: Date | null; nag_stopped_at: Date | null };
+type LatestTerm = { id: string; term_start: Date | string | null; term_end: Date | string | null; cost_cents: number | null; currency: string | null; quantity: number | string | null };
+/** What presentEach read for the whole page; a single present reads its own. */
+type PageReads = { occurrence?: Occurrence; preferences?: Selectable<CoreMaintenanceDB["core_maintenance_preferences"]>; latestTerm?: LatestTerm };
+
 /** A schedule as a record page shows it: the rule in words and where it stands. */
-export async function present(orgId: string, s: ScheduleRow, timeZone?: string | null) {
+export async function present(orgId: string, s: ScheduleRow, timeZone?: string | null, page?: PageReads) {
   const store = await platform().tenants.getDb(orgId) as Kysely<CoreMaintenanceDB>;
   s = await refreshBoundRenewal(store, orgId, s);
   const state = await renewalState(orgId, s);
   const due = await dueOf(orgId, s, new Date(), timeZone);
   const db = await platform().tenants.getDb(orgId) as Kysely<CoreMaintenanceDB>;
-  const occurrence = await db.selectFrom("core_maintenance_entries").select(["id", "last_notified_at", "nag_snoozed_until", "nag_stopped_at"]).where("schedule_id", "=", s.id).where("performed_at", "is", null).executeTakeFirst();
-  const preferences = await db.selectFrom("core_maintenance_preferences").selectAll().executeTakeFirst();
-  const latestTerm = s.anchor ? await db.selectFrom("core_maintenance_entries").select(["id", "term_start", "term_end", "cost_cents", "currency", "quantity"]).where("schedule_id", "=", s.id).where("is_term", "=", true).orderBy(sql`term_end desc nulls last`).orderBy("performed_at", "desc").orderBy("id").executeTakeFirst() : undefined;
+  const occurrence = page ? page.occurrence : await db.selectFrom("core_maintenance_entries").select(["id", "last_notified_at", "nag_snoozed_until", "nag_stopped_at"]).where("schedule_id", "=", s.id).where("performed_at", "is", null).executeTakeFirst();
+  const preferences = page ? page.preferences : await db.selectFrom("core_maintenance_preferences").selectAll().executeTakeFirst();
+  const latestTerm = page ? page.latestTerm : s.anchor ? await db.selectFrom("core_maintenance_entries").select(["id", "term_start", "term_end", "cost_cents", "currency", "quantity"]).where("schedule_id", "=", s.id).where("is_term", "=", true).orderBy(sql`term_end desc nulls last`).orderBy("performed_at", "desc").orderBy("id").executeTakeFirst() : undefined;
   const nextReminder = !s.ended_at && due.next_due_at ? nextReminderAt(due.next_due_at, s.remind, occurrence?.last_notified_at ?? null, new Date(), { ...occurrence, overdue_every: s.overdue_every ?? preferences?.overdue_every ?? "week" }) : null;
   const record = s.renewal_fields ? await platform().entities.lookup(orgId, `${s.entity_module}:${s.entity_type}`, s.entity_id) : null;
   const visible = { ...record?.fields, ...(record?.fields.metadata as Record<string, unknown> | undefined) };

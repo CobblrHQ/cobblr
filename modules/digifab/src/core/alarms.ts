@@ -5,6 +5,7 @@
 // to the supervisors and then the integrators until someone acknowledges it.
 // An alarm is a record and a reason to tell people; nothing here commands a
 // machine.
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { sql, type Kysely, type Selectable } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -115,15 +116,21 @@ export async function escalateDue(db: Kysely<DigifabDB>, orgId: string, now = ne
 }
 
 export function registerAlarmEscalation(): void {
-  platform().sweeps.register({ name: "digifab.alarm-escalation", module: "digifab", everyMs: 60_000, firstAfterMs: 30_000,
+  platform().sweeps.register(narrowSweep({ name: "digifab.alarm-escalation", module: "digifab", everyMs: 60_000, firstAfterMs: 30_000,
     visit: async ({ orgId, db }) => {
       try { await escalateDue(db as Kysely<DigifabDB>, orgId); }
       catch (err) { platform().health.notePassFailure("digifab.alarm-escalation", orgId, err); }
     },
-  });
+  }, hasAlarmWork));
 }
 
 export async function readAlarms(db: Kysely<DigifabDB>, machineId: string, page: { limit: number; offset: number }) {
   const items = await db.selectFrom("digifab_alarms").selectAll().select(sql<string>`count(*) over()`.as("total")).where("machine_id", "=", machineId).orderBy("occurred_at", "desc").orderBy("id").limit(page.limit).offset(page.offset).execute();
   return { items: items.map(({ total: _t, ...a }) => a), total: Number(items[0]?.total ?? 0) };
+}
+
+export async function hasAlarmWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<DigifabDB>).selectFrom("digifab_alarms").select("id")
+    .where("acknowledged_at", "is", null).where("next_escalation_at", "is not", null)
+    .where("escalation_level", "<", 2).limit(1).executeTakeFirst();
 }

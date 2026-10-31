@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-activity-log",
-  version: "0.1.3",
+  version: "0.2.0",
   displayName: "Activity Log",
   description:
     "A record of every change made in your workspace: who did what, and when.",
@@ -29,6 +29,15 @@ export default defineModule({
   band: "foundational",
 
   dependencies: [],
+
+  // Every change leaves its trace: a History line the server's database
+  // refused, and the intent a change through a record's writer leaves until
+  // its line lands, are kept here, beside the change (api/src/platform/
+  // activity-trace.ts).
+  schema: {
+    tablePrefix: "core_activity_log_",
+    migrationsDir: "./migrations",
+  },
 
   // AI-REACH: no kinds/actions by design. The log is READ through the shared
   // registry's list_activity tool (who changed what, when) — an append-only

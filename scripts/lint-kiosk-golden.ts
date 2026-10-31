@@ -198,6 +198,34 @@ const CHECKS: Check[] = [
   },
   {
     file: YARN,
+    needle: /await settleStagedItem\(\{[\s\S]{0,400}?\}\);\s*\n\s*if \(item\) \{[\s\S]{0,400}?process\.exitCode = 1;[\s\S]*const commitBtn = \(\)/,
+    why:
+      "the server row carries the name the staged card shows before Add, or the product refuses the Add as a " +
+      "change made since the card opened (#8849): every take of 2026-10-31 filmed that refusal",
+  },
+  {
+    file: LIB,
+    needle: /const box = await locator\.boundingBox\(\{ timeout: TOUR_STEP_TIMEOUT \}\)/,
+    why:
+      "point() waits a bounded time for its target: a bare boundingBox() waits Playwright's 30s default on " +
+      "camera, and a renamed button held the Lego take on one picture for 40s",
+  },
+  {
+    file: LIB,
+    needle: /\.find\(\(it\) => bcNorm\(it\.barcode_text\) === bcNorm\(fixture\.barcode\)\);/,
+    why:
+      "settleStagedItem finds the scanned row by its barcode alone: the recording rig never names it, and a " +
+      "helper that waited for a name settled nothing, so nightly 61154 filmed a refused Add",
+  },
+  {
+    file: YARN,
+    needle: /const prewarmScan = [\s\S]{0,1600}?row\.updated_at[\s\S]{0,400}?\/discard`/,
+    why:
+      "the prewarm scan is done when its row stops changing, then discarded: one that waited for a name never " +
+      "let its row go, and Grace's on-camera scan of the same code folded into it (nightly 61154)",
+  },
+  {
+    file: YARN,
     needle: /softly\("yarn installs"/,
     why: "the install beat waits for 'Yarn is set up.' and says [skip] when it never lands",
   },

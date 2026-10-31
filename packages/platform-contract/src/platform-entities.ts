@@ -1,12 +1,13 @@
-import type { ComputedContextProvider, CreateDefaultsContext, CreateDefaultsProvider, DeviceApplyContext, DeviceApplyProvider, EntityCounterDef, EntityInstanceListResolver, EntityInstanceResolver, EntityListQuery, EntityListResolver, EntityListResult, EntityResolver, EntityUpdater, EntityViewer, EntityWriter, ListResolverOptions, ResolvedEntity, ScannableInfo, ScannableKind, ShareChildren } from "@cobblr/platform-contract/entity-resolvers";
+import type { ComputedContextProvider, CreateDefaultsContext, CreateDefaultsProvider, DeviceApplyContext, DeviceApplyProvider, EntityCounterDef, EntityInstanceListResolver, EntityInstanceManyResolver, EntityInstanceResolver, EntityListQuery, EntityListResolver, EntityListResult, EntityManyResolver, EntityResolver, EntityUpdater, EntityViewer, EntityWriter, ListResolverOptions, ResolvedEntity, ScannableInfo, ScannableKind, ShareChildren } from "@cobblr/platform-contract/entity-resolvers";
 import type { DefinedField, RoledField } from "@cobblr/platform-contract/roled-facts";
 import type { EntityFieldDecl } from "@cobblr/platform-contract/module-manifest";
 import type { RawTraitsDecl } from "@cobblr/platform-contract/traits";
 
 export interface PlatformEntities {
   /** Register a resolver for one kind. Called from a module's
-   *  api/index.ts at module-load time. */
-  registerResolver(kind: string, resolver: EntityResolver): void;
+   *  api/index.ts at module-load time. `many` answers a page of ids in one
+   *  read; a batched read uses it instead of the resolver once per id. */
+  registerResolver(kind: string, resolver: EntityResolver, many?: EntityManyResolver): void;
   /** Declare rows that belong to a record and travel with it when it is
    *  shared (ShareChildren, #6252). Called at module-load time. */
   registerShareChildren(def: ShareChildren): void;
@@ -59,6 +60,7 @@ export interface PlatformEntities {
   registerInstanceResolver(
     moduleName: string,
     resolver: EntityInstanceResolver,
+    many?: EntityInstanceManyResolver,
   ): void;
   /** Register a tier-2 context provider for COMPUTED fields, under a
    *  namespace. A computed field def (type='computed') references it in

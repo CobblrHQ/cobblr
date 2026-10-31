@@ -301,7 +301,7 @@ function NavGroupSegments({
  *  its lens/instance children nested beneath — so nothing is lost when
  *  the nav is wider than the window. Portaled to body (the header's
  *  backdrop-blur traps position:fixed descendants). */
-function MoreMenu({
+export function MoreMenu({
   items,
   badgeTotal = 0,
   offerSidebar = false,
@@ -366,92 +366,94 @@ function MoreMenu({
       : target(m.name);
 
   return (
-    <div
-      className="relative shrink-0 flex items-center"
-      ref={triggerRef}
-      onMouseEnter={hoverOpen}
-      onMouseLeave={hoverClose}
-    >
-      <button
-        type="button"
-        onClick={clickTrigger}
-        aria-label="More navigation links"
-        // The tour reads this to know the row folded, so a step can say where
-        // the rest of the places went instead of naming rows nobody can see
-        // (#3256). A word match on "more" would be prose, not a contract.
-        data-tour-fold
-        className="px-1.5 py-1 rounded text-sm whitespace-nowrap text-muted dark:text-slate-400 hover:text-accent transition flex items-center gap-0.5"
+    <>
+      <div
+        className="relative shrink-0 flex items-center"
+        ref={triggerRef}
+        onMouseEnter={hoverOpen}
+        onMouseLeave={hoverClose}
       >
-        more
-        <NavCountBadge count={badgeTotal} label="folded navigation" className="ml-0.5" />
-        <ChevronDown
-          size={12}
-          className={open ? "rotate-180 transition-transform" : "transition-transform"}
-        />
-      </button>
-      {open && pos && createPortal(
-        <PopoverLayer
-          ref={popoverRef}
-          onMouseEnter={stayOpen}
-          onMouseLeave={hoverClose}
-          style={{ left: Math.max(8, pos.left), top: pos.top }}
-          className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] max-h-[70vh] overflow-y-auto"
+        <button
+          type="button"
+          onClick={clickTrigger}
+          aria-label="More navigation links"
+          // The tour reads this to know the row folded, so a step can say where
+          // the rest of the places went instead of naming rows nobody can see
+          // (#3256). A word match on "more" would be prose, not a contract.
+          data-tour-fold
+          className="px-1.5 py-1 rounded text-sm whitespace-nowrap text-muted dark:text-slate-400 hover:text-accent transition flex items-center gap-0.5"
         >
-          <ul className="py-1">
-            {items.map(({ top, kids, badge }) => {
-              const to = topTo(top);
-              return (
-                <li key={top.name}>
-                  {to ? (
-                    <NavLink
-                      to={to}
-                      onClick={() => setOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
-                    >
-                      <span className="truncate">{top.displayName}</span>
-                      <NavCountBadge count={badge} label={top.displayName} className="ml-auto" />
-                    </NavLink>
-                  ) : (
-                    <div className="px-3 py-2 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
-                      {top.displayName}
-                    </div>
-                  )}
-                  {kids.length > 0 && (
-                    <ul className="pb-1">
-                      {kids.map((k) => (
-                        <li key={k.name}>
-                          <NavLink
-                            to={childTo(top.name, k)}
-                            onClick={() => setOpen(false)}
-                            className="flex items-center gap-2 pl-7 pr-3 py-1.5 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 transition"
-                          >
-                            <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
-                            {k.displayName}
-                          </NavLink>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              );
-            })}
-            <li className="mt-1 border-t border-line dark:border-slate-700 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setNavLayout("side");
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle dark:hover:bg-slate-800 transition"
-              >
-                <PanelLeft size={14} className="shrink-0" />
-                Switch to the sidebar
-              </button>
-            </li>
-          </ul>
-        </PopoverLayer>,
-        document.body,
-      )}
+          more
+          <NavCountBadge count={badgeTotal} label="folded navigation" className="ml-0.5" />
+          <ChevronDown
+            size={12}
+            className={open ? "rotate-180 transition-transform" : "transition-transform"}
+          />
+        </button>
+        {open && pos && createPortal(
+          <PopoverLayer
+            ref={popoverRef}
+            onMouseEnter={stayOpen}
+            onMouseLeave={hoverClose}
+            style={{ left: Math.max(8, pos.left), top: pos.top }}
+            className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] max-h-[70vh] overflow-y-auto"
+          >
+            <ul className="py-1">
+              {items.map(({ top, kids, badge }) => {
+                const to = topTo(top);
+                return (
+                  <li key={top.name}>
+                    {to ? (
+                      <NavLink
+                        to={to}
+                        onClick={() => setOpen(false)}
+                        className="flex items-center gap-2 px-3 py-2 text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
+                      >
+                        <span className="truncate">{top.displayName}</span>
+                        <NavCountBadge count={badge} label={top.displayName} className="ml-auto" />
+                      </NavLink>
+                    ) : (
+                      <div className="px-3 py-2 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
+                        {top.displayName}
+                      </div>
+                    )}
+                    {kids.length > 0 && (
+                      <ul className="pb-1">
+                        {kids.map((k) => (
+                          <li key={k.name}>
+                            <NavLink
+                              to={childTo(top.name, k)}
+                              onClick={() => setOpen(false)}
+                              className="flex items-center gap-2 pl-7 pr-3 py-1.5 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 transition"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
+                              {k.displayName}
+                            </NavLink>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })}
+              <li className="mt-1 border-t border-line dark:border-slate-700 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    setNavLayout("side");
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle dark:hover:bg-slate-800 transition"
+                >
+                  <PanelLeft size={14} className="shrink-0" />
+                  Switch to the sidebar
+                </button>
+              </li>
+            </ul>
+          </PopoverLayer>,
+          document.body,
+        )}
+      </div>
       {/* The one-time offer: a bar, not a modal. A card over the page
           covered what was under it (a metric's name, a tag's Edit) until it
           was answered (#6499), so it takes its own room. At the foot, in the
@@ -461,7 +463,10 @@ function MoreMenu({
           Both answers write a layout to the account, so the dismissal is the
           record and nothing new is stored. It yields to an open sheet or modal
           (the default): held over one it sat across the foot of a phone held
-          sideways and hid the sheet's Keep button (#7289). */}
+          sideways and hid the sheet's Keep button (#7289). Beside the trigger,
+          never inside it: React carries a pointer over a portal to the parent
+          that drew it, so a pointer resting on this bar opened "more" over the
+          page (#6881). */}
       {offerSidebar && (
         <FloatingChrome
           anchor="bottom"
@@ -490,7 +495,7 @@ function MoreMenu({
           <span className="text-[11px] text-faint dark:text-slate-500">Change it anytime in Your account → Appearance.</span>
         </FloatingChrome>
       )}
-    </div>
+    </>
   );
 }
 

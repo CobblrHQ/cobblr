@@ -21,7 +21,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Duplex } from "node:stream";
-import { currentActor } from "../lib/request-context.js";
+import { countingInto, currentActor, currentCounts } from "../lib/request-context.js";
 import { currentBudget, withinBudget } from "../db/pool-budget.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
@@ -140,6 +140,9 @@ export async function selfFetch(input: string | URL | Request, init: RequestInit
   // A fan-out's budget is the one store the request keeps: the routes it calls
   // take their connections from the same share as the fan-out (#8966).
   const budget = currentBudget();
+  // Its statements count to the request that asked, so a page made of other
+  // reads is measured whole (#9021).
+  const counts = currentCounts((init.method ?? "GET").toUpperCase());
   const method = (init.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {};
   new Headers(init.headers).forEach((v, k) => (headers[k] = v));
@@ -160,7 +163,7 @@ export async function selfFetch(input: string | URL | Request, init: RequestInit
   else delete headers["content-length"];
 
   return new Promise<Response>((resolve, reject) => {
-    outsideAnyRequest(() => (budget ? withinBudget(budget, async () => serve()) : serve()));
+    outsideAnyRequest(() => countingInto(counts, () => (budget ? withinBudget(budget, async () => serve()) : serve())));
     function serve(): void {
       const socket = new LoopbackSocket();
       socket.assistant = assistant;

@@ -12,10 +12,11 @@
 // returns at least one occurrence" — restart-safe.
 
 // rrule is published as CJS; named-export via default-package import.
-// sweep-pools: deferred-release ok — the background tick visits the
-// workspaces that have a recurrence-owning module on, one at a time, and
-// each visit releases its pool (releaseIdleDb); the 15s deferred pool close
-// in tenant.ts covers the rest.
+// The per-entity scan is a registered tenant sweep pass (registerEntityScan):
+// the walk opens a workspace only when something there is due or has changed.
+// It used to run on this timer over every workspace with a recurrence-owning
+// module on, a fresh connection each, every minute: staging's database spent
+// 90 minutes at 200-380% CPU starting them (#9013).
 import rrulePkg from "rrule";
 import { platform } from "@cobblr/platform-contract";
 const { rrulestr } = rrulePkg;
@@ -26,7 +27,7 @@ const { rrulestr } = rrulePkg;
 // module from depending on api/ source paths.
 //
 // The schedule tick reads from cobblr_meta, not a tenant DB, so we
-// can't go through platform.tenants.getDb(). The platform exposes
+// can't go through a workspace's own database. The platform exposes
 // the meta accessor via platform().db.meta for exactly this case.
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -155,102 +156,44 @@ export async function tick(
       );
     }
   }
-  // D3: scan entity-level recurrence declarations.
-  const entityFired = await tickEntityRecurrence(now, onlyOrg);
+  // D3: entity-level recurrence. A tick scoped to one workspace scans it now;
+  // the background scan is the core-recurrence.entity-scan sweep pass.
+  const entityFired = onlyOrg ? await scanEntityRecurrence(onlyOrg, now) : 0;
 
   return { evaluated: wires.length, fired: fired + entityFired };
 }
 
-/** How many workspaces one background tick scans. Every eligible workspace is
- *  scanned, a slice at a time, so a database of thousands of workspaces (a dev
- *  database's leftovers) never fans scanners across all of them in one minute
- *  and exhausts the connection pool: a small install is scanned whole every
- *  tick, a large one in rotation. */
-export const WORKSPACES_PER_TICK = 300;
-let rotation = 0;
-export function nextSlice<T>(all: T[], cursor: { at: number } = { get at() { return rotation; }, set at(v: number) { rotation = v; } }): T[] {
-  if (all.length <= WORKSPACES_PER_TICK) return all;
-  const start = cursor.at % all.length;
-  cursor.at = (start + WORKSPACES_PER_TICK) % all.length;
-  return Array.from({ length: WORKSPACES_PER_TICK }, (_, i) => all[(start + i) % all.length]!);
-}
-
-/** The workspaces a background tick scans: not disabled, and with a module on
- *  that owns a scanner. Sorted, so the rotation is stable. */
-export function scannableWorkspaces(live: Array<{ id: string }>, enabledByOrg: Map<string, Set<string>>, owningModules: Set<string>): Array<{ id: string }> {
-  return live
-    .filter((o) => [...(enabledByOrg.get(o.id) ?? [])].some((m) => owningModules.has(m)))
-    .sort((a, b) => a.id.localeCompare(b.id));
-}
-
-/** D3 per-entity recurrence: each scanner (registered by its owning
- *  module via platform.recurrence.registerScanner) returns rows of
- *  {entityId, rrule, title?, event} per tenant. We iterate every org
- *  through every scanner, evaluate each row's RRULE against last-fired
- *  state, and fire the row's event when due. Idempotent via
- *  core_recurrence_entity_state in cobblr_meta. */
-async function tickEntityRecurrence(
-  now: Date,
-  onlyOrg?: string,
-): Promise<number> {
+/** D3 per-entity recurrence for one workspace: each scanner (registered by
+ *  its owning module via platform.recurrence.registerScanner) returns rows of
+ *  {entityId, rrule, title?, event}; each row's RRULE is evaluated against
+ *  last-fired state and its event fired when due. Idempotent via
+ *  core_recurrence_entity_state in cobblr_meta. A rule first seen late fires
+ *  its latest due occurrence, so finding it late never skips it. */
+export async function scanEntityRecurrence(orgId: string, now: Date): Promise<number> {
   const scanners = platform().recurrence.listScanners();
   if (scanners.length === 0) return 0;
-
   const meta = platform().db.meta as unknown as MetaDbLike;
-
-  // Only run a kind's scanner where its owning module is actually enabled —
-  // a scanner against an org that never enabled the module probes tables
-  // that don't exist (relation "assets_assets" does not exist) and spammed
-  // the log once per org per tick (console audit, 2026-06-11). One query
-  // for the whole sweep.
   const enabledRows = (await meta
     .selectFrom("org_modules")
-    .select(["org_id", "module_name"])
-    .execute()) as unknown as Array<{ org_id: string; module_name: string }>;
-  const enabledByOrg = new Map<string, Set<string>>();
-  for (const r of enabledRows) {
-    let set = enabledByOrg.get(r.org_id);
-    if (!set) enabledByOrg.set(r.org_id, (set = new Set()));
-    set.add(r.module_name);
-  }
-
-  let orgs: Array<{ id: string }>;
-  if (onlyOrg) {
-    // Tick called with a tenant scope (e.g. via the org-scoped
-    // /tick HTTP endpoint). Skip the cross-tenant enumeration.
-    orgs = [{ id: onlyOrg }];
-  } else {
-    // Background tick: every workspace that is not disabled and has a module
-    // enabled that owns a scanner. The set used to be "created in the last
-    // five minutes, or already carrying recurrence state", and state is only
-    // written after a scanner has fired once, so a workspace older than five
-    // minutes whose first rule came later was never scanned: its first
-    // watering or filter change never came due (#7120). A workspace with no
-    // such module is skipped without opening its database.
-    const owning = new Set(scanners.map(({ kind }) => kind.split(":")[0] ?? ""));
-    const live = (await meta
-      .selectFrom("orgs")
-      .select(["id"])
-      .where("plan", "!=", "disabled")
-      .execute()) as unknown as Array<{ id: string }>;
-    orgs = nextSlice(scannableWorkspaces(live, enabledByOrg, owning));
-  }
-
+    .select(["module_name"])
+    .where("org_id", "=", orgId)
+    .execute()) as unknown as Array<{ module_name: string }>;
+  const enabled = new Set(enabledRows.map((r) => r.module_name));
   let fired = 0;
-  for (const org of orgs) {
-    try {
+  try {
     for (const { kind, scanner } of scanners) {
       // "assets:asset" → owning module "assets".
       const owningModule = kind.split(":")[0] ?? "";
-      if (!enabledByOrg.get(org.id)?.has(owningModule)) continue;
+      if (!enabled.has(owningModule)) continue;
       let rows;
       try {
-        rows = await scanner(org.id);
+        rows = await scanner(orgId);
       } catch (err) {
         console.error(
-          `[core-recurrence] scanner ${kind} on org ${org.id} threw:`,
+          `[core-recurrence] scanner ${kind} on org ${orgId} threw:`,
           (err as Error).message,
         );
+        platform().health.notePassFailure("core-recurrence.entity-scan", orgId, err);
         continue;
       }
       if (rows.length === 0) continue;
@@ -258,7 +201,7 @@ async function tickEntityRecurrence(
       const stateRows = (await meta
         .selectFrom("core_recurrence_entity_state")
         .select(["entity_id", "last_fired_at"])
-        .where("org_id", "=", org.id)
+        .where("org_id", "=", orgId)
         .where("kind", "=", kind)
         .execute()) as unknown as Array<{
           entity_id: string;
@@ -289,7 +232,7 @@ async function tickEntityRecurrence(
           );
           const sourceIdKey = `${camelSuffix}Id`;
           await platform().events.emit(row.event, {
-            orgId: org.id,
+            orgId: orgId,
             kind,
             entityId: row.entityId,
             [sourceIdKey]: row.entityId,
@@ -303,7 +246,7 @@ async function tickEntityRecurrence(
           await meta
             .insertInto("core_recurrence_entity_state")
             .values({
-              org_id: org.id,
+              org_id: orgId,
               kind,
               entity_id: row.entityId,
               last_fired_at: fireAt,
@@ -322,17 +265,108 @@ async function tickEntityRecurrence(
             `[core-recurrence] entity ${kind}:${row.entityId} (rrule="${row.rrule.slice(0, 40)}") failed:`,
             (err as Error).message,
           );
+          platform().health.notePassFailure("core-recurrence.entity-scan", `${orgId}:${row.entityId}`, err);
         }
       }
     }
-    } finally {
-      // Scanners open this org's tenant pool; release it (unless a live
-      // request holds it) so a tick across every tenant doesn't exhaust
-      // Postgres connections. Reopens lazily on next access.
-      await platform().tenants.releaseIdleDb(org.id);
-    }
+  } finally {
+    // Scanners open this org's tenant pool; release it (unless a live
+    // request holds it). Reopens lazily on next access.
+    await platform().tenants.releaseIdleDb(orgId);
   }
+  scannedAt.set(orgId, now.getTime());
   return fired;
+}
+
+/** How long a workspace with nothing due and no activity goes between scans:
+ *  a rule changed where the activity log does not see it (a restore, a
+ *  script) is still found within this. */
+export const RESCAN_MS = 6 * 60 * 60_000;
+/** At most this many workspaces a round are scanned for being stale, so a
+ *  restart (every workspace unscanned in this process) never opens them all
+ *  at once: a large database is covered in rotation. */
+export const STALE_PER_ROUND = 300;
+const scannedAt = new Map<string, number>();
+let rotation = 0;
+
+/** The workspaces a recurrence round opens, from what meta already knows:
+ *  any with an entity that came due since its last scan (a scan handles all
+ *  that is due when it runs, so an entity that stays due, deleted or changed
+ *  since, never reopens it), any with activity since its last scan (a rule
+ *  added or changed: #7120's first watering on day two), and stale ones (never
+ *  scanned in this process, or not in RESCAN_MS) a slice at a time. A
+ *  workspace with nothing due and nothing changed is not opened. */
+export function chooseRecurrenceWorkspaces(i: {
+  eligible: string[];
+  /** Per workspace, the latest next_due_at that has passed. */
+  due: Map<string, number>;
+  lastActivity: Map<string, number>;
+  scannedAt: Map<string, number>;
+  now: number;
+  cursor?: { at: number };
+}): string[] {
+  const cursor = i.cursor ?? { get at() { return rotation; }, set at(v: number) { rotation = v; } };
+  const chosen = new Set<string>();
+  const stale: string[] = [];
+  for (const id of [...i.eligible].sort()) {
+    const scanned = i.scannedAt.get(id);
+    if (scanned !== undefined && ((i.due.get(id) ?? 0) > scanned || (i.lastActivity.get(id) ?? 0) > scanned)) chosen.add(id);
+    else if (scanned === undefined || i.now - scanned >= RESCAN_MS) stale.push(id);
+  }
+  if (stale.length <= STALE_PER_ROUND) stale.forEach((id) => chosen.add(id));
+  else {
+    const start = cursor.at % stale.length;
+    cursor.at = (start + STALE_PER_ROUND) % stale.length;
+    for (let k = 0; k < STALE_PER_ROUND; k++) chosen.add(stale[(start + k) % stale.length]!);
+  }
+  return [...chosen];
+}
+
+/** The background per-entity scan, on the tenant sweeps' walk. */
+export function registerEntityScan(): void {
+  platform().sweeps.register({
+    name: "core-recurrence.entity-scan",
+    everyMs: TICK_MS,
+    candidates: async (orgIds, { named }) => {
+      if (named) return orgIds;
+      const scanners = platform().recurrence.listScanners();
+      if (scanners.length === 0 || orgIds.length === 0) return [];
+      const meta = platform().db.meta as unknown as MetaDbLike;
+      const owning = new Set(scanners.map(({ kind }) => kind.split(":")[0] ?? ""));
+      const modules = (await meta
+        .selectFrom("org_modules")
+        .select(["org_id", "module_name"])
+        .where("org_id", "in", orgIds)
+        .execute()) as unknown as Array<{ org_id: string; module_name: string }>;
+      const eligible = [...new Set(modules.filter((m) => owning.has(m.module_name)).map((m) => m.org_id))];
+      if (eligible.length === 0) return [];
+      const now = Date.now();
+      const due = (await meta
+        .selectFrom("core_recurrence_entity_state")
+        .select(["org_id", "next_due_at"])
+        .where("org_id", "in", eligible)
+        .where("next_due_at", "<=", new Date(now))
+        .execute()) as unknown as Array<{ org_id: string; next_due_at: Date }>;
+      const scannedIds = eligible.filter((id) => scannedAt.has(id));
+      const since = scannedIds.length ? Math.min(...scannedIds.map((id) => scannedAt.get(id)!)) : now;
+      const activity = scannedIds.length
+        ? ((await meta
+            .selectFrom("activity_log")
+            .select(["org_id", "occurred_at"])
+            .where("org_id", "in", scannedIds)
+            .where("occurred_at", ">", new Date(since))
+            .execute()) as unknown as Array<{ org_id: string; occurred_at: Date }>)
+        : [];
+      const lastActivity = new Map<string, number>();
+      for (const a of activity) lastActivity.set(a.org_id, Math.max(lastActivity.get(a.org_id) ?? 0, new Date(a.occurred_at).getTime()));
+      const dueAt = new Map<string, number>();
+      for (const d of due) dueAt.set(d.org_id, Math.max(dueAt.get(d.org_id) ?? 0, new Date(d.next_due_at).getTime()));
+      return chooseRecurrenceWorkspaces({ eligible, due: dueAt, lastActivity, scannedAt, now });
+    },
+    visit: async ({ orgId, now }) => {
+      await scanEntityRecurrence(orgId, now);
+    },
+  });
 }
 
 // ──────────────── Minimal Kysely surface (module local) ──────────────

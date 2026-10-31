@@ -113,6 +113,7 @@ export interface DigifabFamily {
   register(): void;
   /** Sweeps and heal passes, once at boot. */
   onBoot?(): Promise<void> | void;
+  hasMachines?(db: Kysely<DigifabDB>, orgId: string): Promise<boolean>;
   /** Its machines' states now, when it reads them itself (an arm's safety is
    *  not in a device list). Its machines are left out of the core's sampling. */
   machineStates?(db: Kysely<DigifabDB>, orgId: string): Promise<MachineStateSample[]>;
@@ -387,4 +388,11 @@ export async function planJobMaterial(db: Kysely<DigifabDB>, orgId: string, job:
   if (printing) return printing.planCompleted(db, orgId, job);
   if (asksForMaterial(job)) throw new ReviewRequired("This workspace cannot run prints: its printers family is not available.");
   return { draws: [], unfed: [] };
+}
+
+export async function familiesHaveMachines(db: Kysely<DigifabDB>, orgId: string): Promise<boolean> {
+  for (const family of families) {
+    if (family.machineStates && (!family.hasMachines || await family.hasMachines(db, orgId))) return true;
+  }
+  return false;
 }

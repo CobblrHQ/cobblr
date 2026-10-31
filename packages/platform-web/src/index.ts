@@ -39,7 +39,7 @@ export { useSentWords, type SentWords } from "./use-sent-words";
 export { useFieldPresentation, PresentationGate, type FieldPresentation } from "./field-presentation";
 export { stillAsking, useStillAsking } from "./still-asking";
 export { refreshAfterStockChange } from "./stock-refresh";
-export { runAction, useRunAction, useRunWithUndo, offerUndo, runUndoSteps, undoStepsOf, refreshAfterAction, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta, type UndoStep, type RunOptions } from "./run-action";
+export { runAction, useRunAction, useRunWithUndo, offerUndo, runUndoSteps, undoStepsOf, refreshAfterAction, shownOf, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta, type UndoStep, type RunOptions } from "./run-action";
 export { changeWorkspaceShape, useChangeWorkspaceShape, afterWorkspaceShapeChange, queryFollowsWorkspaceShape, type ShapeMeta, type ChangeShapeOptions } from "./workspace-shape";
 export { ActionOutcome } from "./ActionOutcome";
 export { AskBeforeRun, type Asking } from "./AskBeforeRun";

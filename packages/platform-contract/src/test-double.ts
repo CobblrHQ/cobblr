@@ -18,11 +18,31 @@ const DEFAULTS = {
 };
 
 /** A platform() for a test: its own parts, over the stand-ins every test gets.
- *  A namespace the test gives keeps the stand-ins it did not name. */
-export function platformDouble(parts: Record<string, unknown>): Platform {
-  const out: Record<string, unknown> = { ...parts };
+ *  A namespace the test gives keeps the stand-ins it did not name. The parts
+ *  are filled in place and handed back, so a test that keeps its fake and
+ *  changes it later (setPlatform(fake), then fake.entities.x = …) still
+ *  changes what the code reads. */
+export function platformDouble<T extends object>(parts: T): T & Platform {
+  const out = parts as Record<string, unknown>;
   for (const [name, members] of Object.entries(DEFAULTS)) {
-    out[name] = { ...members, ...((parts[name] as object | undefined) ?? {}) };
+    const own = out[name] as Record<string, unknown> | undefined;
+    if (!own) out[name] = { ...members };
+    else for (const [key, value] of Object.entries(members)) if (!(key in own)) own[key] = value;
   }
-  return out as unknown as Platform;
+  // A test that stands in a single lookup gets the batched one from it: an
+  // entries list that moved from lookup per record to lookupMany (#9021)
+  // threw inside every test that faked only lookup. Read at call time, so a
+  // test that swaps its lookup later is still the one asked.
+  const entities = out.entities as Record<string, unknown> | undefined;
+  if (entities && typeof entities.lookup === "function" && !("lookupMany" in entities)) {
+    entities.lookupMany = async (orgId: string, refs: ReadonlyArray<{ kind: string; id: string }>, viewer?: unknown) => {
+      const lookup = entities.lookup as (o: string, k: string, i: string, v?: unknown) => Promise<Record<string, unknown> | null>;
+      const found = await Promise.all(refs.map(async (r) => {
+        const e = await lookup(orgId, r.kind, r.id, viewer);
+        return e ? { ...e, kind: (e.kind as string | undefined) ?? r.kind, id: (e.id as string | undefined) ?? r.id } : null;
+      }));
+      return found.filter((e) => e !== null);
+    };
+  }
+  return parts as T & Platform;
 }

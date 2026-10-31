@@ -13,6 +13,7 @@
 // to the spool's history with the job attached. What was drawn is kept on the
 // job, so a print scrapped at the bed puts back exactly that.
 
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
@@ -125,7 +126,7 @@ export async function drawForCompletedJob(db: Kysely<DigifabDB>, orgId: string, 
 // PERMANENT RECONCILE: completion commits pending material with the job;
 // each visit delivers unacknowledged stock operations after crashes or outages.
 export function registerMaterialRecovery(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: "digifab.material-recovery", module: "digifab", everyMs: 30_000, firstAfterMs: 10_000,
     visit: async ({ orgId, db: raw }) => {
       const db = raw as Kysely<DigifabDB>;
@@ -142,5 +143,10 @@ export function registerMaterialRecovery(): void {
         cursor = jobs[jobs.length - 1]!.id;
       }
     },
-  });
+  }, hasMaterialWork));
+}
+
+export async function hasMaterialWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<DigifabDB>).selectFrom("digifab_jobs").select("id")
+    .where("material_pending", "=", true).limit(1).executeTakeFirst();
 }

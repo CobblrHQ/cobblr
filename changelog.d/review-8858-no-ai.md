@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-10-28
 docs_target: docs/modules/core-ai.md#A live answer counts every record and keeps the name as typed (#7816, #7817)
+docs_published: 2026-10-31
 ---
 
 With no AI connected, Ask Cobb answers what's due this week from the calendar, says where a thing is, and adds stock to a part by name as a card to confirm

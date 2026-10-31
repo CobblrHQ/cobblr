@@ -23,6 +23,7 @@
 //   ended its pool waited out connectionTimeoutMillis and answered a 500
 //   (#7501, 2026-10-19: 535 of them in fifteen minutes on staging).
 import type { Pool, PoolClient } from "pg";
+import { beneathBudget } from "./pool-budget.js";
 
 /** A checkout refused because its pool was ended while it waited; the caller
  *  takes a connection from the workspace's live pool instead. */
@@ -143,7 +144,6 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
   /** Route every connection `pool` opens, promise or callback form (pool.query
    *  uses the callback), through the limit, and wake waiters when it frees one. */
   function gate(key: string, pool: Pool): void {
-    const raw = pool.connect.bind(pool) as () => Promise<PoolClient>;
     type Done = (err?: Error | boolean) => void;
     type Callback = (err: Error | undefined, client?: PoolClient, done?: Done) => void;
     // The checkouts still waiting on this pool, refused the moment it is ended.
@@ -155,7 +155,7 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
       for (const refuse of [...waiting]) refuse(new PoolEndedError());
       return ended;
     };
-    const checkout = (): Promise<PoolClient> =>
+    const checkout = (raw: () => Promise<PoolClient>): Promise<PoolClient> =>
       new Promise<PoolClient>((resolve, reject) => {
         let settled = false;
         const refuse = (err: Error) => {
@@ -176,15 +176,15 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
           refuse,
         );
       });
-    (pool as unknown as { connect: (cb?: Callback) => Promise<PoolClient> | undefined }).connect = (cb?: Callback) => {
-      const p = checkout();
+    beneathBudget(pool, (inner) => (cb?: Callback) => {
+      const p = checkout(() => inner() as Promise<PoolClient>);
       if (!cb) return p;
       p.then(
         (client) => cb(undefined, client, (err) => client.release(err)),
         (err: Error) => cb(err),
       );
       return undefined;
-    };
+    });
     pool.on("release", wake);
     pool.on("remove", wake);
   }

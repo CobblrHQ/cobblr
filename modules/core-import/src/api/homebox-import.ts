@@ -164,9 +164,13 @@ homeboxRouter.post("/homebox", (req, res, next) => {
     }
     const doLocations = p.location_paths.length > 0 && (!modList.length || enabled("core-locations"));
 
-    // 1. Locations tree (create/reuse) → pathKey → id.
+    // 1. Locations tree (create/reuse) → pathKey → id. One branch, in order
+    // (a parent before its child), within the import's share like the parts
+    // below: each create's own after-answer work (its activity, its events)
+    // was otherwise still holding a connection when the next create began,
+    // two of a pool of three for one import (#9015).
     const loc = doLocations
-      ? await ensureLocations(slug, token, p.location_paths)
+      ? (await platform().db.fanOut(orgIdOf(req), [p.location_paths], (paths) => ensureLocations(slug, token, paths)))[0]!
       : { map: new Map<string, string>(), created: 0, failed: 0 };
 
     // 2. Items → inventory parts.

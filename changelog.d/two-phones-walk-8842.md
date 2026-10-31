@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-10-28
 docs_target: docs/user-guide/scan.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-31
 ---
 
 An item that arrives damaged can be marked from its scan: not added to stock, and shown as arrived damaged where the delivery is checked.

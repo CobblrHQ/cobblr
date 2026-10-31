@@ -22,7 +22,7 @@ import { getTenantDb, tenantOpenWait } from "../db/tenant.js";
 import { readyOrAnsweredUpdating } from "./workspace-updating.js";
 import { answerTenantTeardown } from "./tenant-errors.js";
 import { verifyImpersonation } from "../auth/jwt.js";
-import { currentActor } from "../lib/request-context.js";
+import { currentActor, perRequest } from "../lib/request-context.js";
 import { noteActiveDay } from "../platform/product-events.js";
 import type { OrgRole } from "../db/schema.js";
 import { servedShapeVersion, WORKSPACE_SHAPE_HEADER } from "../platform/workspace-shape.js";
@@ -137,7 +137,9 @@ export async function withTenant(
     return;
   }
 
-  const row = await meta
+  // Once per page: a read the page is made of asks again (#9024).
+  const sessionId = req.session.id;
+  const row = await perRequest(`tenant:${sessionId}:${slug}`, () => meta
     .selectFrom("org_memberships as m")
     .innerJoin("orgs as o", "o.id", "m.org_id")
     .select([
@@ -152,9 +154,9 @@ export async function withTenant(
       "o.portal_config",
       "m.role",
     ])
-    .where("m.user_id", "=", req.session.id)
+    .where("m.user_id", "=", sessionId)
     .where("o.slug", "=", slug)
-    .executeTakeFirst();
+    .executeTakeFirst());
 
   if (!row) {
     res.status(404).json({ error: { code: "org_not_found", message: "Org not found" } });

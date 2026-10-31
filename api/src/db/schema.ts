@@ -798,6 +798,15 @@ export interface BundleSnapshotsTable {
   created_at: Generated<Date>;
 }
 
+/** Workspaces a History intent may have been left in (activity-trace.ts):
+ *  a round opens only those marked since a visit last covered them. */
+export interface ActivityTraceMarksTable {
+  org_id: string;
+  touched_at: Date;
+  covered_at: Date | null;
+  visited_at: Date | null;
+}
+
 export interface ActivityLogTable {
   id: Generated<number>;
   org_id: string;
@@ -818,6 +827,10 @@ export interface ActivityLogTable {
   via_kind: string | null;
   /** The automation's label, when via_kind='automation'. */
   via_label: string | null;
+  /** The write this line records, when it might be sent twice (a line kept
+   *  in the workspace while this database refused it, or one written after
+   *  a crash): unique, so it lands once. Null on every other line. */
+  trace_id: string | null;
   occurred_at: Generated<Date>;
 }
 
@@ -2092,6 +2105,7 @@ export interface MetaDB {
   tags: TagsTable;
   tag_assignments: TagAssignmentsTable;
   activity_log: ActivityLogTable;
+  activity_trace_marks: ActivityTraceMarksTable;
   product_events: ProductEventsTable;
   product_daily_counts: ProductDailyCountsTable;
   bundle_snapshots: BundleSnapshotsTable;

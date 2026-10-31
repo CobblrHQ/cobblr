@@ -30,7 +30,9 @@ import { perReadRequest, perRequest } from "../lib/request-context.js";
 import type {
   EntityKindRecord,
   EntityInstanceListResolver,
+  EntityInstanceManyResolver,
   EntityInstanceResolver,
+  EntityManyResolver,
   EntityListQuery,
   EntityListResolver,
   EntityListResult,
@@ -97,12 +99,15 @@ export function registerInstanceListResolver(
 // list() does. Without this, instance detail/lookup returned null and computed
 // fields never surfaced on instance pages.
 const instanceResolvers = new Map<string, EntityInstanceResolver>();
+const instanceManyResolvers = new Map<string, EntityInstanceManyResolver>();
 
 export function registerInstanceResolver(
   moduleName: string,
   resolver: EntityInstanceResolver,
+  many?: EntityInstanceManyResolver,
 ): void {
   instanceResolvers.set(moduleName, resolver);
+  if (many) instanceManyResolvers.set(moduleName, many);
 }
 
 /** The MODULE kind behind a kind string: identity for a real registered kind,
@@ -162,12 +167,7 @@ export async function resolveKind(orgId: string, kind: string): Promise<{ base: 
 
   const name = instanceKindName(kind);
   if (!name) return { base: kind, instance: null };
-  const inst = await meta
-    .selectFrom("workspace_module_instances")
-    .select(["module_name"])
-    .where("org_id", "=", orgId)
-    .where("instance_name", "=", name)
-    .executeTakeFirst();
+  const inst = await instanceModuleOf(orgId, name);
   if (!inst) return { base: kind, instance: null };
 
   // A module with no primary kind (lists) leaves the kind as-is rather than
@@ -186,6 +186,16 @@ export async function resolveKind(orgId: string, kind: string): Promise<{ base: 
 // identical asks now share one query; nothing is kept once it answers, so a
 // write is never followed by a stale read.
 const instanceModuleInFlight = ttlCache<{ module_name: string } | undefined>(0);
+/** The module an instance belongs to, asked once per read request: the
+ *  dashboard's per-collection reads asked it again for every record and kind
+ *  (#9024). Concurrent askers share one query either way. */
+function instanceModuleOf(orgId: string, instanceName: string): Promise<{ module_name: string } | undefined> {
+  return perReadRequest(`instance-module:${orgId}:${instanceName}`, () =>
+    instanceModuleInFlight.get(`${orgId}:${instanceName}`, () =>
+      meta.selectFrom("workspace_module_instances").select(["module_name"]).where("org_id", "=", orgId).where("instance_name", "=", instanceName).executeTakeFirst(),
+    ),
+  );
+}
 const linkedSourcesInFlight = ttlCache<Array<{ id: string; slug: string; name: string }>>(0);
 
 async function instanceFallbackEntityResolver(
@@ -195,14 +205,7 @@ async function instanceFallbackEntityResolver(
   const m = /^([a-z0-9][a-z0-9-]*):item$/.exec(kind);
   if (!m) return null;
   const instanceName = m[1]!;
-  const row = await instanceModuleInFlight.get(`${orgId}:${instanceName}`, () =>
-    meta
-      .selectFrom("workspace_module_instances")
-      .select(["module_name"])
-      .where("org_id", "=", orgId)
-      .where("instance_name", "=", instanceName)
-      .executeTakeFirst(),
-  );
+  const row = await instanceModuleOf(orgId, instanceName);
   if (!row) return null;
   // A module's instance resolver may answer with its base kind on the row
   // (inventory's says inventory:part); the row is the requested kind here,
@@ -241,12 +244,7 @@ async function instanceFallbackResolver(
   const m = /^([a-z0-9][a-z0-9-]*):item$/.exec(kind);
   if (!m) return null;
   const instanceName = m[1]!;
-  const row = await meta
-    .selectFrom("workspace_module_instances")
-    .select(["module_name"])
-    .where("org_id", "=", orgId)
-    .where("instance_name", "=", instanceName)
-    .executeTakeFirst();
+  const row = await instanceModuleOf(orgId, instanceName);
   if (!row) return null;
   const fn = instanceListResolvers.get(row.module_name);
   if (!fn) return null;
@@ -570,8 +568,34 @@ function applyExposableProjection(
   return { ...resolved, fields };
 }
 
-export function registerResolver(kind: string, resolver: EntityResolver): void {
+const manyResolvers = new Map<string, EntityManyResolver>();
+
+export function registerResolver(kind: string, resolver: EntityResolver, many?: EntityManyResolver): void {
   resolvers.set(kind, resolver);
+  if (many) manyResolvers.set(kind, many);
+}
+
+/** One read for a page of a kind's records, when its module answers many at
+ *  once, else null and the caller reads them one at a time. An instance kind
+ *  (`<instance>:item`) goes to its module's instance form, as the single read
+ *  does. The activity feed under the dashboard named its records one read
+ *  each, several statements a part, 1,968 a request on staging (#9021). */
+async function manyResolverFor(orgId: string, kind: string): Promise<EntityManyResolver | null> {
+  if (resolvers.has(kind)) return manyResolvers.get(kind) ?? null;
+  const m = /^([a-z0-9][a-z0-9-]*):item$/.exec(kind);
+  if (!m) return null;
+  const instanceName = m[1]!;
+  const row = await instanceModuleOf(orgId, instanceName);
+  const fn = row ? instanceManyResolvers.get(row.module_name) : undefined;
+  if (!fn) return null;
+  return async (oid, ids) => {
+    const out = new Map<string, ResolvedEntity>();
+    for (const [id, e] of await fn(oid, instanceName, ids)) {
+      const r = asRequested(e, kind);
+      if (r) out.set(id, r);
+    }
+    return out;
+  };
 }
 
 // ───────────────────── entity writers (in-process) ────────────────
@@ -931,10 +955,17 @@ export async function lookupMany(
       const whitelist = await getExposableFields(kind);
       const fieldReadScopes = await getFieldReadScopes(kind, orgId, viewer);
       const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
+      const many = await manyResolverFor(orgId, kind);
+      const page = many
+        ? await many(orgId, ids).catch((err: unknown) => {
+            console.error(`[entities] many-resolver for ${kind} failed, reading one at a time:`, err);
+            return null;
+          })
+        : null;
       const resolved = await Promise.all(
         ids.map(async (id) => {
           try {
-            const r = await resolver(orgId, id);
+            const r = page ? (page.get(id) ?? null) : await resolver(orgId, id);
             // As the kind it was asked for, as lookup() presents it: a caller
             // matches results back by `${kind}:${id}`, and a relation to a
             // named collection's record read null under the base kind (#7153).

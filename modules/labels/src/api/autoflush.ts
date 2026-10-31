@@ -5,11 +5,12 @@
 // guard (per-user cooldown + a hard per-fire cap) keeps a bad count or a loop from
 // spewing labels with no human watching.
 
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { Router } from "express";
 import { z } from "zod";
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { sessionUser, tenantContext, tenantDb, type LabelsDB } from "../db.js";
+import { sessionUser, tenantDb, type LabelsDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { renderRowsToPdf, customSheetFor } from "../print/render-queue.js";
 import { findSize } from "../print/layout.js";
@@ -239,7 +240,7 @@ export async function dispatchBatch(db: Kysely<LabelsDB>, orgId: string, batchId
 /** Sends every auto-printed batch still waiting for its print job: one a
  *  failure or a restart left between taking the labels and scheduling them. */
 export function registerAutoflushDispatchSweep(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: "labels.autoflush-dispatch", module: "labels", everyMs: 5 * 60_000, firstAfterMs: 60_000,
     visit: async ({ orgId, db }) => {
       const tdb = db as Kysely<LabelsDB>;
@@ -249,5 +250,10 @@ export function registerAutoflushDispatchSweep(): void {
         .limit(20).execute();
       for (const b of pending) await dispatchBatch(tdb, orgId, b.id).catch(() => {});
     },
-  });
+  }, hasAutoflushWork));
+}
+
+export async function hasAutoflushWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<LabelsDB>).selectFrom("labels_batches").select("id")
+    .where("dispatch_state", "=", "pending").limit(1).executeTakeFirst();
 }

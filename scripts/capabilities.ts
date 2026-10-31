@@ -92,7 +92,6 @@ export const CAPABILITIES: Capability[] = [
     use: "await platform().db.fanOut(orgId, items, async (item) => …)",
     except: {
       "modules/core-integrations/src/sync/declarative.ts": "re-fetches each row's detail from the source's own API; nothing in it reads the workspace's database",
-      "modules/core-integrations/src/sync/engine.ts": "tombstones a few dropped records at a time (#8966 moves it to fanOut, measured on its own)",
       "modules/core-scan/src/api/import.ts": "stores an import's photos two at a time, one query after another: measured with 40 photos on a pool of three, nothing ever waited (#8966), and the budget would only halve it on CI",
     },
   },
@@ -105,6 +104,16 @@ export const CAPABILITIES: Capability[] = [
     scope: ["api/**/*.test.ts", "modules/*/src/**/*.test.ts", "modules/*/tests/**/*.test.ts", "packages/*/src/**/*.test.ts", "web/src/**/*.test.ts", "web/src/**/*.test.tsx", "scripts/**/*.test.ts"],
     detect: /^(?!\s*(\/\/|\*)).*\bplatform:\s*\(\)\s*=>\s*\(\{/,
     use: 'platform: () => platformDouble({ … }) (import { platformDouble } from "@cobblr/platform-contract/test-double")',
+  },
+  {
+    kind: "owns",
+    id: "test:set-platform-double",
+    what: "a test that installs its platform with setPlatform hands it through platformDouble, like one that mocks platform()",
+    why: "86 tests called setPlatform(fake) with a fake built by hand, which #8972's double did not reach: when integration tombstones started to fan out, ten declarative-sync cases threw reading db.fanOut (#8966)",
+    owner: "packages/platform-contract/src/test-double.ts",
+    scope: ["api/**/*.test.ts", "modules/*/src/**/*.test.ts", "modules/*/tests/**/*.test.ts", "packages/*/src/**/*.test.ts", "web/src/**/*.test.ts", "web/src/**/*.test.tsx", "scripts/**/*.test.ts"],
+    detect: /^(?!\s*(\/\/|\*|import\b)).*\bsetPlatform\((?!platformDouble\()/,
+    use: "setPlatform(platformDouble(fake))",
   },
   {
     kind: "owns",

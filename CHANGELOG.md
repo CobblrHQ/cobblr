@@ -2,6 +2,11 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-31
+
+### Improvements
+- A change made while the server's database refused its History line, or while the server restarted, now still appears in the record's History once it recovers.
+
 ## 2026-10-28
 
 ### Features

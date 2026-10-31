@@ -111,6 +111,18 @@ export async function ensureOccurrence(db: Db, orgId: string, s: ScheduleRow, no
   return db.isTransaction ? run(db) : db.transaction().execute(run);
 }
 
+/** Whether a schedule's open occurrences are already what ensureOccurrence
+ *  would leave, by the same rules, so a read need not lock it to find out. */
+export function occurrenceSettled(s: Pick<ScheduleRow, "ended_at" | "anchor" | "name">, open: ReadonlyArray<Pick<EntryRow, "scheduled_at" | "name">>, target: Date | null, byCounter: boolean): boolean {
+  if (s.ended_at) return open.length === 0;
+  if (open.length > 1) return false;
+  const first = open[0];
+  if (!first) return !target;
+  if (!target && s.anchor) return false;
+  const dateChanged = !!(target && first.scheduled_at && (byCounter ? first.scheduled_at.getTime() > target.getTime() : first.scheduled_at.getTime() !== target.getTime()));
+  return !dateChanged && first.name === s.name;
+}
+
 async function ensureOccurrenceLocked(db: Db, orgId: string, s: ScheduleRow, now: Date): Promise<EntryRow | null> {
   if (s.ended_at) {
     await db.deleteFrom("core_maintenance_entries").where("schedule_id", "=", s.id).where("performed_at", "is", null).execute();
@@ -270,11 +282,23 @@ export async function reconcileSchedules(db: Db, orgId: string, now = new Date()
   if (scope.entity_id) query = query.where("entity_id", "=", scope.entity_id);
   const rows = await query.execute();
   const reasons = new Map<string, string>();
+  // Every open occurrence in scope in one read, so a schedule that is already
+  // right is left alone: a read of Needs you locked and re-checked every
+  // schedule in the workspace, four statements each, sixty services 220
+  // statements (#9021). One that is not right is fixed under its lock as before.
+  const openBySchedule = new Map<string, EntryRow[]>();
+  if (rows.length) {
+    for (const e of await db.selectFrom("core_maintenance_entries").selectAll().where("schedule_id", "in", rows.map((r) => r.id)).where("performed_at", "is", null).orderBy("scheduled_at", "asc").execute()) {
+      if (e.schedule_id) openBySchedule.set(e.schedule_id, [...(openBySchedule.get(e.schedule_id) ?? []), e]);
+    }
+  }
   for (const original of rows) {
     try {
       const s = await refreshBoundRenewal(db, orgId, original);
-      await ensureOccurrence(db, orgId, s, now);
       const due = await dueOf(orgId, s, now);
+      const byCounter = due.counter != null && due.next_due_counter != null && due.counter >= due.next_due_counter;
+      const target = byCounter ? serviceDay(now, await serviceTimeZone(orgId)) : due.next_due_at;
+      if (s !== original || !occurrenceSettled(s, openBySchedule.get(s.id) ?? [], target, byCounter)) await ensureOccurrence(db, orgId, s, now);
       reasons.set(s.id, due.reason);
     } catch (err) {
       console.warn(`[core-maintenance] schedule ${original.id} not reconciled:`, (err as Error).message);

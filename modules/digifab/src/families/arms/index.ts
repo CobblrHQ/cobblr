@@ -6,7 +6,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { DigifabFamily } from "../../core/families.js";
 import { exists, onMachine } from "../../panel-presence.js";
 import { armsRouter } from "./api/routes.js";
-import { registerArmMonitor } from "./runs.js";
+import { hasArmWork, registerArmMonitor } from "./runs.js";
 import { registerArmRecordAction } from "./api/arm-record-action.js";
 import { registerArmStopAction } from "./api/arm-stop-action.js";
 import { registerMachineHold } from "../../core/holds.js";
@@ -23,6 +23,7 @@ export const armsFamily: DigifabFamily = {
   routes: [{ path: "/arms", router: armsRouter }, { path: "/cells", router: cellsRouter }],
   onBoot: () => { registerArmMonitor(); registerCellMonitor(); registerArmBackups(); },
   /** An arm is running, idle, in fault (any stop or fault), or not seen. */
+  hasMachines: db => hasArmWork({ db }),
   async machineStates(db, orgId) {
     const units = await db.selectFrom("digifab_arm_units").select(["machine_id", "connection_id", "device_id"]).where("connection_id", "is not", null).execute();
     return Promise.all(units.map(async (u) => {

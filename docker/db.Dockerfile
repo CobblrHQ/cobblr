@@ -73,7 +73,10 @@ RUN chmod +x /usr/local/bin/db-auto-upgrade.sh /usr/local/bin/backup-loop.sh
 # The loop reads BACKUP_AT in BACKUP_TZ and refuses a zone it cannot find, so
 # the zone files are a dependency of the loop, not of the base image's choices.
 # `test -f` makes a base that drops them fail here, at build, not at 03:00.
-RUN apk add --no-cache tzdata && test -f /usr/share/zoneinfo/America/New_York
+# GNU gzip, not busybox's: the loop dumps with --rsyncable so an off-box copy
+# stores only what changed since last night (backup-loop.sh, guarantee 8).
+RUN apk add --no-cache tzdata gzip && test -f /usr/share/zoneinfo/America/New_York \
+  && gzip --rsyncable -c </dev/null >/dev/null
 
 ENTRYPOINT ["/usr/local/bin/db-auto-upgrade.sh"]
 CMD ["postgres"]

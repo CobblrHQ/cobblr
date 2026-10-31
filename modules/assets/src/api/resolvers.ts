@@ -88,6 +88,13 @@ export function registerAssetsResolvers(): void {
       .executeTakeFirst();
     if (!row) return null;
     return toResolvedAsset(row, (await placeNamesOf(orgId, "assets:asset", [row])).get(row.id) ?? null);
+  }, async (orgId, ids) => {
+    // A page of assets in two statements, not two per asset: Needs you named
+    // each overdue service's asset on its own (#9021).
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
+    const rows = ids.length ? await db.selectFrom("assets_assets").selectAll().where("id", "in", [...ids]).execute() : [];
+    const places = await placeNamesOf(orgId, "assets:asset", rows);
+    return new Map(rows.map((row) => [row.id, toResolvedAsset(row, places.get(row.id) ?? null)]));
   });
 
   const assetsListResolver = async (orgId: string, query: EntityListQuery, instance?: string) => {

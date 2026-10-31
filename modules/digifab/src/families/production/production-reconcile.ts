@@ -1,5 +1,6 @@
 // PERMANENT RECONCILE: prepared attempts and finished evidence survive a lost bridge response or workspace restart.
 // BORN WITH: prepareProductionStation stages and syncProductionAttempt projects and acknowledges each attempt.
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "../../db.js";
@@ -29,5 +30,10 @@ export async function reconcileProductionTests(db: Kysely<DigifabDB>, orgId: str
 let registered = false;
 export function registerProductionReconcile() {
  if (registered) return; registered = true;
- platform().sweeps.register({ name: "digifab.production-test-sync", module: "digifab", everyMs: 30_000, firstAfterMs: 30_000, visit: async ({ orgId, db }) => { await reconcileProductionTests(db as Kysely<DigifabDB>, orgId); } });
+ platform().sweeps.register(narrowSweep({ name: "digifab.production-test-sync", module: "digifab", everyMs: 30_000, firstAfterMs: 30_000, visit: async ({ orgId, db }) => { await reconcileProductionTests(db as Kysely<DigifabDB>, orgId); } }, hasProductionWork));
+}
+
+export async function hasProductionWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<DigifabDB>).selectFrom("digifab_test_delivery").select("run_id")
+    .where("acknowledged", "=", false).limit(1).executeTakeFirst();
 }

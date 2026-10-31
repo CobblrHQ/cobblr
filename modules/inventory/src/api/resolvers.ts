@@ -5,10 +5,10 @@ import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // "inventory:part", id) and the platform routes here.
 
 import { stockViews } from "./stock-shapes.js";
-import { storageView } from "./storage.js";
+import { storageViews } from "./storage.js";
 import { sheetViews } from "./sheets.js";
 import { placeNames } from "@cobblr/platform-contract";
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Selectable } from "kysely";
 import { platform, type EntityListQuery, type FilterPredicate, type ResolvedEntity } from "@cobblr/platform-contract";
 import { type InventoryDB } from "../db.js";
 import { applyPartFilters, applyPartSearch, applyPartSort } from "./part-query.js";
@@ -30,23 +30,12 @@ export function registerInventoryResolvers(): void {
     "inventory:part",
     async (orgId, id) => {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
-      const row = await db
-        .selectFrom("inventory_parts")
-        .selectAll()
-        .where("id", "=", id)
-        .executeTakeFirst();
-      if (!row) return null;
-      const resolved = toResolvedPart(
-        row,
-        (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
-        (await locationNames(orgId, [row])).get(row.id) ?? null,
-        (await remainingFor(orgId, db, [row])).get(row.id) ?? null,
-      );
-      const readiness = await storageView(db, orgId, row.id);
-      if (readiness) resolved.fields.storage_readiness = readiness;
-      const sheet = (await sheetViews(db, [row])).get(row.id);
-      const stock = (await stockViews(db, [row])).get(row.id);
-      return { ...resolved, fields: { ...resolved.fields, stock, stock_used: stock?.used ?? 0, ...(sheet ? { sheet_geometry: sheet } : {}) } };
+      const row = await db.selectFrom("inventory_parts").selectAll().where("id", "=", id).executeTakeFirst();
+      return row ? ((await resolvePartRows(orgId, db, [row])).get(row.id) ?? null) : null;
+    },
+    async (orgId, ids) => {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+      return resolvePartRows(orgId, db, ids.length ? await db.selectFrom("inventory_parts").selectAll().where("id", "in", [...ids]).execute() : []);
     },
   );
 
@@ -161,27 +150,44 @@ export function registerInventoryResolvers(): void {
   // Single-entity twin — a `<name>:item` LOOKUP resolves the part by id scoped to
   // the instance, so instance detail/lookup resolves + gets computed fields the
   // same as the base inventory:part kind.
-  platform().entities.registerInstanceResolver("inventory", async (orgId, instance, id) => {
-    const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
-    const row = await db
-      .selectFrom("inventory_parts")
-      .selectAll()
-      .where("id", "=", id)
-      .where("instance", "=", instance as never)
-      .executeTakeFirst();
-    if (!row) return null;
-    const resolved = toResolvedPart(
-      row,
-      (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
-      (await locationNames(orgId, [row])).get(row.id) ?? null,
-      (await remainingFor(orgId, db, [row])).get(row.id) ?? null,
-    );
-    const readiness = await storageView(db, orgId, row.id);
-    if (readiness) resolved.fields.storage_readiness = readiness;
-    const sheet = (await sheetViews(db, [row])).get(row.id);
-    const stock = (await stockViews(db, [row])).get(row.id);
-    return { ...resolved, fields: { ...resolved.fields, stock, stock_used: stock?.used ?? 0, ...(sheet ? { sheet_geometry: sheet } : {}) } };
-  });
+  platform().entities.registerInstanceResolver(
+    "inventory",
+    async (orgId, instance, id) => {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+      const row = await db.selectFrom("inventory_parts").selectAll().where("id", "=", id).where("instance", "=", instance as never).executeTakeFirst();
+      return row ? ((await resolvePartRows(orgId, db, [row])).get(row.id) ?? null) : null;
+    },
+    async (orgId, instance, ids) => {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+      return resolvePartRows(orgId, db, ids.length ? await db.selectFrom("inventory_parts").selectAll().where("id", "in", [...ids]).where("instance", "=", instance as never).execute() : []);
+    },
+  );
+}
+
+/** Parts as the platform reads them, a page at a time: every related read
+ *  (category, place, what is left, storage, sheet, stock) is one statement for
+ *  the page, not one per part. The dashboard's activity named 100 parts one at
+ *  a time, eight statements each, 1,968 a request on staging (#9021). */
+async function resolvePartRows(orgId: string, db: Kysely<InventoryDB>, rows: Array<Selectable<InventoryDB["inventory_parts"]>>): Promise<Map<string, ResolvedEntity>> {
+  const out = new Map<string, ResolvedEntity>();
+  if (!rows.length) return out;
+  const [categories, places, remaining, readiness, sheets, stocks] = await Promise.all([
+    categoryNames(db, rows),
+    locationNames(orgId, rows),
+    remainingFor(orgId, db, rows),
+    storageViews(db, orgId, rows as never),
+    sheetViews(db, rows),
+    stockViews(db, rows),
+  ]);
+  for (const row of rows) {
+    const resolved = toResolvedPart(row, categories.get(row.category_id ?? "") ?? null, places.get(row.id) ?? null, remaining.get(row.id) ?? null);
+    const ready = readiness.get(row.id);
+    if (ready) resolved.fields.storage_readiness = ready;
+    const sheet = sheets.get(row.id);
+    const stock = stocks.get(row.id);
+    out.set(row.id, { ...resolved, fields: { ...resolved.fields, stock, stock_used: stock?.used ?? 0, ...(sheet ? { sheet_geometry: sheet } : {}) } });
+  }
+  return out;
 }
 
 /** Where each row is, by name. "Where is my lamp" was answered with the

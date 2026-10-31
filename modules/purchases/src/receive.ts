@@ -1,3 +1,4 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { ReceiptPending } from "./receipt-pending.js";
 import { sql, type Kysely } from "kysely";
 import { arrivedEverywhere, platform } from "@cobblr/platform-contract";
@@ -245,8 +246,13 @@ function refusalSentence(message: string): string {
 }
 
 export function registerReceiptRetries(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: "purchases.receipt-retries", module: "purchases", everyMs: 60_000,
     visit: async ({ orgId, db }) => { await flushReceipts(db as Kysely<PurchasesDB>, orgId); },
-  });
+  }, hasReceiptWork));
+}
+
+export async function hasReceiptWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<PurchasesDB>).selectFrom("purchases_receive_outbox").select("id")
+    .where("completed_at", "is", null).limit(1).executeTakeFirst();
 }

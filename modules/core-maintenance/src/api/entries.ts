@@ -139,14 +139,13 @@ entriesRouter.get(
     const now = new Date();
     const zone = await serviceTimeZone(tenantContext(req).org.id, filter.tz);
     // What each entry is for, by name: a service log that says "assets·asset"
-    // does not say which of a hundred assets. One lookup per record.
+    // does not say which of a hundred assets. One batched read for the page,
+    // not one per record (#9021).
     const orgId = tenantContext(req).org.id;
     const titles = new Map<string, string | null>();
-    await platform().db.fanOut(orgId, [...new Set(rows.map((r) => `${r.entity_module}:${r.entity_type}|${r.entity_id}`))], async (key) => {
-      const [kind, id] = key.split("|") as [string, string];
-      const found = await platform().entities.lookup(orgId, kind, id).catch(() => null);
-      titles.set(key, found?.title ?? null);
-    });
+    const refs = [...new Map(rows.map((r) => [`${r.entity_module}:${r.entity_type}|${r.entity_id}`, { kind: `${r.entity_module}:${r.entity_type}`, id: r.entity_id }])).values()];
+    const found = await platform().entities.lookupMany(orgId, refs).catch(() => []);
+    for (const e of found) titles.set(`${e.kind}|${e.id}`, e.title ?? null);
     const schedules = new Map((await db.selectFrom("core_maintenance_schedules").selectAll().execute()).map((s) => [s.id, s]));
     const shown = [...new Set(rows.map((r) => r.schedule_id))].flatMap((id) => (id && schedules.get(id)) || []);
     const presented = new Map((await presentEach(orgId, shown, filter.tz)).map((s) => [s.id, s] as const));

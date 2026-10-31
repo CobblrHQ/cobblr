@@ -34,7 +34,13 @@ interface Toast {
   onSecondary?: () => void | Promise<void>;
   /** ms; 0 = sticky. Defaults: info 4000, success 5000, error 8000, action 0. */
   duration: number;
+  /** Its time starts when this settles (the page shows what it says was done),
+   *  or after CLOCK_WAITS_AT_MOST_MS, whichever is first. */
+  startsAfter?: Promise<unknown>;
 }
+
+/** The longest a toast's time waits for what it says to show. */
+export const CLOCK_WAITS_AT_MOST_MS = 6000;
 
 interface ToastCtx {
   info: (msg: string, opts?: Partial<Omit<Toast, "id" | "kind" | "message">>) => number;
@@ -48,6 +54,7 @@ interface ToastCtx {
       secondaryLabel?: string;
       onSecondary?: () => void | Promise<void>;
       duration?: number;
+      startsAfter?: Promise<unknown>;
     },
   ) => number;
   dismiss: (id: number) => void;
@@ -91,6 +98,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         onAction: opts.onAction,
         secondaryLabel: opts.secondaryLabel,
         onSecondary: opts.onSecondary,
+        startsAfter: opts.startsAfter,
       }),
     dismiss,
   };
@@ -165,10 +173,23 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
   // When it goes by itself, on the card: a walk waiting for the page to settle
   // stops before the feedback it means to judge is gone (#8133).
   const [shownAt] = useState(() => Date.now());
-  const goesAt = toast.duration > 0 ? shownAt + toast.duration : undefined;
+  const [startedAt, setStartedAt] = useState<number | null>(() => (toast.startsAfter ? null : shownAt));
+  const goesAt = toast.duration > 0 && startedAt !== null ? startedAt + toast.duration : undefined;
 
   useEffect(() => {
-    if (busy) return undefined;
+    if (startedAt !== null || !toast.startsAfter) return undefined;
+    let live = true;
+    const start = () => live && setStartedAt(Date.now());
+    const cap = window.setTimeout(start, CLOCK_WAITS_AT_MOST_MS);
+    toast.startsAfter.then(start, start);
+    return () => {
+      live = false;
+      window.clearTimeout(cap);
+    };
+  }, [toast.startsAfter, startedAt]);
+
+  useEffect(() => {
+    if (busy || startedAt === null) return undefined;
     if (toast.duration > 0) {
       timerRef.current = window.setTimeout(() => dismiss(toast.id), toast.duration);
       return () => {
@@ -176,7 +197,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
       };
     }
     return undefined;
-  }, [toast.id, toast.duration, dismiss, busy]);
+  }, [toast.id, toast.duration, dismiss, busy, startedAt]);
 
   async function handleAction() {
     if (!toast.onAction || busy) return;
@@ -212,6 +233,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
       aria-live={toast.kind === "error" ? "assertive" : "polite"}
       data-shown-at={shownAt}
       data-goes-at={goesAt}
+      data-timed-offer={toast.actionLabel && toast.duration > 0 ? "" : undefined}
     >
       <Icon size={16} className={`shrink-0 mt-0.5 ${palette.icon}`} />
       <div className="flex-1 min-w-0">

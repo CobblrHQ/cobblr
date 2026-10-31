@@ -31,12 +31,15 @@ import { runMigrations } from "./migrate.js";
 
 export type TemplateSet = "defaults" | "all";
 
-/** The role every template's objects belong to until a copy hands them on. */
-export const TEMPLATE_ROLE = "cobblr_workspace_template";
+/** The one role every template was built by before #8928. A copy's DROP
+ *  OWNED of it also revoked its rights on every database, a build's in
+ *  progress among them; retireTemplateRoles drops it once nothing it owns is
+ *  left. */
+export const SHARED_TEMPLATE_ROLE = "cobblr_workspace_template";
 /** Stands in for the workspace's database and id in the template's ledger. */
 export const TEMPLATE_SCOPE_ID = "workspace-template";
 /** Bump when how a template is built changes, so older ones are not cloned. */
-const BUILDER_VERSION = 1;
+const BUILDER_VERSION = 2;
 
 const ident = /^[a-z0-9_]+$/;
 const assertIdent = (s: string): string => {
@@ -93,6 +96,10 @@ export async function templateHash(set: TemplateSet, baseDir: string, modules: T
 }
 
 export const templateName = (set: TemplateSet, hash: string): string => assertIdent(`cobblr_tpl_${set}_${hash}`);
+/** The role a template's objects belong to until a copy hands them on: its
+ *  own, never shared, because a copy's DROP OWNED reaches the role's grants on
+ *  every database, and a shared role's grant on another build's (#8928). */
+export const templateRole = (template: string): string => assertIdent(`${template}_owner`);
 
 function superClient(database?: string) {
   const url = new URL(env.SUPERUSER_DATABASE_URL!);
@@ -215,22 +222,24 @@ async function buildTemplate(set: TemplateSet, baseDir: string, modules: Templat
     await c.query("select pg_advisory_lock(hashtext('cobblr-workspace-template'))");
     if (((await c.query("select 1 from pg_database where datname = $1", [name])).rowCount ?? 0) > 0) return name;
     const password = randomBytes(24).toString("base64url");
+    const owner = templateRole(name);
     await c.query(ROLE_LOCK);
     try {
-      const role = (await c.query("select 1 from pg_roles where rolname = $1", [TEMPLATE_ROLE])).rowCount
-        ? `ALTER ROLE ${TEMPLATE_ROLE} WITH LOGIN PASSWORD '${password}'`
-        : `CREATE ROLE ${TEMPLATE_ROLE} WITH LOGIN PASSWORD '${password}'`;
-      await c.query(role);
+      await c.query(
+        (await c.query("select 1 from pg_roles where rolname = $1", [owner])).rowCount
+          ? `ALTER ROLE ${owner} WITH LOGIN PASSWORD '${password}'`
+          : `CREATE ROLE ${owner} WITH LOGIN PASSWORD '${password}'`,
+      );
       await c.query(`DROP DATABASE IF EXISTS "${work}"`);
       // Owned by the superuser, not the role: a copy hands everything the role
       // owns to the workspace's user (REASSIGN OWNED), and that reaches the
       // databases the role owns too, which must never include a template.
       await c.query(`CREATE DATABASE "${work}"`);
-      await c.query(`GRANT ALL ON DATABASE "${work}" TO ${TEMPLATE_ROLE}`);
+      await c.query(`GRANT ALL ON DATABASE "${work}" TO ${owner}`);
       const inside = superClient(work);
       await inside.connect();
       try {
-        await inside.query(`GRANT CREATE, USAGE ON SCHEMA public TO ${TEMPLATE_ROLE}`);
+        await inside.query(`GRANT CREATE, USAGE ON SCHEMA public TO ${owner}`);
       } finally {
         await inside.end();
       }
@@ -238,7 +247,7 @@ async function buildTemplate(set: TemplateSet, baseDir: string, modules: Templat
       await c.query(ROLE_UNLOCK);
     }
     const url = new URL(env.DATABASE_URL);
-    const pool = createPool({ host: url.hostname, port: url.port ? Number(url.port) : 5432, database: work, user: TEMPLATE_ROLE, password, max: 4 }, `workspace template ${work}`);
+    const pool = createPool({ host: url.hostname, port: url.port ? Number(url.port) : 5432, database: work, user: owner, password, max: 4 }, `workspace template ${work}`);
     try {
       await migrateInto(pool, baseDir, modules, TEMPLATE_SCOPE_ID, TEMPLATE_SCOPE_ID);
     } finally {
@@ -259,6 +268,7 @@ async function buildTemplate(set: TemplateSet, baseDir: string, modules: Templat
         [`cobblr_tpl_${set}_%`, name, KEEP_TEMPLATES - 1],
       );
       for (const { datname } of old.rows) await c.query(`DROP DATABASE IF EXISTS "${assertIdent(datname)}"`).catch(() => undefined);
+      await retireTemplateRoles(c);
     } finally {
       await c.query(ROLE_UNLOCK);
     }
@@ -301,13 +311,14 @@ export async function cloneTemplate(template: string, dbName: string, userName: 
     await c.end();
   }
   // REASSIGN and DROP OWNED write the template role's shared rows (#8823).
+  const owner = templateRole(template);
   return withTemplateRoleLock(async () => {
     const inside = superClient(dbName);
     await inside.connect();
     try {
       await inside.query("begin");
-      await inside.query(`REASSIGN OWNED BY ${TEMPLATE_ROLE} TO "${userName}"`);
-      await inside.query(`DROP OWNED BY ${TEMPLATE_ROLE}`);
+      await inside.query(`REASSIGN OWNED BY ${owner} TO "${userName}"`);
+      await inside.query(`DROP OWNED BY ${owner}`);
       await inside.query("update migrations set name = $1 || substr(name, length($2) + 1) where name like $3", [
         `${baseScope(dbName)}::`,
         `${baseScope(TEMPLATE_SCOPE_ID)}::`,
@@ -329,6 +340,35 @@ export async function cloneTemplate(template: string, dbName: string, userName: 
       await inside.end();
     }
   });
+}
+
+/** Drop the template roles nothing needs any more: a template's own once
+ *  neither it nor its build is left, and the shared one of before #8928 once
+ *  it owns nothing (an older api still building or copying with it holds it
+ *  by what it owns, and Postgres then refuses the drop). Called with the role
+ *  lock held: by every build, and at boot (platform/retire-template-roles.ts).
+ *  Returns the roles dropped. */
+export async function retireTemplateRoles(c: { query: (q: string, v?: unknown[]) => Promise<{ rows: Array<{ rolname: string }> }> }): Promise<string[]> {
+  const { rows } = await c.query(
+    `select r.rolname from pg_roles r
+      where (r.rolname ~ '^cobblr_tpl_[a-z]+_[0-9a-f]+_owner$'
+             and not exists (select 1 from pg_database d
+                              where d.datname in (left(r.rolname, length(r.rolname) - 6), left(r.rolname, length(r.rolname) - 6) || '_b')))
+         or r.rolname = $1`,
+    [SHARED_TEMPLATE_ROLE],
+  );
+  const dropped: string[] = [];
+  for (const { rolname } of rows) {
+    try {
+      await c.query(`DROP ROLE IF EXISTS ${assertIdent(rolname)}`);
+      dropped.push(rolname);
+    } catch (err) {
+      // 2BP01: it still owns or holds a grant on something, an older api's
+      // template or a copy not yet handed on; a later pass drops it.
+      if ((err as { code?: string }).code !== "2BP01") throw err;
+    }
+  }
+  return dropped;
 }
 
 /** New ids for the rows the migrations seeded with random ones (inventory's

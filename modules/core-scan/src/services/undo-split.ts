@@ -65,6 +65,24 @@ async function undoSplitLocked(db: Kysely<CoreScanDB>, id: string, by: string | 
       .executeTakeFirst();
     const parentMeta = (parent?.suggested_metadata ?? {}) as { split_into?: unknown; split_prior_notes?: unknown };
     if (!parent || !Array.isArray(parentMeta.split_into)) {
+      // The parts are admitted one by one and the line is marked only after
+      // the last, so under load its parts can be on screen before the split
+      // is written; "not split" would be false then. Only while the line
+      // still waits and a part is live: the parts of an undone split stay
+      // discarded with split_from, and that line was not split.
+      const arriving = parent?.status === "pending"
+        ? await db
+            .selectFrom("core_scan_inbox_items")
+            .select("id")
+            .where(sql`suggested_metadata->>'split_from'`, "=", parent.id)
+            .where("status", "=", "pending")
+            .where(sql`suggested_metadata->>'split_undone_at'`, "is", null)
+            .limit(1)
+            .executeTakeFirst()
+        : undefined;
+      if (arriving) {
+        return { ok: false as const, status: 409, error: { code: "split_in_progress", message: "This scan is still being split. Try again in a moment, once all its parts are in." } };
+      }
       return { ok: false as const, status: 409, error: { code: "not_split", message: "This scan was not split, so there is no split to undo." } };
     }
     const children = await db

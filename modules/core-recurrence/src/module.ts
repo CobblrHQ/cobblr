@@ -58,8 +58,9 @@ export default defineModule({
 
   lifecycle: {
     onBoot: async () => {
-      const { startRecurrenceScheduler } = await import("./api/scheduler.js");
+      const { startRecurrenceScheduler, registerEntityScan } = await import("./api/scheduler.js");
       startRecurrenceScheduler();
+      registerEntityScan();
       const { startOverdueSweeper } = await import("./overdue.js");
       startOverdueSweeper();
     },

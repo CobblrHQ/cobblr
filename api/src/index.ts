@@ -106,6 +106,7 @@ import * as counters from "./platform/counters.js";
 import * as deletedRecords from "./platform/deleted-records.js";
 import * as dispositions from "./platform/dispositions.js";
 import { registerIssuedUndosSweep } from "./platform/issued-undos.js";
+import { registerTraceSweep } from "./platform/activity-trace.js";
 import { registerTenantMigrationsCatchUp } from "./platform/tenant-migrations-catch-up.js";
 import { registerRequestReplaysSweep } from "./platform/request-replays.js";
 import { registerHistoryWriter } from "./platform/history-store.js";
@@ -1973,6 +1974,7 @@ async function boot() {
   registerDeletedRelations();
   deletedRecords.registerDeletedRecordsSweep();
   registerIssuedUndosSweep();
+  registerTraceSweep();
   registerTenantMigrationsCatchUp();
   registerRequestReplaysSweep();
   registerWarrantyReminders();

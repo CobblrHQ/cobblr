@@ -33,7 +33,6 @@ import { type Kysely } from "kysely";
 import type { CoreIntegrationsDB } from "../db.js";
 import { edgeRelayFetch } from "./edge-fetch.js";
 import { reconcileHoldings, retireHoldingsOf } from "./holdings.js";
-import { mapLimit } from "@cobblr/platform-contract/map-limit";
 import { deleteMirror } from "./delete-mirror.js";
 
 /** A resolved, decrypted handle to one sync connection. */
@@ -824,8 +823,6 @@ async function attachTags(orgId: string, targetKind: string, id: string, tags: s
 }
 
 /** How many tombstones a reconcile runs at once. */
-const TOMBSTONE_CONCURRENCY = 4;
-
 /** Tombstone one external id: delete the mirror + mark the map row. */
 async function tombstoneOne(
   db: Kysely<CoreIntegrationsDB>,
@@ -956,9 +953,11 @@ async function reconcileOnce(
   // A few at a time: each is a writer delete (the record kept in Recently
   // deleted, its events, its history), about 230 ms apiece, so a source that
   // dropped 130 parts held the sync's lock for 20 s one by one, and past a
-  // minute on a busy box. Distinct records; the tenant pool holds five.
+  // minute on a busy box. Four at a time held every connection of a pool of
+  // three, and the people working in the workspace waited behind the sync: the
+  // deletes run within the pool less two connections (#8966).
   const gone = mapped.filter((m) => !present.has(m.external_id));
-  const done = await mapLimit(gone, TOMBSTONE_CONCURRENCY, async (m) => {
+  const done = await platform().db.fanOut(ref.orgId, gone, async (m) => {
     try {
       return await tombstoneOne(db, ref, type, m.external_id);
     } catch (err) {

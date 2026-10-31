@@ -1,3 +1,4 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { isCurrency } from "@cobblr/platform-contract/money";
 import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
@@ -105,9 +106,18 @@ export async function intakeRound(db: Kysely<SalesDB>, orgId: string, instance: 
   });
 }
 export function registerIntakeSweep() {
-  platform().sweeps.register({ name: "sales.order-intake", module: "sales", everyMs: 60_000, visit: async ({ orgId, db }) => {
+  platform().sweeps.register(narrowSweep({ name: "sales.order-intake", module: "sales", everyMs: 60_000, visit: async ({ orgId, db }) => {
     const sales = db as Kysely<SalesDB>;
     const rows = await sales.selectFrom("sales_settings").select("key").where("key", "like", "order_intake:%").execute();
     for (const row of rows) await intakeRound(sales, orgId, row.key.slice("order_intake:".length));
-  } });
+  } }, hasIntakeWork));
+}
+
+export async function hasIntakeWork({ db }: { db: unknown }): Promise<boolean> {
+  const rows = await (db as Kysely<SalesDB>).selectFrom("sales_settings").select("value")
+    .where("key", "like", "order_intake:%").execute();
+  return rows.some(row => {
+    const setting = row.value as unknown as IntakeSetting;
+    return setting?.on && !setting.error;
+  });
 }

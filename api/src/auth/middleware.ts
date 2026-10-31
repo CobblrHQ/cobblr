@@ -16,7 +16,7 @@ import { tokenAccessAllows, type TokenAccess } from "./token-access.js";
 import { isStationQrScope, isStationScope, tokenScopeAllows } from "./scopes.js";
 import { isStationCrewScope, stationAddressOfScope } from "@cobblr/platform-contract/station-screen";
 import { stationHasCrew } from "../platform/station-crews.js";
-import { runWithActor, runVia, type Via } from "../lib/request-context.js";
+import { perRequest, runWithActor, runVia, type Via } from "../lib/request-context.js";
 import { linkOrigin } from "../platform/link-origin.js";
 import { env } from "../env.js";
 
@@ -440,11 +440,12 @@ export async function requireAuth(
       });
       return;
     }
-    const user = await meta
+    // Once per page: a read the page is made of asks again (#9024).
+    const user = await perRequest(`auth:user:${userId}`, () => meta
       .selectFrom("users")
       .select(["id", "email", "display_name", "active", "tokens_valid_from", "must_reset_password", "title_pref"])
       .where("id", "=", userId)
-      .executeTakeFirst();
+      .executeTakeFirst());
     if (!user || !user.active) {
       res.status(401).json({
         error: { code: "unauthenticated", message: "User not found or inactive" },
