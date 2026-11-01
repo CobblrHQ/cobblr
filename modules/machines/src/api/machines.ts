@@ -192,6 +192,7 @@ machinesRouter.post(
       }
       (inserted as { location_id?: string | null }).location_id = createLocationId;
     }
+    // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
     await platform().activity.log({
       orgId: ctx.org.id,
       userId: session.id,

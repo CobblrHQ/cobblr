@@ -731,13 +731,15 @@ export function CalendarRenderer({ slug, kind, items, cfg }: { slug: string; kin
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
+      {/* Wraps, and the month's minimum width is a wide screen's: at 200% text
+          on a phone the row ran 31 px past the edge (#9081). */}
+      <div className="flex flex-wrap items-center gap-2">
         <button onClick={() => setCursor((c) => shiftMonth(c, -1))} className="p-1 rounded hover:bg-subtle dark:hover:bg-slate-800 transition" title="Previous month" aria-label="Previous month"><ChevronLeft size={16} /></button>
-        <span className="text-sm font-medium text-content dark:text-mortar-100 min-w-[9rem] text-center">{MONTHS[cursor.m]} {cursor.y}</span>
+        <span className="text-sm font-medium text-content dark:text-mortar-100 min-w-0 sm:min-w-[9rem] text-center">{MONTHS[cursor.m]} {cursor.y}</span>
         <button onClick={() => setCursor((c) => shiftMonth(c, 1))} className="p-1 rounded hover:bg-subtle dark:hover:bg-slate-800 transition" title="Next month" aria-label="Next month"><ChevronRight size={16} /></button>
         <button onClick={() => { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }); }} className="ml-1 text-[10px] uppercase tracking-widest text-accent hover:underline">today</button>
         <div className="flex-1" />
-        <span className="hidden sm:inline text-[10px] font-mono text-faint dark:text-slate-500">on <code>{dateField}</code> · {placed} of {items.length}</span>
+        <span className="hidden sm:inline text-[10px] text-faint dark:text-slate-500">on {dateDef?.label ?? dateField} · {placed} of {items.length}</span>
       </div>
 
       {/* A phone: the month as a list of the days that have something on them.

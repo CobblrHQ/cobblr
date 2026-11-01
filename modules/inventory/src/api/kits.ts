@@ -31,7 +31,13 @@ export function registerKitActions() {
         if (!record || record.retired) throw new ActionRefusal("A kit item is missing or unavailable.");
       }
     }
-    const result = await db.transaction().execute(async trx => {
+    const result = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+      const record = async (rows: Array<{ id: string; part_id: string; qty: string }>) => {
+        for (const row of rows) {
+          const action = p.operation === "reserve" ? "allocation_reserved" : p.operation === "consume" ? "allocation_consumed" : "allocation_released";
+          await log({ orgId: ctx.orgId, userId: ctx.userId, action, ref: { module: "inventory", entityType: "allocation", entityId: row.id }, diff: { part_id: row.part_id, qty: Number(row.qty) } });
+        }
+      };
       await sql`select pg_advisory_xact_lock(hashtextextended(${`assembly-kit:${p.target_kind}:${p.target_id}`}, 0))`.execute(trx);
       const old = await trx.selectFrom("inventory_allocations").selectAll().where("target_module", "=", targetModule).where("target_entity_type", "=", targetType).where("target_entity_id", "=", p.target_id).where("target_line", "=", "assembly-kit").orderBy("part_id").execute();
       const wanted = p.operation === "reserve" ? groupKitLines(p.lines!) : old.map(r => ({ part_id: r.part_id, qty: Number(r.qty) }));
@@ -71,6 +77,7 @@ export function registerKitActions() {
       if (p.operation === "check") return { changed: false, ready: !problem, reason: problem, lines: old, stock };
       if (p.operation === "reserve") {
         const lines = old.length ? old : await trx.insertInto("inventory_allocations").values(wanted.map(l => ({ part_id: l.part_id, qty: String(l.qty), target_module: targetModule, target_entity_type: targetType, target_entity_id: p.target_id, target_line: "assembly-kit", reason: "Assembly kit", context: { lot_code: stock.find(p => p.id === l.part_id)?.lot_code ?? null, role: p.lines?.find(line => line.part_id === l.part_id)?.role ?? "component" } }))).returningAll().execute();
+        if (!old.length) await record(lines);
         return { changed: !old.length, ready: true, reason: null, lines, stock };
       }
       for (const row of old) {
@@ -86,12 +93,12 @@ export function registerKitActions() {
       const status = p.operation === "consume" ? "consumed" : "released";
       for (const row of old) if (p.operation === "consume" && stock.find(s => s.id === row.part_id)?.moisture_problem) await trx.updateTable("inventory_allocations").set({ context: { ...row.context, moisture_problem: stock.find(s => s.id === row.part_id)!.moisture_problem } }).where("id", "=", row.id).execute();
       const lines = await trx.updateTable("inventory_allocations").set({ status, ...(status === "consumed" ? { consumed_at: new Date() } : { released_at: new Date() }) }).where("id", "in", old.map(r => r.id)).returningAll().execute();
+      await record(lines);
       return { changed: true, ready: false, reason: null, lines, stock };
     });
     if (result.changed) for (const row of result.lines) {
       const verb = p.operation === "reserve" ? "reserved" : p.operation === "consume" ? "consumed" : "released";
-      const action = p.operation === "reserve" ? "allocation_reserved" : p.operation === "consume" ? "allocation_consumed" : "allocation_released";
-      await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action, ref: { module: "inventory", entityType: "allocation", entityId: row.id }, diff: { part_id: row.part_id, qty: Number(row.qty) } });
+
       await platform().events.emit(`inventory.allocation.${verb}`, { orgId: ctx.orgId, allocationId: row.id, partId: row.part_id, qty: Number(row.qty) });
       if (p.operation === "consume") {
         const part = await db.selectFrom("inventory_parts").select(["qty", "min_qty"]).where("id", "=", row.part_id).executeTakeFirstOrThrow();

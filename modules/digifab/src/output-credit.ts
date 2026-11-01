@@ -8,6 +8,7 @@
 // (builds.output.credited), and until then the output is pending: a verdict
 // recorded again, and a sweep, ask again. builds applies it once per job, so
 // asking twice never counts it twice.
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { platform } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
@@ -33,7 +34,7 @@ export function registerOutputCredit(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<DigifabDB>;
     await db.updateTable("digifab_jobs").set({ build_output_at: new Date(), updated_at: new Date() }).where("id", "=", jobId).where("build_output_at", "is", null).execute();
   });
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: "digifab.output-credit", module: "digifab", everyMs: 10 * 60_000, firstAfterMs: 60_000,
     visit: async ({ orgId, db }) => {
       const tdb = db as Kysely<DigifabDB>;
@@ -47,5 +48,13 @@ export function registerOutputCredit(): void {
         .limit(50).execute();
       for (const row of pending) await creditPendingOutput(tdb, orgId, row.id);
     },
-  });
+  }, hasOutputCreditWork));
+}
+
+export async function hasOutputCreditWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<DigifabDB>).selectFrom("digifab_jobs").select("id")
+    .where("build_output_deferred", "=", true).where("build_output_at", "is", null)
+    .where("build_consumed_at", "is not", null).where("build_reversed_at", "is", null)
+    .where("linked_build_id", "is not", null).where(sql<boolean>`coalesce(outcome_good_qty, 0) > 0`)
+    .where("outcome_at", "is not", null).limit(1).executeTakeFirst();
 }

@@ -9,7 +9,7 @@
 // every order that shipped.
 
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, type ActivityLogParams } from "@cobblr/platform-contract";
 import type { SalesDB, SalesHistoryKind } from "./db.js";
 
 export interface HistoryEntry {
@@ -47,30 +47,31 @@ function actionFor(e: HistoryEntry): string | null {
   }
 }
 
-// Transactions defer activity and bus effects until their history row commits.
-export async function orderHappened(db: Kysely<SalesDB>, orgId: string, orderId: string, e: HistoryEntry, afterCommit?: Array<() => Promise<void>>): Promise<void> {
-  await db
-    .insertInto("sales_order_history")
-    .values({
-      order_id: orderId,
-      kind: e.kind,
-      from_status: e.from_status ?? null,
-      to_status: e.to_status ?? null,
-      detail: sql`${JSON.stringify(e.detail ?? {})}::jsonb` as never,
-      by_user: e.by_user ?? null,
-    })
-    .execute();
-  const publish = async () => {
+export type HistoryLog = (p: ActivityLogParams) => Promise<void>;
+
+export async function orderHappened(db: Kysely<SalesDB>, orgId: string, orderId: string, e: HistoryEntry, afterCommit?: Array<() => Promise<void>>, log?: HistoryLog): Promise<void> {
+  await db.insertInto("sales_order_history").values({
+    order_id: orderId,
+    kind: e.kind,
+    from_status: e.from_status ?? null,
+    to_status: e.to_status ?? null,
+    detail: sql`${JSON.stringify(e.detail ?? {})}::jsonb` as never,
+    by_user: e.by_user ?? null,
+  }).execute();
+  const record = async (keep: HistoryLog) => {
     const action = actionFor(e);
-    if (action) {
-      await platform().activity.log({
-        orgId,
-        userId: e.by_user ?? null,
-        action,
-        ref: { module: "sales", entityType: "order", entityId: orderId },
-        diff: { ...(e.kind === "status" ? { status: { from: e.from_status ?? null, to: e.to_status ?? null } } : {}), ...(e.detail ?? {}) },
-      });
-    }
+    if (action) await keep({
+      orgId,
+      userId: e.by_user ?? null,
+      action,
+      ref: { module: "sales", entityType: "order", entityId: orderId },
+      diff: { ...(e.kind === "status" ? { status: { from: e.from_status ?? null, to: e.to_status ?? null } } : {}), ...(e.detail ?? {}) },
+    });
+  };
+  if (log) await record(log);
+  const publish = async () => {
+    // capability-except activity:a-change-and-its-history-line-commit-together: orderHappened also summarizes shipping, holds and stock writes performed through other helpers and module actions; those callers must pass their write transaction log before the fallback can move (#9035)
+    if (!log) await record(async p => { await platform().activity.log(p); });
     if (e.kind === "status" && e.from_status && e.to_status && e.from_status !== e.to_status) {
       await platform().events.emit("sales.order.status_changed", { orgId, orderId, from: e.from_status, to: e.to_status });
     }

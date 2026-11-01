@@ -48,14 +48,17 @@ export async function editOrderLine(
   if (edit.qty !== undefined) set.qty = edit.qty;
   if (edit.unit_cost !== undefined) set.unit_cost = edit.unit_cost;
   if (edit.currency !== undefined) set.metadata = { currency: edit.currency };
-  const updated = await db.updateTable("purchases_order_items").set(withMetadataMerged(set) as never).where("id", "=", lineId).returningAll().executeTakeFirstOrThrow();
-  await platform().activity.log({
-    orgId: who.orgId,
-    userId: who.userId,
-    action: "order_item_updated",
-    ref: { module: "purchases", entityType: "order_item", entityId: lineId },
-    diff: { order_id: line.order_id, ...edit },
-    before: line,
+  const updated = await platform().activity.transaction(who.orgId, db, async (trx, log) => {
+    const updated = await trx.updateTable("purchases_order_items").set(withMetadataMerged(set) as never).where("id", "=", lineId).returningAll().executeTakeFirstOrThrow();
+    await log({
+      orgId: who.orgId,
+      userId: who.userId,
+      action: "order_item_updated",
+      ref: { module: "purchases", entityType: "order_item", entityId: lineId },
+      diff: { order_id: line.order_id, ...edit },
+      before: line,
+    });
+    return updated;
   });
   const before = { description: line.description, qty: Number(line.qty), unit_cost: line.unit_cost == null ? null : Number(line.unit_cost) };
   return { ok: true, line: updated as unknown as Record<string, unknown>, before };

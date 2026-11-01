@@ -87,6 +87,7 @@ export async function intakeFile(db: Kysely<CoreFilesDB>, orgId: string, userId:
     const insertedAt = performance.now();
     await platform().events.emit("core-files.file.uploaded", { orgId, fileId: row.id, kind: stored.kind, size_bytes: stored.size_bytes });
     const emittedAt = performance.now();
+    // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
     await platform().activity.log({
       orgId,
       userId,

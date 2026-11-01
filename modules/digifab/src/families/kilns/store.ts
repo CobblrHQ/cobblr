@@ -60,8 +60,11 @@ export async function createFiring(db: Kysely<DigifabDB>, orgId: string, value: 
  const profile = await db.selectFrom("digifab_kiln_profiles").selectAll().where("machine_id", "=", input.machine_id).executeTakeFirst();
  if (!profile) throw new KilnRefusal("Set up firing logs on this machine first.");
  await checkNewLoad(orgId, input.firing);
- const inserted = await db.insertInto("digifab_firings").values({ id: input.id, machine_id: input.machine_id, name: input.firing.name, recipe: JSON.stringify(input.firing), connection_id: profile.connection_id, device_id: profile.device_id, peak_c: null, duration_hours: null, started_at: null, ended_at: null }).onConflict(oc => oc.column("id").doNothing()).returning("id").executeTakeFirst();
- if (inserted) await platform().activity.log({ orgId, userId, action: "firing_created", ref: { module: "digifab", entityType: "firing", entityId: input.id }, diff: { name: input.firing.name, machine_id: input.machine_id } });
+ await platform().activity.transaction(orgId, db, async (trx, log) => {
+   const inserted = await trx.insertInto("digifab_firings").values({ id: input.id, machine_id: input.machine_id, name: input.firing.name, recipe: JSON.stringify(input.firing), connection_id: profile.connection_id, device_id: profile.device_id, peak_c: null, duration_hours: null, started_at: null, ended_at: null }).onConflict(oc => oc.column("id").doNothing()).returning("id").executeTakeFirst();
+   if (inserted) await log({ orgId, userId, action: "firing_created", ref: { module: "digifab", entityType: "firing", entityId: input.id }, diff: { name: input.firing.name, machine_id: input.machine_id } });
+   return inserted;
+ });
  const row = await db.selectFrom("digifab_firings").selectAll().where("id", "=", input.id).executeTakeFirstOrThrow();
  if (row.machine_id !== input.machine_id || JSON.stringify(FiringSchema.parse(row.recipe)) !== JSON.stringify(input.firing)) throw new KilnRefusal("This firing id already has a different load. Use a new id.");
  await platform().pairings.createMany(firingLinks(orgId, row.id, row.recipe.pieces));

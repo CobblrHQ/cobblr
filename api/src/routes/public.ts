@@ -138,6 +138,13 @@ interface AppPage {
 
 // Resolve + validate a surface token against the meta index. Shared by
 // the data route and the public file route so the gate is identical.
+/** A public link past its own expiry, read from the workspace's row. */
+export function linkExpired(surface: { expires_at?: Date | string | null }, now = new Date()): boolean {
+  if (!surface.expires_at) return false;
+  const at = new Date(surface.expires_at).getTime();
+  return Number.isFinite(at) && at < now.getTime();
+}
+
 async function resolveToken(token: string | undefined): Promise<
   | { ok: true; orgId: string; surfaceId: string }
   | { ok: false; status: number; code: string; message: string }
@@ -397,6 +404,10 @@ publicRouter.get("/:token/records/:ref", (req, res, next) => {
       res.status(404).json({ error: { code: "not_found", message: "no such surface" } });
       return;
     }
+    if (linkExpired(surface)) {
+      res.status(410).json({ error: { code: "expired", message: "this surface has expired" } });
+      return;
+    }
     const found = await tenantDb.selectFrom("core_public_surfaces_pages").selectAll().where("id", "=", surface.scope_id).executeTakeFirst();
     if (found && !pageIsLive(found)) {
       res.status(410).json({ error: { code: "expired", message: "this surface has expired" } });
@@ -450,6 +461,12 @@ async function surfacePayload(token: string | undefined): Promise<
     .executeTakeFirst();
   if (!surface || surface.revoked_at !== null || !surface.enabled) {
     return { ok: false, status: 404, body: { error: { code: "not_found", message: "no such surface" } } };
+  }
+  // The link's own expiry is the truth, the server's copy an index: a
+  // shortened expiry whose copy was refused kept the link served until the
+  // old date (#9071).
+  if (linkExpired(surface)) {
+    return { ok: false, status: 410, body: { error: { code: "expired", message: "this surface has expired" } } };
   }
 
   // 3. Resolve scope → data.

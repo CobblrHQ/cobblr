@@ -12,6 +12,7 @@
 // stock.low. Skips items that have their own signal (tracked_by external
 // systems, or a replace-clock).
 
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { Kysely, sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { InventoryDB } from "./db.js";
@@ -27,12 +28,12 @@ export function startBurnRateSweeper(): void {
   // The walk is the kernel's (platform().sweeps, #3036): this registers the
   // per-workspace visit and its cadence and owns no timer, so the pass shares
   // one walk and one connection budget with every other pass.
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: BURN_RATE_PASS,
     everyMs: TICK_MS,
     module: "inventory",
     visit: ({ orgId, db, now }) => visitWorkspace(orgId, db, now),
-  });
+  }, hasBurnRateWork));
   console.log(`[inventory] burn-rate sweeper registered — hourly, ${WINDOW_DAYS}d window, ${LEAD_DAYS}d lead`);
 }
 
@@ -183,3 +184,12 @@ async function visitWorkspace(orgId: string, raw: unknown, now: Date): Promise<{
 
 /** Exposed for tests / a manual trigger. */
 export const _burnTick = burnTick;
+
+
+export async function hasBurnRateWork({ db, now }: { db: unknown; now: Date }): Promise<boolean> {
+  return !!await (db as Kysely<InventoryDB>).selectFrom("inventory_consumption").select("id")
+    .where("at", ">", new Date(now.getTime() - WINDOW_DAYS * DAY))
+    .where(sql<boolean>`delta::numeric < 0`)
+    .where(sql<boolean>`kind is distinct from 'correction'`)
+    .limit(1).executeTakeFirst();
+}

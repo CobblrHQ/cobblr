@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-walk-never-finds-a-control-by-text-its-aria-label-replaced",
+  "run": "node scripts/lint-a-walk-never-finds-a-control-by-text-its-aria-label-replaced.ts",
+  "rows": [
+    "lint"
+  ],
+  "ms": 500,
+  "recorded": "2026-11-01",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

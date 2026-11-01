@@ -34,8 +34,11 @@ export async function takeControl(db: Kysely<DigifabDB>, orgId: string, machineI
 }
 /** Release control: the holding station, an admin, the pendant, or expiry. */
 export async function releaseControl(db: Kysely<DigifabDB>, orgId: string, machineId: string, reason: "released" | "revoked" | "pendant", userId: string | null) {
- const row = await db.updateTable("digifab_arm_ownership").set({ released_at: new Date(), release_reason: reason }).where("machine_id", "=", machineId).where("released_at", "is", null).returning("station_id").executeTakeFirst();
- if (row && reason === "revoked") await platform().activity.log({ orgId, userId, action: "arm_control_revoked", ref: machineRef(machineId), diff: { station_id: row.station_id } });
+ const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+   const row = await trx.updateTable("digifab_arm_ownership").set({ released_at: new Date(), release_reason: reason }).where("machine_id", "=", machineId).where("released_at", "is", null).returning("station_id").executeTakeFirst();
+   if (row && reason === "revoked") await log({ orgId, userId, action: "arm_control_revoked", ref: machineRef(machineId), diff: { station_id: row.station_id } });
+   return row;
+ });
  return { ok: true, released: !!row };
 }
 export async function releaseOwnControl(db: Kysely<DigifabDB>, _orgId: string, machineId: string, value: unknown) {
@@ -58,8 +61,11 @@ export async function approveRun(db: Kysely<DigifabDB>, orgId: string, machineId
  if (!program || program.missing_since) throw new ArmRefusal("Choose a program this arm's controller holds.");
  if (!program.released_at) throw new ArmRefusal("This revision is not released for production. Review what changed in it and release it first.");
  if (input.tooling !== unit.tooling) throw new ArmRefusal("The tooling you checked is not the tooling recorded on this arm. Record what is installed, then approve.");
- const row = await db.insertInto("digifab_arm_approvals").values({ machine_id: machineId, program_id: program.id, revision: program.revision, tooling: unit.tooling, station_id: permit.stationId!, approved_by: userId, expires_at: minutes(APPROVAL_MINUTES), used_at: null, revoked_at: null }).returningAll().executeTakeFirstOrThrow();
- await platform().activity.log({ orgId, userId, action: "arm_run_approved", ref: machineRef(machineId), diff: { program: program.name, revision: program.revision, tooling: unit.tooling } });
+ const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+   const row = await trx.insertInto("digifab_arm_approvals").values({ machine_id: machineId, program_id: program.id, revision: program.revision, tooling: unit.tooling, station_id: permit.stationId!, approved_by: userId, expires_at: minutes(APPROVAL_MINUTES), used_at: null, revoked_at: null }).returningAll().executeTakeFirstOrThrow();
+   await log({ orgId, userId, action: "arm_run_approved", ref: machineRef(machineId), diff: { program: program.name, revision: program.revision, tooling: unit.tooling } });
+   return row;
+ });
  return row;
 }
 
@@ -98,9 +104,12 @@ export async function startRun(db: Kysely<DigifabDB>, orgId: string, machineId: 
   : { status: "ended" as const, outcome: "not-started" as const, ended_at: new Date(), evidence: JSON.stringify({ start: "refused", detail: sent.detail ?? "" }) };
  // The monitor may have read the arm's own events while Start was in flight
  // and moved the run on; what the arm reported stands over the answer.
- const saved = await db.updateTable("digifab_arm_runs").set(next).where("id", "=", run.id).where("status", "=", "starting").returningAll().executeTakeFirst()
-  ?? await db.selectFrom("digifab_arm_runs").selectAll().where("id", "=", run.id).executeTakeFirstOrThrow();
- await platform().activity.log({ orgId, userId: actor.userId, action: "arm_run_started", ref: machineRef(machineId), diff: { run: run.id, kind: input.kind, program: program.name, revision: program.revision, status: saved.status } });
+ const saved = await platform().activity.transaction(orgId, db, async (trx, log) => {
+   const saved = await trx.updateTable("digifab_arm_runs").set(next).where("id", "=", run.id).where("status", "=", "starting").returningAll().executeTakeFirst()
+    ?? await trx.selectFrom("digifab_arm_runs").selectAll().where("id", "=", run.id).executeTakeFirstOrThrow();
+   await log({ orgId, userId: actor.userId, action: "arm_run_started", ref: machineRef(machineId), diff: { run: run.id, kind: input.kind, program: program.name, revision: program.revision, status: saved.status } });
+   return saved;
+ });
  if (failed) throw failed;
  if (saved.status === "ended" && saved.outcome === "not-started") throw new ArmRefusal(sent.detail || "The arm did not start.");
  return saved;
@@ -114,9 +123,12 @@ export async function endRunByPerson(db: Kysely<DigifabDB>, orgId: string, runId
  const unit = await connected(db, run.machine_id);
  const refused = personOutcomeRefusal(input.outcome, await liveState(db, orgId, unit.connection_id, unit.device_id));
  if (refused) throw new ArmRefusal(refused);
- const saved = await db.updateTable("digifab_arm_runs").set({ status: "ended", outcome: input.outcome, ended_at: new Date(), evidence: JSON.stringify({ ...run.evidence, ended_by: userId, note: input.note }) }).where("id", "=", runId).where("status", "<>", "ended").returningAll().executeTakeFirst();
- if (!saved) throw new ArmRefusal("This run already ended.");
- await platform().activity.log({ orgId, userId, action: "arm_run_ended", ref: machineRef(run.machine_id), diff: { run: runId, outcome: input.outcome, note: input.note } });
+ const saved = await platform().activity.transaction(orgId, db, async (trx, log) => {
+   const saved = await trx.updateTable("digifab_arm_runs").set({ status: "ended", outcome: input.outcome, ended_at: new Date(), evidence: JSON.stringify({ ...run.evidence, ended_by: userId, note: input.note }) }).where("id", "=", runId).where("status", "<>", "ended").returningAll().executeTakeFirst();
+   if (!saved) throw new ArmRefusal("This run already ended.");
+   await log({ orgId, userId, action: "arm_run_ended", ref: machineRef(run.machine_id), diff: { run: runId, outcome: input.outcome, note: input.note } });
+   return saved;
+ });
  return saved;
 }
 

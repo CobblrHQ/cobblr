@@ -475,6 +475,7 @@ async function logStationCount(req: Request, orgId: string, target: ScanTarget, 
   if (delta === 0) return;
   const [module, entityType] = target.baseKind.split(":");
   try {
+    // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
     await platform().activity.log({
       orgId,
       userId: sessionUser(req).id,

@@ -152,6 +152,7 @@ export async function withTenant(
       "o.trial_expires_at",
       "o.shape_version",
       "o.portal_config",
+      "o.dropping_at",
       "m.role",
     ])
     .where("m.user_id", "=", sessionId)
@@ -160,6 +161,13 @@ export async function withTenant(
 
   if (!row) {
     res.status(404).json({ error: { code: "org_not_found", message: "Org not found" } });
+    return;
+  }
+  // A delete has begun, here or in another api, and may have died after the
+  // database went: the deletion reaper finishes it (#9071). Until then it is
+  // being deleted, never a server error on every page.
+  if (row.dropping_at) {
+    res.status(409).json({ error: { code: "workspace_deleting", message: "This workspace is being deleted." } });
     return;
   }
   // A no-account sandbox past its hour is over, whether or not the reaper has

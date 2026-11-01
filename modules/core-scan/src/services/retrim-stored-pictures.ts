@@ -27,6 +27,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { trimCatalogMarginsWithVerdict, type TrimVerdict } from "./trim-margins.js";
 
 /** Rows per workspace per tick. Image decoding is the cost, not the query. */
@@ -41,7 +42,13 @@ export const RETRIM_PASS = "core-scan.retrim-sweep";
  *  per-workspace visit and its cadence; a full page reports a backlog and
  *  the next round comes after DRAIN_MS instead. */
 export function startRetrimSweeper(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(retrimPass());
+  console.log(`[core-scan] retrim sweeper registered — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
+}
+
+/** The pass, narrowed to the workspaces with work (#9048). */
+export function retrimPass(read?: Parameters<typeof narrowSweep>[2]) {
+  return narrowSweep({
     name: RETRIM_PASS,
     everyMs: TICK_MS,
     drainMs: DRAIN_MS,
@@ -50,8 +57,22 @@ export function startRetrimSweeper(): void {
       const done = await retrimWorkspace(orgId);
       return { ...done, backlog: done.visited >= RETRIM_PER_TICK };
     },
-  });
-  console.log(`[core-scan] retrim sweeper registered — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
+  }, hasUntrimmedPicture, read);
+}
+
+/** A pending row whose catalog picture has no trim verdict yet:
+ *  retrimWorkspace's filter. */
+export async function hasUntrimmedPicture({ db }: { db: unknown }): Promise<boolean> {
+  const tdb = db as Kysely<unknown>;
+  const { rows } = await tdb.executeQuery(sql`
+      select 1 from core_scan_inbox_items
+      where status = 'pending'
+        and catalog_image_file_id is not null
+        and (suggested_metadata->'catalog_image_trim') is null
+        and coalesce(suggested_metadata->>'catalog_source', '') not in ('yours', 'upload', 'crop')
+      limit 1
+    `.compile(tdb));
+  return rows.length > 0;
 }
 
 interface UntrimmedRow {

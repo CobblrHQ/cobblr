@@ -15,7 +15,7 @@ import { stockTrackerAllows } from "../stock-tracker.js";
 //  module, bricklink-connector — it drives create-items + update-item.)
 
 import { sql, type Kysely, type Transaction } from "kysely";
-import { ActionRefusal, columnSet, isActionRefusal, platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { ActionRefusal, columnSet, isActionRefusal, platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext, type ActivityLogParams } from "@cobblr/platform-contract";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
 import type { InventoryDB } from "../db.js";
@@ -96,17 +96,13 @@ export function useNoteOf(v: unknown): string | null {
 /** A history line for a one-tap change, so the feed says who took one and
  *  how ("Alex took one of Toilet paper · via label 'Bathroom'", #3897). The
  *  via comes from the request, never from here. */
-async function logTap(orgId: string, userId: string | null | undefined, action: "part_used" | "part_restocked", applied: Record<string, unknown>): Promise<void> {
-  if (applied.ok !== true || applied.skipped || typeof applied.partId !== "string") return;
-  await platform()
-    .activity.log({
-      orgId,
-      userId: userId ?? null,
-      action,
-      ref: { module: "inventory", entityType: "part", entityId: applied.partId },
-      diff: { delta: applied.delta ?? null, qty: applied.newQty ?? applied.qty ?? null },
-    })
-    .catch(() => undefined);
+async function logTap(log: (p: ActivityLogParams) => Promise<void>, orgId: string, userId: string | null | undefined, action: "part_used" | "part_restocked", run: BatchRun): Promise<void> {
+  if (!run.movement?.updated) return;
+  await log({
+    orgId, userId: userId ?? null, action,
+    ref: { module: "inventory", entityType: "part", entityId: run.movement.updated.id },
+    diff: { delta: run.movement.applied ?? null, qty: Number(run.movement.updated.qty) },
+  });
 }
 
 async function announce(orgId: string, userId: string | null | undefined, applied: Record<string, unknown>, obs: StockObservation[]): Promise<void> {
@@ -660,11 +656,16 @@ export async function withBatches(
   reason: string,
   delta: number,
   mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null; qtyBefore: number }) => Batch[],
-  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; operationId?: string } = {},
+  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; operationId?: string; tap?: "part_used" | "part_restocked"; history?: (trx: Transaction<InventoryDB>, log: (p: ActivityLogParams) => Promise<void>) => Promise<void> } = {},
 ): Promise<Record<string, unknown>> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
   const prep = await prepareBatches(orgId, partId, opts);
-  const run = await db.transaction().execute((trx) => withBatchesIn(trx, orgId, partId, reason, delta, mutate, opts, prep));
+  const run = opts.tap || opts.history ? await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const run = await withBatchesIn(trx, orgId, partId, reason, delta, mutate, opts, prep);
+    if (opts.tap) await logTap(log, orgId, opts.userId, opts.tap, run);
+    if (run.extra && opts.history) await opts.history(trx, log);
+    return run;
+  }) : await db.transaction().execute(trx => withBatchesIn(trx, orgId, partId, reason, delta, mutate, opts, prep));
   return finishBatches(db, orgId, run);
 }
 
@@ -1045,10 +1046,9 @@ export function registerInventoryActionHandlers(): void {
         note ? `used one: ${note}` : "used one",
         -1,
         (batches) => consumeOldest(batches, 1).batches,
-        { ...(tz ? { timezone: tz } : {}), userId: ctx.userId },
+        { ...(tz ? { timezone: tz } : {}), userId: ctx.userId, tap: "part_used" },
       );
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
-      await logTap(ctx.orgId, ctx.userId, "part_used", applied);
       return applied;
     }),
   );
@@ -1077,10 +1077,9 @@ export function registerInventoryActionHandlers(): void {
             qty: add,
           });
         },
-        { ...(args.timezone ? { timezone: args.timezone } : {}), userId: ctx.userId },
+        { ...(args.timezone ? { timezone: args.timezone } : {}), userId: ctx.userId, tap: "part_restocked" },
       );
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "purchase", add)]);
-      await logTap(ctx.orgId, ctx.userId, "part_restocked", applied);
       return applied;
     }),
   );
@@ -1579,19 +1578,24 @@ export function registerInventoryActionHandlers(): void {
       : photo?.fileId && slug ? `/api/v1/orgs/${slug}/modules/core-files/files/${photo.fileId}/raw?variant=medium` : null;
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-    const created = await db
-      .insertInto("inventory_parts")
-      .values({
-        name,
-        qty,
-        unit,
-        instance,
-        manufacturer,
-        image_path: imagePath,
-        metadata: sql`${JSON.stringify(fields)}::jsonb` as never,
-      })
-      .returning(["id", "name"])
-      .executeTakeFirst();
+    const created = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+      const created = await trx
+        .insertInto("inventory_parts")
+        .values({
+          name,
+          qty,
+          unit,
+          instance,
+          manufacturer,
+          image_path: imagePath,
+          metadata: sql`${JSON.stringify(fields)}::jsonb` as never,
+        })
+        .returning(["id", "name"])
+        .executeTakeFirst();
+
+      if (created) await logPartCreated(ctx.orgId, created.id, { name: created.name, qty, instance: instance ?? "inventory" }, ctx.userId, log);
+      return created;
+    });
     if (!created) return { ok: false, error: "create_failed" };
 
     // Create-then-place (placement-cutover-plan step 1); place() mirrors the
@@ -1613,7 +1617,6 @@ export function registerInventoryActionHandlers(): void {
     }
 
     if (photo?.fileId) await platform().files.attach(ctx.orgId, { fileId: photo.fileId, source_module: "inventory", source_type: "part", source_id: created.id, role: "gallery" });
-    await logPartCreated(ctx.orgId, created.id, { name: created.name, qty, instance: instance ?? "inventory" }, ctx.userId);
     await platform().events.emit("inventory.part.created", { orgId: ctx.orgId, partId: created.id });
     return {
       ok: true,
@@ -1655,8 +1658,11 @@ export function registerInventoryActionHandlers(): void {
       image_path: typeof o.image_path === "string" && o.image_path ? o.image_path : null,
       metadata: sql`${JSON.stringify(o.fields && typeof o.fields === "object" ? o.fields : {})}::jsonb` as never,
     }));
-    const inserted = await db.insertInto("inventory_parts").values(rows).returning(["id"]).execute();
-    for (const [i, r] of inserted.entries()) await logPartCreated(ctx.orgId, r.id, { name: rows[i]!.name, qty: rows[i]!.qty, instance: rows[i]!.instance ?? "inventory" }, ctx.userId);
+    const inserted = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+      const inserted = await trx.insertInto("inventory_parts").values(rows).returning(["id"]).execute();
+      for (const [i, r] of inserted.entries()) await logPartCreated(ctx.orgId, r.id, { name: rows[i]!.name, qty: rows[i]!.qty, instance: rows[i]!.instance ?? "inventory" }, ctx.userId, log);
+      return inserted;
+    });
     return { ok: true, ids: inserted.map((r) => r.id) };
   });
 

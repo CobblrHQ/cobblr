@@ -231,6 +231,7 @@ export async function applyRecount(ctx: ActionInvokeContext, id: string, input: 
   }
   await t.updateTable("inventory_recounts").set({ applied: JSON.stringify(applied) as never, updated_at: new Date() }).where("id", "=", id).execute();
   const line = planLine(plan);
+  // capability-except activity:a-change-and-its-history-line-commit-together: reconciliation calls disposition, placement and create actions on their own connections, then records its summary; those service writes cannot share this transaction (#9035)
   await platform().activity.log({
     orgId,
     userId,

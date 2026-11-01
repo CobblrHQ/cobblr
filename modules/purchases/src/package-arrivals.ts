@@ -79,6 +79,7 @@ export async function countPackageAgainstOrder(db: Kysely<PurchasesDB>, p: Packa
   const on = arrivedEverywhere(now);
   const lineReceived = counted.covered ? await receiveOrderLine(db, p.orgId, counted.line_id, on, p.typeId) : false;
   if (lineReceived) {
+    // capability-except activity:a-change-and-its-history-line-commit-together: receiveOrderLine owns the receipt transaction and flushReceipts tells inventory about stock before reporting whether the line was received (#9035)
     await platform().activity.log({
       orgId: p.orgId, userId: p.receivedBy, action: "order_item_received",
       ref: { module: "purchases", entityType: "order", entityId: counted.order_id },

@@ -318,28 +318,31 @@ catalogsRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const created = await db
-      .insertInto("core_catalogs_catalogs")
-      .values({
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        source_url: parsed.data.source_url ?? null,
-        puller_id: parsed.data.puller_id ?? null,
-        schema: sql`${JSON.stringify(parsed.data.schema ?? {})}::jsonb` as never,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const created = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const created = await trx
+        .insertInto("core_catalogs_catalogs")
+        .values({
+          name: parsed.data.name,
+          description: parsed.data.description ?? null,
+          source_url: parsed.data.source_url ?? null,
+          puller_id: parsed.data.puller_id ?? null,
+          schema: sql`${JSON.stringify(parsed.data.schema ?? {})}::jsonb` as never,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "catalog_created",
+        ref: { module: "core-catalogs", entityType: "catalog", entityId: created.id },
+        diff: { name: created.name },
+      });
+      return created;
+    });
     void platform().events.emit("core-catalogs.catalog.created", {
       orgId: ctx.org.id,
       catalogId: created.id,
       name: created.name,
-    });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "catalog_created",
-      ref: { module: "core-catalogs", entityType: "catalog", entityId: created.id },
-      diff: { name: created.name },
     });
     res.status(201).json(created);
   }),
@@ -374,12 +377,23 @@ catalogsRouter.patch(
       patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata);
     // The row as it was: the catalog's history says what this edit changed (#4517).
     const before = await db.selectFrom("core_catalogs_catalogs").selectAll().where("id", "=", id).executeTakeFirst();
-    const updated = await db
-      .updateTable("core_catalogs_catalogs")
-      .set(patch as never)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
+    const updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const updated = await trx
+        .updateTable("core_catalogs_catalogs")
+        .set(patch as never)
+        .where("id", "=", id)
+        .returningAll()
+        .executeTakeFirst();
+      if (updated) await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "catalog_updated",
+        ref: { module: "core-catalogs", entityType: "catalog", entityId: id },
+        diff: parsed.data as Record<string, unknown>,
+        before,
+      });
+      return updated;
+    });
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "catalog not found" } });
       return;
@@ -387,14 +401,6 @@ catalogsRouter.patch(
     void platform().events.emit("core-catalogs.catalog.updated", {
       orgId: ctx.org.id,
       catalogId: id,
-    });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "catalog_updated",
-      ref: { module: "core-catalogs", entityType: "catalog", entityId: id },
-      diff: parsed.data as Record<string, unknown>,
-      before,
     });
     res.json(updated);
   }),

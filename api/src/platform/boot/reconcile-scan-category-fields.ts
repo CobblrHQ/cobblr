@@ -8,6 +8,6 @@ import { reconcileScanCategoryFields } from "../reconcile-scan-category.js";
 export default bootPass({
   name: "reconcileScanCategoryFields",
   phase: "workspaces",
-  after: ["voidReadOnlyShareSuggestions"],
+  after: ["reconcileShareSpaces"],
   run: () => reconcileScanCategoryFields(),
 });

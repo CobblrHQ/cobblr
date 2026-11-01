@@ -86,19 +86,23 @@ customersRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
-    const row = await db
-      .insertInto("sales_customers")
-      .values({ ...parsed.data, instance: instanceOf(req), metadata: parsed.data.metadata ?? {} } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await platform().events.emit("sales.customer.created", { orgId: ctx.org.id, customerId: row.id, userId: session?.id ?? null });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "customer_created",
-      ref: { module: "sales", entityType: "customer", entityId: row.id },
-      diff: { name: row.name, instance: instanceOf(req) },
+    const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .insertInto("sales_customers")
+        .values({ ...parsed.data, instance: instanceOf(req), metadata: parsed.data.metadata ?? {} } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "customer_created",
+        ref: { module: "sales", entityType: "customer", entityId: row.id },
+        diff: { name: row.name, instance: instanceOf(req) },
+      });
+      return row;
     });
+    await platform().events.emit("sales.customer.created", { orgId: ctx.org.id, customerId: row.id, userId: session?.id ?? null });
+
     res.status(201).json(row);
   }),
 );
@@ -113,37 +117,41 @@ customersRouter.patch(
     const db = tenantDb(req);
     // The row as it was: the log says what this edit changed (#4517).
     const before = await db.selectFrom("sales_customers").selectAll().where("id", "=", req.params.id!).where("instance", "=", instanceOf(req)).executeTakeFirst();
-    const row = await db
-      .updateTable("sales_customers")
-      // Custom fields MERGE into the live row (withMetadataMerged, #3625).
-      .set(withMetadataMerged({ ...parsed.data, updated_at: new Date() } as Record<string, unknown>) as never)
-      .where("id", "=", req.params.id!)
-      .where("instance", "=", instanceOf(req))
-      .returningAll()
-      .executeTakeFirst();
+    const row = await platform().activity.transaction(tenantContext(req).org.id, db, async (trx, log) => {
+      const row = await trx
+        .updateTable("sales_customers")
+        // Custom fields MERGE into the live row (withMetadataMerged, #3625).
+        .set(withMetadataMerged({ ...parsed.data, updated_at: new Date() } as Record<string, unknown>) as never)
+        .where("id", "=", req.params.id!)
+        .where("instance", "=", instanceOf(req))
+        .returningAll()
+        .executeTakeFirst();
+      if (!row) return row;
+      // Renaming a customer re-syncs the legacy customer_name on its orders.
+      if (parsed.data.name) {
+        await trx
+          .updateTable("sales_orders")
+          .set({ customer_name: parsed.data.name })
+          .where("customer_id", "=", req.params.id!)
+          .where("instance", "=", instanceOf(req))
+          .execute();
+      }
+      // The request as sent, on the record's history: the one place a value
+      // a later write replaced can still be read back (#3625).
+      await log({
+        orgId: tenantContext(req).org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "customer_updated",
+        ref: { module: "sales", entityType: "customer", entityId: String(req.params.id) },
+        diff: parsed.data as Record<string, unknown>,
+        before,
+      });
+      return row;
+    });
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "customer not found" } });
       return;
     }
-    // Renaming a customer re-syncs the legacy customer_name on its orders.
-    if (parsed.data.name) {
-      await db
-        .updateTable("sales_orders")
-        .set({ customer_name: parsed.data.name })
-        .where("customer_id", "=", req.params.id!)
-        .where("instance", "=", instanceOf(req))
-        .execute();
-    }
-    // The request as sent, on the record's history: the one place a value
-    // a later write replaced can still be read back (#3625).
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "customer_updated",
-      ref: { module: "sales", entityType: "customer", entityId: String(req.params.id) },
-      diff: parsed.data as Record<string, unknown>,
-      before,
-    });
     res.json(row);
   }),
 );
@@ -154,23 +162,27 @@ customersRouter.delete(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const db = tenantDb(req);
-    const deleted = await db
-      .deleteFrom("sales_customers")
-      .where("id", "=", req.params.id!)
-      .where("instance", "=", instanceOf(req))
-      .returning(["id", "name"])
-      .executeTakeFirst();
+    const deleted = await platform().activity.transaction(tenantContext(req).org.id, db, async (trx, log) => {
+      const deleted = await trx
+        .deleteFrom("sales_customers")
+        .where("id", "=", req.params.id!)
+        .where("instance", "=", instanceOf(req))
+        .returning(["id", "name"])
+        .executeTakeFirst();
+      if (!deleted) return deleted;
+      await log({
+        orgId: tenantContext(req).org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "customer_deleted",
+        ref: { module: "sales", entityType: "customer", entityId: deleted.id },
+        diff: { name: deleted.name },
+      });
+      return deleted;
+    });
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "customer not found" } });
       return;
     }
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "customer_deleted",
-      ref: { module: "sales", entityType: "customer", entityId: deleted.id },
-      diff: { name: deleted.name },
-    });
     res.status(204).end();
   }),
 );

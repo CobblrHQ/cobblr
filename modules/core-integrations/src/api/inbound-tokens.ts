@@ -45,34 +45,41 @@ inboundTokensRouter.post(
       return;
     }
     const token = newSlug();
-    const db = tenantDb(req);
-    const row = await db
-      .insertInto("core_integrations_inbound_tokens")
-      .values({
-        connector_id: parsed.data.connector_id,
-        token,
-        label: parsed.data.label,
-        config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
-      })
-      .returning(["id", "connector_id", "token", "label", "config", "enabled", "created_at"])
-      .executeTakeFirstOrThrow();
-    // Mirror into cobblr_meta lookup so the unauthenticated receiver
-    // can resolve without scanning every tenant DB.
+    // The workspace's row and the server's lookup are two databases. The row
+    // commits only after the lookup did: a lookup refused rolls the row back,
+    // where it used to stand listed with a URL that answered 404 to every
+    // delivery, which were lost without a word (#9071). A lookup left by a
+    // crash before the row's commit names no row and resolves to nothing.
     const meta = platform().db.meta as unknown as {
       insertInto: (t: string) => {
         values: (v: Record<string, unknown>) => { execute: () => Promise<unknown> };
       };
     };
-    await meta
-      .insertInto("integration_inbound_token_lookup")
-      .values({
-        token,
-        org_id: ctx.org.id,
-        inbound_id: row.id,
-        connector_id: parsed.data.connector_id,
-        enabled: true,
-      })
-      .execute();
+    const row = await tenantDb(req).transaction().execute(async (trx) => {
+      const made = await trx
+        .insertInto("core_integrations_inbound_tokens")
+        .values({
+          connector_id: parsed.data.connector_id,
+          token,
+          label: parsed.data.label,
+          config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
+        })
+        .returning(["id", "connector_id", "token", "label", "config", "enabled", "created_at"])
+        .executeTakeFirstOrThrow();
+      // Mirror into cobblr_meta lookup so the unauthenticated receiver
+      // can resolve without scanning every tenant DB.
+      await meta
+        .insertInto("integration_inbound_token_lookup")
+        .values({
+          token,
+          org_id: ctx.org.id,
+          inbound_id: made.id,
+          connector_id: parsed.data.connector_id,
+          enabled: true,
+        })
+        .execute();
+      return made;
+    });
     void platform().events.emit("core-integrations.inbound.token.created", {
       orgId: ctx.org.id,
       tokenId: row.id,

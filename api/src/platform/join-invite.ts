@@ -45,8 +45,8 @@ const PERIOD_WORD: Record<string, string> = { day: "a day", week: "a week", mont
  *  cap and its pace. "full" when the cap was reached between the read and
  *  now; "paused" when this join would go past the pace, which also pauses the
  *  link and tells the workspace's admins, once. */
-export async function claimJoinUse(inviteId: string): Promise<{ ok: true } | { ok: false; why: "full" | "paused" }> {
-  const row = await meta
+export async function claimJoinUse(inviteId: string, db: Pick<typeof meta, "updateTable"> = meta): Promise<{ ok: true } | { ok: false; why: "full" | "paused" }> {
+  const row = await db
     .updateTable("workspace_invites")
     .set((eb) => ({ use_count: eb("use_count", "+", 1) }))
     .where("id", "=", inviteId)

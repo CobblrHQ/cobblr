@@ -146,27 +146,33 @@ export interface StartMake {
  *  step it is (an STL is the Model, G-code is the Slice). */
 export async function startMake(ctx: MakeCtx, b: StartMake) {
   const startAt = b.start_at ?? "request";
-  const made = await ctx.db
-    .insertInto("digifab_makes")
-    .values({
-      name: b.name,
-      prompt: b.prompt ?? null,
-      start_step: startAt,
-      created_by: ctx.userId,
-      source_kind: b.source?.kind ?? null,
-      source_id: b.source?.id ?? null,
-    })
-    .returningAll()
-    .executeTakeFirstOrThrow();
-  if (startAt === "request") {
-    await recordStep(ctx, made, "request", {
-      data: { prompt: b.prompt, origin: b.origin ?? "page", requested_by: ctx.userId, requested_at: new Date().toISOString() },
-      produced_by: { kind: "person" },
-      files: b.files,
-    });
-  } else {
-    await recordStep(ctx, made, startAt, { data: { source: "uploaded" }, produced_by: { kind: "upload" }, files: b.files });
-  }
+  const effects: Array<() => Promise<void>> = [];
+  const made = await platform().activity.transaction(ctx.orgId, ctx.db, async (trx, log) => {
+    const made = await trx
+      .insertInto("digifab_makes")
+      .values({
+        name: b.name,
+        prompt: b.prompt ?? null,
+        start_step: startAt,
+        created_by: ctx.userId,
+        source_kind: b.source?.kind ?? null,
+        source_id: b.source?.id ?? null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    if (startAt === "request") {
+      await recordMakeStep(trx, ctx.orgId, ctx.userId, made, "request", {
+        data: { prompt: b.prompt, origin: b.origin ?? "page", requested_by: ctx.userId, requested_at: new Date().toISOString() },
+        produced_by: { kind: "person" },
+        files: b.files,
+      }, { db: ctx.db, effects });
+    } else {
+      await recordMakeStep(trx, ctx.orgId, ctx.userId, made, startAt, { data: { source: "uploaded" }, produced_by: { kind: "upload" }, files: b.files }, { db: ctx.db, effects });
+    }
+    await log({ orgId: ctx.orgId, userId: ctx.userId, action: "make_created", ref: { module: "digifab", entityType: "make", entityId: made.id }, diff: { name: made.name } });
+    return made;
+  });
+  for (const effect of effects) await effect();
   if (b.source) {
     await platform().pairings.create({
       orgId: ctx.orgId,
@@ -178,7 +184,6 @@ export async function startMake(ctx: MakeCtx, b: StartMake) {
       createdBy: ctx.userId,
     });
   }
-  await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: "make_created", ref: { module: "digifab", entityType: "make", entityId: made.id }, diff: { name: made.name } });
   await platform().events.emit("digifab.make.created", { orgId: ctx.orgId, makeId: made.id, ...(b.source ? { source: b.source } : {}) });
   return made;
 }
@@ -235,36 +240,42 @@ makesRouter.post(
         res.status(400).json({ error: { code: "not_reached", message: `That Make never reached ${from}. Make it again from a step it reached.` } });
         return;
       }
-      const made = await db
-        .insertInto("digifab_makes")
-        .values({
-          name: b.name,
-          prompt: original.prompt,
-          start_step: originalStart,
-          rerun_of: original.id,
-          rerun_from_step: from,
-          created_by: userId,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      // The steps before `from` are copied, not done again, each pointing at
-      // the one it came from; their files are the same files, attached again.
       const orgId = tenantContext(req).org.id;
-      for (const s of originalSteps) {
-        if (MAKE_STEPS.indexOf(s.step) >= MAKE_STEPS.indexOf(from)) continue;
-        const files = (await filesOf(orgId, [s.id]))[s.id] ?? [];
-        await recordStep(ctxOf(req), made, s.step, {
-          status: s.status,
-          data: s.data,
-          produced_by: s.produced_by,
-          service_job_id: s.service_job_id,
-          job_id: s.job_id,
-          error: s.error,
-          copied_from: s.id,
-          files: files.map((f) => ({ file_id: f.file_id, role: (FILE_ROLES as readonly string[]).includes(f.role ?? "") ? (f.role as (typeof FILE_ROLES)[number]) : "other" })),
-        });
-      }
-      await platform().activity.log({ orgId, userId, action: "make_created", ref: { module: "digifab", entityType: "make", entityId: made.id }, diff: { name: made.name, rerun_of: original.id } });
+      const stepFiles = await filesOf(orgId, originalSteps.map(s => s.id));
+      const effects: Array<() => Promise<void>> = [];
+      const made = await platform().activity.transaction(orgId, db, async (trx, log) => {
+        const made = await trx
+          .insertInto("digifab_makes")
+          .values({
+            name: b.name,
+            prompt: original.prompt,
+            start_step: originalStart,
+            rerun_of: original.id,
+            rerun_from_step: from,
+            created_by: userId,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        // The steps before `from` are copied, not done again, each pointing at
+        // the one it came from; their files are the same files, attached again.
+        for (const s of originalSteps) {
+          if (MAKE_STEPS.indexOf(s.step) >= MAKE_STEPS.indexOf(from)) continue;
+          const files = stepFiles[s.id] ?? [];
+          await recordMakeStep(trx, orgId, userId, made, s.step, {
+            status: s.status,
+            data: s.data,
+            produced_by: s.produced_by,
+            service_job_id: s.service_job_id,
+            job_id: s.job_id,
+            error: s.error,
+            copied_from: s.id,
+            files: files.map((f) => ({ file_id: f.file_id, role: (FILE_ROLES as readonly string[]).includes(f.role ?? "") ? (f.role as (typeof FILE_ROLES)[number]) : "other" })),
+          }, { db, effects });
+        }
+        await log({ orgId, userId, action: "make_created", ref: { module: "digifab", entityType: "make", entityId: made.id }, diff: { name: made.name, rerun_of: original.id } });
+        return made;
+      });
+      for (const effect of effects) await effect();
       await platform().events.emit("digifab.make.created", { orgId, makeId: made.id, rerunOf: original.id, fromStep: from });
       res.status(201).json(made);
       return;
@@ -520,8 +531,10 @@ makesRouter.delete(
       const links = await platform().pairings.findBySources({ orgId, sourceKind: MAKE_KIND, sourceIds: [make.id], targetKind, relationshipKind: rel });
       for (const l of links) await platform().pairings.remove({ orgId, sourceKind: MAKE_KIND, sourceId: make.id, targetKind, targetId: l.targetId, relationshipKind: rel });
     }
-    await db.deleteFrom("digifab_makes").where("id", "=", make.id).execute();
-    await platform().activity.log({ orgId, userId: sessionUser(req)?.id ?? null, action: "make_deleted", ref: { module: "digifab", entityType: "make", entityId: make.id }, diff: { name: make.name } });
+    await platform().activity.transaction(orgId, db, async (trx, log) => {
+      await trx.deleteFrom("digifab_makes").where("id", "=", make.id).execute();
+      await log({ orgId, userId: sessionUser(req)?.id ?? null, action: "make_deleted", ref: { module: "digifab", entityType: "make", entityId: make.id }, diff: { name: make.name } });
+    });
     res.status(204).end();
   }),
 );

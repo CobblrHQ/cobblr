@@ -37,8 +37,11 @@ export async function prepareProductionStation(db: Kysely<DigifabDB>, orgId: str
  await bridge(orgId, input.bridge_connection_id);
  const pending = await db.selectFrom("digifab_test_runs").selectAll().where("unit_kind", "=", input.unit.kind).where("unit_id", "=", input.unit.id).where("finished_at", "is", null).executeTakeFirst();
  if (pending && (pending.plan_id !== input.plan_id || pending.plan_version !== input.plan_version || pending.jig_id !== input.jig_id || pending.bridge_connection_id !== input.bridge_connection_id || pending.station !== input.station)) throw new Error("Finish or abort this unit's pending attempt before choosing a different plan or station.");
- const attempt = pending ? { ...pending, unit: input.unit } : await prepareProductionAttempt(db, { ...input, operator_id: operator, unit_snapshot: { serial: registered.serial, product: { kind: registered.product_kind, id: registered.product_id }, ...registered.details } });
- if (!pending) await platform().activity.log({ orgId, userId: operator, action: "test-run_created", ref: { module: "digifab", entityType: "test-run", entityId: attempt.id }, diff: { plan_version: attempt.plan_version, attempt: attempt.attempt } });
+ const attempt = await platform().activity.transaction(orgId, db, async (trx, log) => {
+   const attempt = pending ? { ...pending, unit: input.unit } : await prepareProductionAttempt(trx, { ...input, operator_id: operator, unit_snapshot: { serial: registered.serial, product: { kind: registered.product_kind, id: registered.product_id }, ...registered.details } });
+   if (!pending) await log({ orgId, userId: operator, action: "test-run_created", ref: { module: "digifab", entityType: "test-run", entityId: attempt.id }, diff: { plan_version: attempt.plan_version, attempt: attempt.attempt } });
+  return attempt;
+ });
  await stageProductionAttempt(db, orgId, attempt.id);
  return attempt;
 }
@@ -68,28 +71,33 @@ export async function stageProductionAttempt(db: Kysely<DigifabDB>, orgId: strin
  return attempt;
 }
 export async function syncProductionAttempt(db: Kysely<DigifabDB>, orgId: string, id: string) {
- const saved = await db.transaction().execute(async trx => {
+ const saved = await platform().activity.transaction(orgId, db, async (trx, log) => {
   await sql`select pg_advisory_xact_lock(hashtext(${`production-sync:${id}`}))`.execute(trx);
   const row = await trx.selectFrom("digifab_test_runs").selectAll().where("id", "=", uuid.parse(id)).executeTakeFirstOrThrow();
-  if (row.result) return row;
-  if (!row.bridge_connection_id) throw new Error("Keep this attempt's original bridge connection.");
-  const call = await bridge(orgId, row.bridge_connection_id);
-  const reply = await call("result", { id }) as { result?: ProductionTestResult; files?: Record<string, { data_b64: string; filename: string; mime_type: string; sha256: string }> };
-  if (!reply.result) throw new Error("Finish or abort this attempt on its bridge before syncing.");
-  const result = JSON.parse(JSON.stringify(reply.result)) as ProductionTestResult;
-  verifyProductionResult(row.plan, result, { serial: typeof row.unit_snapshot?.serial === "string" ? row.unit_snapshot.serial : null });
-  for (const step of result.steps) for (const attachment of step.attachments ?? []) {
-   const file = reply.files?.[attachment.id]; if (!file) throw new Error("Keep every capture, photo and report on the bridge until it syncs.");
-   const bytes = Buffer.from(file.data_b64, "base64");
-   if (bytes.length > 2 * 1024 * 1024 || createHash("sha256").update(bytes).digest("hex") !== attachment.sha256 || file.sha256 !== attachment.sha256) throw new Error("The bridge attachment is incomplete or its hash changed.");
-   const stored = await platform().files.write(orgId, bytes, { filename: attachment.filename, mimeType: attachment.mime_type }); if (!stored) throw new Error("Enable Files to retain production evidence.");
-   attachment.id = stored.fileId;
-   await platform().files.attach(orgId, { fileId: stored.fileId, source_module: "digifab", source_type: "test-run", source_id: id, role: attachment.role });
+  let saved = row;
+  if (!row.result) {
+   if (!row.bridge_connection_id) throw new Error("Keep this attempt's original bridge connection.");
+   const call = await bridge(orgId, row.bridge_connection_id);
+   const reply = await call("result", { id }) as { result?: ProductionTestResult; files?: Record<string, { data_b64: string; filename: string; mime_type: string; sha256: string }> };
+   if (!reply.result) throw new Error("Finish or abort this attempt on its bridge before syncing.");
+   const result = JSON.parse(JSON.stringify(reply.result)) as ProductionTestResult;
+   verifyProductionResult(row.plan, result, { serial: typeof row.unit_snapshot?.serial === "string" ? row.unit_snapshot.serial : null });
+   for (const step of result.steps) for (const attachment of step.attachments ?? []) {
+    const file = reply.files?.[attachment.id]; if (!file) throw new Error("Keep every capture, photo and report on the bridge until it syncs.");
+    const bytes = Buffer.from(file.data_b64, "base64");
+    if (bytes.length > 2 * 1024 * 1024 || createHash("sha256").update(bytes).digest("hex") !== attachment.sha256 || file.sha256 !== attachment.sha256) throw new Error("The bridge attachment is incomplete or its hash changed.");
+    const stored = await platform().files.write(orgId, bytes, { filename: attachment.filename, mimeType: attachment.mime_type }); if (!stored) throw new Error("Enable Files to retain production evidence.");
+    attachment.id = stored.fileId;
+   }
+   saved = await finishProductionAttempt(trx, id, result);
   }
-  return finishProductionAttempt(trx, id, result);
+  await log({ orgId, userId: saved.operator_id, action: "production-test_finished", ref: { module: "digifab", entityType: "test-run", entityId: id }, diff: { status: saved.result!.status, attempt: saved.attempt } });
+  return saved;
  });
+ for (const step of saved.result!.steps) for (const attachment of step.attachments ?? []) {
+  await platform().files.attach(orgId, { fileId: attachment.id, role: attachment.role, source_module: "digifab", source_type: "test-run", source_id: id });
+ }
  await projectProductionUnit(db, orgId, { kind: saved.unit_kind, id: saved.unit_id });
- await platform().activity.log({ orgId, userId: saved.operator_id, action: "production-test_finished", ref: { module: "digifab", entityType: "test-run", entityId: id }, diff: { status: saved.result!.status, attempt: saved.attempt } });
  await (await bridge(orgId, saved.bridge_connection_id!))("ack", { id });
  await db.updateTable("digifab_test_delivery").set({ acknowledged: true, projected: true, last_error: null, updated_at: new Date() }).where("run_id", "=", id).execute();
  return saved;

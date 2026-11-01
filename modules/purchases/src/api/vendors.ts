@@ -108,17 +108,20 @@ vendorsRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
-    const inserted = await db
-      .insertInto("purchases_vendors")
-      .values({ ...parsed.data, instance: instanceOf(req), metadata: parsed.data.metadata ?? {} } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "vendor_created",
-      ref: { module: "purchases", entityType: "vendor", entityId: inserted.id },
-      diff: { name: inserted.name },
+    const inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const inserted = await trx
+        .insertInto("purchases_vendors")
+        .values({ ...parsed.data, instance: instanceOf(req), metadata: parsed.data.metadata ?? {} } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "vendor_created",
+        ref: { module: "purchases", entityType: "vendor", entityId: inserted.id },
+        diff: { name: inserted.name },
+      });
+      return inserted;
     });
     platform().events.emit("purchases.vendor.created", { orgId: ctx.org.id, vendorId: inserted.id });
     res.status(201).json(inserted);
@@ -139,36 +142,40 @@ vendorsRouter.patch(
     const session = sessionUser(req);
     // The row as it was: the log says what this edit changed (#4517).
     const before = await db.selectFrom("purchases_vendors").selectAll().where("id", "=", id).where("instance", "=", instanceOf(req)).executeTakeFirst();
-    const updated = await db
-      .updateTable("purchases_vendors")
-      // Custom fields MERGE into the live row (withMetadataMerged, #3625).
-      .set(withMetadataMerged({ ...parsed.data, updated_at: new Date() } as Record<string, unknown>) as never)
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returningAll()
-      .executeTakeFirst();
+    const updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const updated = await trx
+        .updateTable("purchases_vendors")
+        // Custom fields MERGE into the live row (withMetadataMerged, #3625).
+        .set(withMetadataMerged({ ...parsed.data, updated_at: new Date() } as Record<string, unknown>) as never)
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returningAll()
+        .executeTakeFirst();
+      if (!updated) return updated;
+      // Renaming a vendor re-syncs the legacy `vendor` text on its linked orders
+      // so cross-module readers + the orders list stay consistent.
+      if (parsed.data.name) {
+        await trx
+          .updateTable("purchases_orders")
+          .set({ vendor: parsed.data.name })
+          .where("vendor_id", "=", id)
+          .where("instance", "=", instanceOf(req))
+          .execute();
+      }
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "vendor_updated",
+        ref: { module: "purchases", entityType: "vendor", entityId: id },
+        diff: parsed.data,
+        before,
+      });
+      return updated;
+    });
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "vendor not found" } });
       return;
     }
-    // Renaming a vendor re-syncs the legacy `vendor` text on its linked orders
-    // so cross-module readers + the orders list stay consistent.
-    if (parsed.data.name) {
-      await db
-        .updateTable("purchases_orders")
-        .set({ vendor: parsed.data.name })
-        .where("vendor_id", "=", id)
-        .where("instance", "=", instanceOf(req))
-        .execute();
-    }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "vendor_updated",
-      ref: { module: "purchases", entityType: "vendor", entityId: id },
-      diff: parsed.data,
-      before,
-    });
     res.json(updated);
   }),
 );
@@ -186,23 +193,27 @@ vendorsRouter.delete(
     const session = sessionUser(req);
     // orders.vendor_id → null via the FK (on delete set null); the legacy
     // `vendor` text on those orders is left intact so they still read sensibly.
-    const deleted = await db
-      .deleteFrom("purchases_vendors")
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returning("id")
-      .executeTakeFirst();
+    const deleted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const deleted = await trx
+        .deleteFrom("purchases_vendors")
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returning("id")
+        .executeTakeFirst();
+      if (!deleted) return deleted;
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "vendor_deleted",
+        ref: { module: "purchases", entityType: "vendor", entityId: id },
+        diff: {},
+      });
+      return deleted;
+    });
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "vendor not found" } });
       return;
     }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "vendor_deleted",
-      ref: { module: "purchases", entityType: "vendor", entityId: id },
-      diff: {},
-    });
     res.status(204).end();
   }),
 );

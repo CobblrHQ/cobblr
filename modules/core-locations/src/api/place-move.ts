@@ -30,7 +30,7 @@ export async function lockTree(trx: Db): Promise<void> {
  *  inside it, refusing a move that would make a loop. */
 export async function movePlace(db: Db, id: string, parentId: string | null): Promise<void> {
   if (parentId === id) throw new PlaceMoveRefused("cycle", "A place cannot go inside itself.");
-  await db.transaction().execute(async (trx) => {
+  const move = async (trx: Db) => {
     await lockTree(trx);
     let depth = 0;
     if (parentId) {
@@ -54,7 +54,9 @@ export async function movePlace(db: Db, id: string, parentId: string | null): Pr
       .where("id", "=", id)
       .execute();
     await rebuildDescendantDepths(trx, id);
-  });
+  };
+  if (db.isTransaction) await move(db);
+  else await db.transaction().execute(move);
 }
 
 /** Rewrite the depth of everything inside `rootId` after it moved. Iterative,

@@ -7,6 +7,7 @@
 // installation they depend on, with a retention, and is proven by restoring
 // it onto a spare arm and reading that arm's programs back.
 import "./db.js";
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { createHash } from "node:crypto";
 import { sql, type Kysely, type Selectable } from "kysely";
 import { z } from "zod";
@@ -92,9 +93,12 @@ export async function releaseProgram(db: Kysely<DigifabDB>, orgId: string, userI
   if (p.released_at) return { ok: true, released: p };
   if (await openCopy(db, p.machine_id, p.name)) throw new ArmRefusal("This program was copied onto this arm. Finish its re-teach checklist; that releases it.");
   if (p.source === "controller" && !p.text_read_at) await readNewTexts(db, orgId, p.machine_id).catch(() => 0);
-  const released = await db.updateTable("digifab_arm_programs").set({ released_at: new Date(), released_by: userId }).where("id", "=", programId).where("released_at", "is", null).returningAll().executeTakeFirstOrThrow();
-  const changes = await programChanges(db, programId);
-  await platform().activity.log({ orgId, userId, action: "arm_program_released", ref: machineRef(p.machine_id), diff: { name: p.name, revision: p.revision, before: changes.released_before?.revision ?? null, text: changes.text, files_changed: changes.files.filter((f) => f.status !== "same").map((f) => f.path) } });
+  const released = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const released = await trx.updateTable("digifab_arm_programs").set({ released_at: new Date(), released_by: userId }).where("id", "=", programId).where("released_at", "is", null).returningAll().executeTakeFirstOrThrow();
+    const changes = await programChanges(trx, programId);
+    await log({ orgId, userId, action: "arm_program_released", ref: machineRef(p.machine_id), diff: { name: p.name, revision: p.revision, before: changes.released_before?.revision ?? null, text: changes.text, files_changed: changes.files.filter((f) => f.status !== "same").map((f) => f.path) } });
+    return released;
+  });
   return { ok: true, released };
 }
 
@@ -118,9 +122,12 @@ export async function copyProgram(db: Kysely<DigifabDB>, orgId: string, userId: 
     else detail = sent?.detail ?? "This arm's bridge cannot put a program on its controller.";
   } else detail = "The program's text could not be read, so it is copied at the pendant.";
   const checklist: ChecklistItem[] = [...(uploaded ? [] : ["The program has been copied onto this arm at its pendant"]), ...REATEACH_CHECKLIST].map((item) => ({ item, done_by: null, done_at: null }));
-  const copy = await db.insertInto("digifab_arm_copies").values({ source_program_id: p.id, target_machine_id: input.target_machine_id, name: p.name, uploaded, target_revision: targetRevision, checklist: JSON.stringify(checklist), created_by: userId, completed_by: null, completed_at: null }).returningAll().executeTakeFirstOrThrow();
+  const copy = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const copy = await trx.insertInto("digifab_arm_copies").values({ source_program_id: p.id, target_machine_id: input.target_machine_id, name: p.name, uploaded, target_revision: targetRevision, checklist: JSON.stringify(checklist), created_by: userId, completed_by: null, completed_at: null }).returningAll().executeTakeFirstOrThrow();
+    await log({ orgId, userId, action: "arm_program_copied", ref: machineRef(input.target_machine_id), diff: { name: p.name, from_machine: p.machine_id, revision: p.revision, uploaded, target_revision: targetRevision, ...(detail ? { detail } : {}) } });
+    return copy;
+  });
   if (uploaded) await refreshArm(db, orgId, userId, input.target_machine_id).catch(() => null);
-  await platform().activity.log({ orgId, userId, action: "arm_program_copied", ref: machineRef(input.target_machine_id), diff: { name: p.name, from_machine: p.machine_id, revision: p.revision, uploaded, target_revision: targetRevision, ...(detail ? { detail } : {}) } });
   return { ok: true, copy, uploaded, detail: detail || undefined };
 }
 
@@ -129,7 +136,7 @@ const CheckSchema = z.object({ copy_id: z.string().uuid(), item: z.number().int(
  *  the copy on its arm: the checklist is the person's OK. */
 export async function checkCopyItem(db: Kysely<DigifabDB>, orgId: string, userId: string, value: unknown) {
   const input = CheckSchema.parse(value);
-  return db.transaction().execute(async (trx) => {
+  return platform().activity.transaction(orgId, db, async (trx, log) => {
     await sql`select pg_advisory_xact_lock(hashtext(${`digifab-arm-copy:${input.copy_id}`}))`.execute(trx);
     const copy = await trx.selectFrom("digifab_arm_copies").selectAll().where("id", "=", input.copy_id).executeTakeFirst();
     if (!copy || copy.status !== "open") throw new ArmRefusal("Choose an open copy.");
@@ -146,15 +153,18 @@ export async function checkCopyItem(db: Kysely<DigifabDB>, orgId: string, userId
       releasedRevision = target.revision;
     }
     await trx.updateTable("digifab_arm_copies").set({ checklist: JSON.stringify(checklist), ...(done ? { status: "done" as const, completed_by: userId, completed_at: new Date() } : {}) }).where("id", "=", copy.id).execute();
-    await platform().activity.log({ orgId, userId, action: done ? "arm_copy_reteach_done" : "arm_copy_reteach_checked", ref: machineRef(copy.target_machine_id), diff: { name: copy.name, item: checklist[input.item]!.item, done: input.done, ...(done ? { released_revision: releasedRevision } : {}) } });
+    await log({ orgId, userId, action: done ? "arm_copy_reteach_done" : "arm_copy_reteach_checked", ref: machineRef(copy.target_machine_id), diff: { name: copy.name, item: checklist[input.item]!.item, done: input.done, ...(done ? { released_revision: releasedRevision } : {}) } });
     return { ok: true, done, checklist };
   });
 }
 
 export async function cancelCopy(db: Kysely<DigifabDB>, orgId: string, userId: string, copyId: string) {
-  const row = await db.updateTable("digifab_arm_copies").set({ status: "cancelled", completed_by: userId, completed_at: new Date() }).where("id", "=", copyId).where("status", "=", "open").returning(["target_machine_id", "name"]).executeTakeFirst();
-  if (!row) throw new ArmRefusal("Choose an open copy.");
-  await platform().activity.log({ orgId, userId, action: "arm_copy_cancelled", ref: machineRef(row.target_machine_id), diff: { name: row.name } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx.updateTable("digifab_arm_copies").set({ status: "cancelled", completed_by: userId, completed_at: new Date() }).where("id", "=", copyId).where("status", "=", "open").returning(["target_machine_id", "name"]).executeTakeFirst();
+    if (!row) throw new ArmRefusal("Choose an open copy.");
+    await log({ orgId, userId, action: "arm_copy_cancelled", ref: machineRef(row.target_machine_id), diff: { name: row.name } });
+    return row;
+  });
   return { ok: true };
 }
 
@@ -168,14 +178,19 @@ export async function takeBackup(db: Kysely<DigifabDB>, orgId: string, userId: s
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const file = await platform().files.write(orgId, bytes, { filename: `arm-backup-${backup.taken_at.replace(/[:.]/g, "-")}.json`, mimeType: "application/json" });
   if (!file) throw new ArmRefusal("Turn on Files to keep arm backups.");
-  const row = await db.insertInto("digifab_arm_backups").values({ machine_id: machineId, taken_at: new Date(backup.taken_at), file_id: file.fileId, sha256, size_bytes: bytes.length, programs: JSON.stringify(backup.programs.map((p) => ({ name: p.name, revision: p.revision }))), installation_files: backup.installation.length, missing: JSON.stringify(backup.missing), taken_by: userId, restore_tested_at: null, restore_target_machine_id: null, restore_ok: null, restore_detail: null }).returningAll().executeTakeFirstOrThrow();
-  await db.updateTable("digifab_arm_units").set({ last_backup_at: new Date() }).where("machine_id", "=", machineId).execute();
-  const old = await db.selectFrom("digifab_arm_backups").select(["id", "file_id"]).where("machine_id", "=", machineId).orderBy("taken_at", "desc").offset(unit.backup_keep).limit(100).execute();
+  const { row, old } = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx.insertInto("digifab_arm_backups").values({ machine_id: machineId, taken_at: new Date(backup.taken_at), file_id: file.fileId, sha256, size_bytes: bytes.length, programs: JSON.stringify(backup.programs.map((p) => ({ name: p.name, revision: p.revision }))), installation_files: backup.installation.length, missing: JSON.stringify(backup.missing), taken_by: userId, restore_tested_at: null, restore_target_machine_id: null, restore_ok: null, restore_detail: null }).returningAll().executeTakeFirstOrThrow();
+    await trx.updateTable("digifab_arm_units").set({ last_backup_at: new Date() }).where("machine_id", "=", machineId).execute();
+    const old = await trx.selectFrom("digifab_arm_backups").select(["id", "file_id"]).where("machine_id", "=", machineId).orderBy("taken_at", "desc").offset(unit.backup_keep).limit(100).execute();
+    for (const b of old) {
+      await trx.deleteFrom("digifab_arm_backups").where("id", "=", b.id).execute();
+    }
+    await log({ orgId, userId, action: "arm_backed_up", ref: machineRef(machineId), diff: { programs: backup.programs.length, installation_files: backup.installation.length, missing: backup.missing, removed_old: old.length } });
+    return { row, old };
+  });
   for (const b of old) {
-    await db.deleteFrom("digifab_arm_backups").where("id", "=", b.id).execute();
     if (!(await db.selectFrom("digifab_arm_backups").select("id").where("file_id", "=", b.file_id).executeTakeFirst())) await platform().files.removeForGood(orgId, b.file_id).catch(() => null);
   }
-  await platform().activity.log({ orgId, userId, action: "arm_backed_up", ref: machineRef(machineId), diff: { programs: backup.programs.length, installation_files: backup.installation.length, missing: backup.missing, removed_old: old.length } });
   return row;
 }
 
@@ -185,8 +200,10 @@ const ScheduleSchema = z.object({ every_hours: z.number().int().min(1).max(720).
 export async function setBackupSchedule(db: Kysely<DigifabDB>, orgId: string, userId: string | null, machineId: string, value: unknown) {
   const input = ScheduleSchema.parse(value);
   const unit = await requireUnit(db, machineId);
-  await db.updateTable("digifab_arm_units").set({ backup_every_hours: input.every_hours, backup_keep: input.keep, updated_at: new Date() }).where("machine_id", "=", machineId).execute();
-  await platform().activity.log({ orgId, userId, action: "arm_backup_schedule_set", ref: machineRef(machineId), diff: { every_hours: input.every_hours, keep: input.keep, before: { every_hours: unit.backup_every_hours, keep: unit.backup_keep } } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.updateTable("digifab_arm_units").set({ backup_every_hours: input.every_hours, backup_keep: input.keep, updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+    await log({ orgId, userId, action: "arm_backup_schedule_set", ref: machineRef(machineId), diff: { every_hours: input.every_hours, keep: input.keep, before: { every_hours: unit.backup_every_hours, keep: unit.backup_keep } } });
+  });
   return { ok: true };
 }
 
@@ -219,9 +236,12 @@ export async function testRestore(db: Kysely<DigifabDB>, orgId: string, userId: 
     ok = list.supported && lost.length === 0 && result.skipped.length === 0;
     detail = !list.supported ? "The spare arm cannot list its programs, so the restore could not be checked." : lost.length ? `Not back at their revision: ${lost.join(", ")}.` : result.skipped.length ? `Skipped: ${result.skipped.map((s) => `${s.name} (${s.detail})`).join("; ")}` : `All ${countOf(backup.programs.length, "program")} came back at their revisions.`;
   }
-  const saved = await db.updateTable("digifab_arm_backups").set({ restore_tested_at: new Date(), restore_target_machine_id: input.target_machine_id, restore_ok: ok, restore_detail: detail.slice(0, 1000) }).where("id", "=", row.id).returningAll().executeTakeFirstOrThrow();
+  const saved = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const saved = await trx.updateTable("digifab_arm_backups").set({ restore_tested_at: new Date(), restore_target_machine_id: input.target_machine_id, restore_ok: ok, restore_detail: detail.slice(0, 1000) }).where("id", "=", row.id).returningAll().executeTakeFirstOrThrow();
+    await log({ orgId, userId, action: "arm_backup_restore_tested", ref: machineRef(row.machine_id), diff: { backup: row.id, target: input.target_machine_id, ok, detail } });
+    return saved;
+  });
   await refreshArm(db, orgId, userId, input.target_machine_id).catch(() => null);
-  await platform().activity.log({ orgId, userId, action: "arm_backup_restore_tested", ref: machineRef(row.machine_id), diff: { backup: row.id, target: input.target_machine_id, ok, detail } });
   return saved;
 }
 
@@ -241,13 +261,15 @@ export async function restoreAtStation(db: Kysely<DigifabDB>, orgId: string, mac
   const result = await driver.restore(unit.device_id, backup.programs);
   if (!result) throw new ArmRefusal("This arm's bridge cannot restore programs. Restore them at the pendant.");
   await refreshArm(db, orgId, userId, machineId).catch(() => null);
-  await platform().activity.log({ orgId, userId, action: "arm_restored", ref: machineRef(machineId), diff: { backup: row.id, restored: result.restored.length, skipped: result.skipped } });
+  await platform().activity.transaction(orgId, db, async (_trx, log) => {
+    await log({ orgId, userId, action: "arm_restored", ref: machineRef(machineId), diff: { backup: row.id, restored: result.restored.length, skipped: result.skipped } });
+  });
   return result;
 }
 
 /** Back up each arm whose schedule is due. */
 export function registerArmBackups(): void {
-  platform().sweeps.register({ name: "digifab.arm-backups", module: "digifab", everyMs: 15 * 60_000, firstAfterMs: 5 * 60_000,
+  platform().sweeps.register(narrowSweep({ name: "digifab.arm-backups", module: "digifab", everyMs: 15 * 60_000, firstAfterMs: 5 * 60_000,
     visit: async ({ orgId, db }) => {
       if (!(await platform().parts.isOn(orgId, "digifab", "arms"))) return;
       const tenant = db as Kysely<DigifabDB>;
@@ -258,7 +280,13 @@ export function registerArmBackups(): void {
         catch (err) { platform().health.notePassFailure("digifab.arm-backups", `${orgId}:${u.machine_id}`, err); }
       }
     },
-  });
+  }, hasArmBackupWork));
+}
+
+export async function hasArmBackupWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<DigifabDB>).selectFrom("digifab_arm_units").select("machine_id")
+    .where("connection_id", "is not", null).where("backup_every_hours", "is not", null)
+    .limit(1).executeTakeFirst();
 }
 
 export async function readProgramControl(db: Kysely<DigifabDB>, machineId: string) {

@@ -386,6 +386,7 @@ export async function recordMakeStep(
   make: { id: string; name: string; folder_id: string | null },
   step: MakeStep,
   body: StepWrite,
+  afterCommit?: { db: Kysely<DigifabDB>; effects: Array<() => Promise<void>> },
 ): Promise<string> {
   const values = {
     status: body.status ?? "done",
@@ -420,8 +421,12 @@ export async function recordMakeStep(
     .returning("id")
     .executeTakeFirst();
   if (!row) throw new BatchPrintStepOwnedError();
-  for (const f of files) await attachToStep(db, orgId, make, row.id, f.file_id, f.role);
-  if (holding) await db.updateTable("digifab_make_steps").set({ status: finalStatus, updated_at: new Date() }).where("id", "=", row.id).execute();
+  const attach = async (target: Kysely<DigifabDB>) => {
+    for (const f of files) await attachToStep(target, orgId, make, row.id, f.file_id, f.role);
+    if (holding) await target.updateTable("digifab_make_steps").set({ status: finalStatus, updated_at: new Date() }).where("id", "=", row.id).execute();
+  };
+  if (afterCommit) afterCommit.effects.push(() => attach(afterCommit.db));
+  else await attach(db);
 
   // The slicer's grams per tool are what the print deducts, whoever sliced:
   // written onto the job the Print step points at, once there is one.
@@ -431,13 +436,15 @@ export async function recordMakeStep(
     if (grams && (await jobHasColumn(db, "material_grams_by_tool"))) {
       await sql`update digifab_jobs set material_grams_by_tool = ${JSON.stringify(grams)}::jsonb where id = ${body.job_id} and material_grams_by_tool is null`.execute(db);
     }
-    await linkPrint(db, orgId, make.id, body.job_id, userId);
+    if (afterCommit) afterCommit.effects.push(() => linkPrint(afterCommit.db, orgId, make.id, body.job_id!, userId));
+    else await linkPrint(db, orgId, make.id, body.job_id, userId);
   }
   if (step === "outcome") {
     const outcome = body.data?.outcome;
     if (outcome === "pass" || outcome === "fail") {
       await db.updateTable("digifab_makes").set({ outcome }).where("id", "=", make.id).execute();
-      await emitMakeCompleted(orgId, make, outcome);
+      if (afterCommit) afterCommit.effects.push(() => emitMakeCompleted(orgId, make, outcome));
+      else await emitMakeCompleted(orgId, make, outcome);
     }
   }
   if (step === "slice") {

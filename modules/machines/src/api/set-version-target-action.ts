@@ -34,6 +34,7 @@ export async function setVersionTarget(db: Kysely<MachinesDB>, orgId: string, us
       .onConflict((oc) => oc.columns(["instance", "cohort"]).doUpdateSet({ ...next, set_by: userId, updated_at: new Date() }))
       .execute();
   }
+  // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
   await platform().activity.log({ orgId, userId, action: "version_target_set", ref: { module: "machines", entityType: "version_target", entityId: `${instance}:${key}` }, diff: { cohort: label, ...next }, before: { firmware_target: had?.firmware_target ?? null, software_target: had?.software_target ?? null } });
   const fleet = await readFleet(db, orgId, instance);
   const counted = fleet.cohorts.find((c) => c.cohort === key);

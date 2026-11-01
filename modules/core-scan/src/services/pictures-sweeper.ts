@@ -27,6 +27,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { refreshCatalogImageByName } from "./enrich-photo.js";
 import { startRetrimSweeper } from "./retrim-stored-pictures.js";
 import { startSplitSeriesHealer } from "./split-series-heal.js";
@@ -97,12 +98,7 @@ export function pickUnpictured(rows: readonly UnpicturedRow[], now: Date, engine
 }
 
 export function startPicturesSweeper(): void {
-  platform().sweeps.register({
-    name: PICTURES_PASS,
-    everyMs: TICK_MS,
-    module: "core-scan",
-    visit: ({ orgId, db, now }) => visitWorkspace(orgId, db as Kysely<unknown>, now),
-  });
+  platform().sweeps.register(picturesPass());
   console.log(`[core-scan] pictures sweeper registered — every ${TICK_MS / 60_000} min`);
   // The pictures already stored: any that reached the store untrimmed are
   // trimmed where they sit, on their own cadence (a page a minute while
@@ -115,6 +111,35 @@ export function startPicturesSweeper(): void {
   // The rows the keyword tier routed before its rule changed heal too
   // (reroute-keyword-rows.ts, #3019).
   startRerouteSweeper();
+}
+
+/** The pass, narrowed to the workspaces with work (#9048). */
+export function picturesPass(read?: Parameters<typeof narrowSweep>[2]) {
+  return narrowSweep({
+    name: PICTURES_PASS,
+    everyMs: TICK_MS,
+    module: "core-scan",
+    visit: ({ orgId, db, now }) => visitWorkspace(orgId, db as Kysely<unknown>, now),
+  }, hasUnpicturedRow, read);
+}
+
+/** A row the sweep could ask for, now or later: visitWorkspace's filter,
+ *  without pickUnpictured's six-hour wait or the engine's backoff. A row
+ *  asked an hour ago comes due with nothing written, so it keeps the
+ *  workspace a candidate until it is pictured, answered or a week old. */
+export async function hasUnpicturedRow({ db }: { db: unknown }): Promise<boolean> {
+  const tdb = db as Kysely<unknown>;
+  const { rows } = await tdb.executeQuery(sql`
+      select 1 from core_scan_inbox_items
+      where status = 'pending'
+        and catalog_image_file_id is null
+        and catalog_image_url is null
+        and coalesce(suggested_metadata->>'catalog_image_user_set', 'false') <> 'true'
+        and coalesce(suggested_name, '') <> ''
+        and created_at > now() - interval '7 days'
+      limit 1
+    `.compile(tdb));
+  return rows.length > 0;
 }
 
 /** One workspace: the next few unpictured rows are asked for again. A

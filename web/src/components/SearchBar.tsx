@@ -215,7 +215,7 @@ export function SearchBar() {
           />
       )}
       {showList && (
-        <div className="absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded shadow-lg z-50">
+        <div className="absolute right-0 mt-1 w-80 max-w-[calc(100vw-2rem)] max-h-96 overflow-y-auto bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded shadow-lg z-50">
           {(hits.data?.kinds_failed?.length ?? 0) > 0 && (
             <div className="p-1.5 border-b border-line dark:border-slate-800"><SearchIncomplete compact failed={hits.data?.kinds_failed} /></div>
           )}

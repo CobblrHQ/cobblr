@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { CAPABILITIES, type Capability } from "./capabilities.js";
 import { openingTags, stringLiterals, stripComments } from "./lib/source-scan.js";
+import { inFileExemption } from "./lib/capability-except.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -58,10 +59,19 @@ function globOnce(rel: string): string[] {
   return hits;
 }
 const readCache = new Map<string, string | null>();
+const rawCache = new Map<string, string | null>();
+/** A file as written, comments and all, read once however many rows ask. */
+function raw(rel: string): string | null {
+  if (!rawCache.has(rel)) {
+    const abs = join(ROOT, rel);
+    rawCache.set(rel, existsSync(abs) ? readFileSync(abs, "utf8") : null);
+  }
+  return rawCache.get(rel) ?? null;
+}
 function read(rel: string): string | null {
   if (!readCache.has(rel)) {
-    const abs = join(ROOT, rel);
-    readCache.set(rel, existsSync(abs) ? stripComments(readFileSync(abs, "utf8")) : null);
+    const text = raw(rel);
+    readCache.set(rel, text === null ? null : stripComments(text));
   }
   const text = readCache.get(rel) ?? null;
   if (text === null) missing.push(rel);
@@ -133,15 +143,22 @@ for (const cap of CAPABILITIES) {
       if (!existsSync(join(ROOT, rel))) missing.push(`${rel} (an exemption for ${cap.id} whose file is gone)`);
     }
     for (const rel of expand(cap.scope)) {
-      if (rel === cap.owner || cap.except?.[rel]) continue;
+      if (rel === cap.owner) continue;
       const code = read(rel);
       if (code === null) continue;
+      // An exemption, in the table or in the file itself
+      // (scripts/lib/capability-except.ts), that excuses nothing any more is a
+      // stale decision: it would hide the next copy written there, so it fails
+      // until it goes. inventory's import route kept one after #9041 moved it.
+      const inTable = cap.except?.[rel];
+      const excused = inTable ?? inFileExemption(raw(rel) ?? "", cap.id);
       // A two-line copy: the per-line hit counts only where the other half is.
-      if (cap.also && !cap.also.test(code)) continue;
-      code.split("\n").forEach((line, i) => {
-        if (!cap.detect.test(line)) return;
-        failures.push({ file: rel, line: i + 1, cap, detail: line.trim().slice(0, 110), fix: cap.use });
-      });
+      const hits = cap.also && !cap.also.test(code) ? [] : code.split("\n").flatMap((line, i) => (cap.detect.test(line) ? [{ line, i }] : []));
+      if (excused) {
+        if (!hits.length) failures.push({ file: rel, line: 1, cap, detail: `${inTable ? "an except entry" : "a capability-except marker"} that excuses nothing ("${excused.slice(0, 70)}")`, fix: inTable ? `delete its entry from ${cap.id}'s except in scripts/capabilities.ts: this file no longer does what it excused` : "delete the marker: this file no longer does what it excused" });
+        continue;
+      }
+      for (const { line, i } of hits) failures.push({ file: rel, line: i + 1, cap, detail: line.trim().slice(0, 110), fix: cap.use });
     }
   } else if (cap.kind === "requires-prop") {
     for (const rel of expand(cap.scope)) {

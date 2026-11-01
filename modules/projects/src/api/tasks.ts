@@ -195,34 +195,38 @@ tasksRouter.post(
           .executeTakeFirst()
       : undefined;
     // check-then-insert: the read only picks the list position or the source tasks; the insert leaves occurrence_of null, the only unique key.
-    const inserted = await db
-      .insertInto("projects_tasks")
-      .values({
-        ...(top ? { order_within: Number(top.m) - 1 } : {}),
-        project_id: parsed.data.project_id ?? null,
-        title: parsed.data.title,
-        description: parsed.data.description ?? null,
-        status: parsed.data.status ?? "todo",
-        priority: parsed.data.priority ?? "med",
-        energy: parsed.data.energy ?? "medium",
-        due_date: instantFromInput(parsed.data.due_date),
-        ...(parsed.data.checklist ? { checklist: JSON.stringify(parsed.data.checklist) as never } : {}),
-        ...(parsed.data.repeat ? { repeat: JSON.stringify(parsed.data.repeat) as never } : {}),
-        // D6: hoisted-from-top-level keys live here.
-        ...(parsed.data.metadata && Object.keys(parsed.data.metadata).length > 0
-          ? { metadata: parsed.data.metadata as never }
-          : {}),
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const inserted = await trx
+        .insertInto("projects_tasks")
+        .values({
+          ...(top ? { order_within: Number(top.m) - 1 } : {}),
+          project_id: parsed.data.project_id ?? null,
+          title: parsed.data.title,
+          description: parsed.data.description ?? null,
+          status: parsed.data.status ?? "todo",
+          priority: parsed.data.priority ?? "med",
+          energy: parsed.data.energy ?? "medium",
+          due_date: instantFromInput(parsed.data.due_date),
+          ...(parsed.data.checklist ? { checklist: JSON.stringify(parsed.data.checklist) as never } : {}),
+          ...(parsed.data.repeat ? { repeat: JSON.stringify(parsed.data.repeat) as never } : {}),
+          // D6: hoisted-from-top-level keys live here.
+          ...(parsed.data.metadata && Object.keys(parsed.data.metadata).length > 0
+            ? { metadata: parsed.data.metadata as never }
+            : {}),
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
 
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "task_created",
-      ref: { module: "projects", entityType: "task", entityId: inserted.id },
-      diff: { title: inserted.title, project_id: inserted.project_id },
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "task_created",
+        ref: { module: "projects", entityType: "task", entityId: inserted.id },
+        diff: { title: inserted.title, project_id: inserted.project_id },
+      });
+      return inserted;
     });
+
     platform().events.emit("projects.task.created", {
       orgId: ctx.org.id,
       taskId: inserted.id,
@@ -277,27 +281,31 @@ tasksRouter.patch(
       }
     }
 
-    const updated = await db
-      .updateTable("projects_tasks")
-      // Merge, never replace: one custom field saved must not erase the others.
-      .set(withMetadataMerged(patch) as never)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
+    const action = completed ? "task_completed" : "task_updated";
+    const updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const updated = await trx
+        .updateTable("projects_tasks")
+        // Merge, never replace: one custom field saved must not erase the others.
+        .set(withMetadataMerged(patch) as never)
+        .where("id", "=", id)
+        .returningAll()
+        .executeTakeFirst();
+
+      if (updated) await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action,
+        ref: { module: "projects", entityType: "task", entityId: updated.id },
+        diff: parsed.data,
+        before,
+      });
+      return updated;
+    });
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "task not found" } });
       return;
     }
 
-    const action = completed ? "task_completed" : "task_updated";
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action,
-      ref: { module: "projects", entityType: "task", entityId: updated.id },
-      diff: parsed.data,
-      before,
-    });
     platform().events.emit(completed ? "projects.task.completed" : "projects.task.updated", {
       orgId: ctx.org.id,
       taskId: updated.id,

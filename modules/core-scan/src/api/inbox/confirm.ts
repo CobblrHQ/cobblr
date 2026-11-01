@@ -1308,6 +1308,7 @@ confirmRouter.post(
     // was filed as, and which pictures are its (file ids, so the image can
     // travel with it). Best-effort, like every other touch after the create.
     try {
+      // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
       await platform().activity.log({
         orgId: ctx.org.id,
         userId: sessionUser(req)?.id ?? null,

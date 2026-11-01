@@ -315,27 +315,30 @@ ordersRouter.post(
     const vendorText = await vendorTextFor(req, parsed.data.vendor_id, parsed.data.vendor);
     const main = await platform().money.currency(ctx.org.id);
     const orderMetadata = Object.assign({}, parsed.data.metadata, { currency: fieldCurrency(parsed.data.metadata, "total_cost", main) });
-    const inserted = await db
-      .insertInto("purchases_orders")
-      .values({
-        ...parsed.data,
-        vendor: vendorText,
-        instance: instanceOf(req),
-        status: parsed.data.status ?? "ordered",
-        metadata: orderMetadata,
-        // An order born with a tracking number is owned by whoever placed it —
-        // the arrival sweep interrupts them alone (parcelAudience). Orders
-        // recorded no creator at all, so this is their only ownership signal.
-        ...(parsed.data.tracking_number ? { tracking_added_by_user_id: session.id } : {}),
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "order_created",
-      ref: { module: "purchases", entityType: "order", entityId: inserted.id },
-      diff: { vendor: parsed.data.vendor, status: inserted.status },
+    const inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const inserted = await trx
+        .insertInto("purchases_orders")
+        .values({
+          ...parsed.data,
+          vendor: vendorText,
+          instance: instanceOf(req),
+          status: parsed.data.status ?? "ordered",
+          metadata: orderMetadata,
+          // An order born with a tracking number is owned by whoever placed it —
+          // the arrival sweep interrupts them alone (parcelAudience). Orders
+          // recorded no creator at all, so this is their only ownership signal.
+          ...(parsed.data.tracking_number ? { tracking_added_by_user_id: session.id } : {}),
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "order_created",
+        ref: { module: "purchases", entityType: "order", entityId: inserted.id },
+        diff: { vendor: parsed.data.vendor, status: inserted.status },
+      });
+      return inserted;
     });
     platform().events.emit("purchases.order.created", {
       orgId: ctx.org.id,
@@ -389,7 +392,7 @@ ordersRouter.post(
     // One transaction: the order and every line commit together or not at all, and
     // a second import of the same order (a retry, a double press) waits for the
     // first and then finds it, because the key is unique.
-    const done = await db.transaction().execute(async (trx) => {
+    const done = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
       const inserted = await trx
         .insertInto("purchases_orders")
         .values({
@@ -419,16 +422,16 @@ ordersRouter.post(
         metadata: Object.assign({}, line.metadata, { currency: fieldCurrency(line.metadata, "unit_cost", orderCurrency) }),
       }));
       const items = rows.length ? await trx.insertInto("purchases_order_items").values(rows).returningAll().execute() : [];
-      return { order: inserted, items, already: false };
-    });
-    if (!done.already) {
-      await platform().activity.log({
+      await log({
         orgId: ctx.org.id,
         userId: session.id,
         action: "order_created",
-        ref: { module: "purchases", entityType: "order", entityId: done.order.id },
-        diff: { vendor: order.data.vendor, status: done.order.status, lines: done.items.length },
+        ref: { module: "purchases", entityType: "order", entityId: inserted.id },
+        diff: { vendor: order.data.vendor, status: inserted.status, lines: items.length },
       });
+      return { order: inserted, items, already: false };
+    });
+    if (!done.already) {
       platform().events.emit("purchases.order.created", { orgId: ctx.org.id, orderId: done.order.id });
       if (done.order.order_number) await attachWaiting(db, ctx.org.id).catch((err: unknown) => console.error("[purchases] order page attach failed:", (err as Error).name));
       await receiveIfArrived(db, ctx.org.id, done.order.id, undefined);
@@ -475,26 +478,29 @@ ordersRouter.patch(
       const vt = await vendorTextFor(req, parsed.data.vendor_id, parsed.data.vendor);
       if (vt !== undefined) patch.vendor = vt;
     }
-    const updated = await db
-      .updateTable("purchases_orders")
-      .set(patch as never)
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const updated = await trx
+        .updateTable("purchases_orders")
+        .set(patch as never)
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "order_updated",
+        ref: { module: "purchases", entityType: "order", entityId: id },
+        diff: parsed.data,
+        before,
+      });
+      return updated;
+    });
     // One way: the order is evidence for what it bought, so a changed vendor
     // or date reaches the things it bought, never over what a person typed.
     if ("vendor" in parsed.data || "vendor_id" in parsed.data || "ordered_at" in parsed.data) {
       await stampLine(db, ctx.org.id, id).catch(() => 0);
     }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "order_updated",
-      ref: { module: "purchases", entityType: "order", entityId: id },
-      diff: parsed.data,
-      before,
-    });
     if (parsed.data.status && parsed.data.status !== before.status) {
       platform().events.emit("purchases.order.status_changed", {
         orgId: ctx.org.id,
@@ -533,22 +539,26 @@ ordersRouter.delete(
     }
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const deleted = await db
-      .deleteFrom("purchases_orders")
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returning("id")
-      .executeTakeFirst();
+    const deleted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const deleted = await trx
+        .deleteFrom("purchases_orders")
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returning("id")
+        .executeTakeFirst();
+      if (!deleted) return deleted;
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req).id,
+        action: "order_deleted",
+        ref: { module: "purchases", entityType: "order", entityId: id },
+      });
+      return deleted;
+    });
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
       return;
     }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req).id,
-      action: "order_deleted",
-      ref: { module: "purchases", entityType: "order", entityId: id },
-    });
     res.status(204).end();
   }),
 );
@@ -575,33 +585,36 @@ ordersRouter.post(
     const main = await platform().money.currency(ctx.org.id);
     const lineMetadata = Object.assign({}, parsed.data.metadata, { currency: fieldCurrency(parsed.data.metadata, "unit_cost", fieldCurrency(orderCurrency.metadata, "total_cost", main)) });
     const { subject_kind, subject_id, add_to_stock, ...lineFields } = parsed.data;
-    let inserted = await db
-      .insertInto("purchases_order_items")
-      .values({
-        ...lineFields,
-        part_id: null,
-        order_id: orderId,
-        metadata: lineMetadata,
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    let inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const inserted = await trx
+        .insertInto("purchases_order_items")
+        .values({
+          ...lineFields,
+          part_id: null,
+          order_id: orderId,
+          metadata: lineMetadata,
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "order_item_added",
+        ref: { module: "purchases", entityType: "order_item", entityId: inserted.id },
+        diff: {
+          order_id: orderId,
+          part_id: parsed.data.part_id,
+          qty: parsed.data.qty,
+        },
+      });
+      return inserted;
+    });
     const subject = subject_kind && subject_id ? { kind: subject_kind, id: subject_id } : parsed.data.part_id ? { kind: "inventory:part", id: parsed.data.part_id } : null;
     if (subject) {
       inserted = ((await claimLine({ db, orgId: ctx.org.id, userId: session.id, orderId, itemId: inserted.id, subject })) ?? inserted) as typeof inserted;
     }
     // Added to an order that already arrived: it arrived with it.
     await receiveIfArrived(db, ctx.org.id, orderId, add_to_stock);
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "order_item_added",
-      ref: { module: "purchases", entityType: "order_item", entityId: inserted.id },
-      diff: {
-        order_id: orderId,
-        part_id: parsed.data.part_id,
-        qty: parsed.data.qty,
-      },
-    });
     res.status(201).json(inserted);
   }),
 );
@@ -697,18 +710,17 @@ ordersRouter.patch(
     // machine. `part_id` alone still means a part.
     const d = parsed.data as { part_id?: string | null; subject_kind?: string | null; subject_id?: string | null };
     const subject = d.subject_kind && d.subject_id ? { kind: d.subject_kind, id: d.subject_id } : d.part_id ? { kind: "inventory:part", id: d.part_id } : null;
-    const updated = await claimLine({ db, orgId: ctx.org.id, userId: session.id, orderId, itemId, subject });
-    if (!updated) {
-      res.status(404).json({ error: { code: "not_found", message: "order line not found" } });
-      return;
-    }
-    await platform().activity.log({
+    const updated = await claimLine({ db, orgId: ctx.org.id, userId: session.id, orderId, itemId, subject, history: {
       orgId: ctx.org.id,
       userId: session.id,
       action: subject ? "order_item_claimed" : "order_item_released",
       ref: { module: "purchases", entityType: "order_item", entityId: itemId },
       diff: { order_id: orderId, subject_kind: subject?.kind ?? null, subject_id: subject?.id ?? null },
-    });
+    } });
+    if (!updated) {
+      res.status(404).json({ error: { code: "not_found", message: "order line not found" } });
+      return;
+    }
     res.json(updated);
   }),
 );
@@ -756,12 +768,23 @@ ordersRouter.delete(
     }
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const deleted = await db
-      .deleteFrom("purchases_order_items")
-      .where("id", "=", itemId)
-      .where("order_id", "=", orderId)
-      .returning("id")
-      .executeTakeFirst();
+    const deleted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const deleted = await trx
+        .deleteFrom("purchases_order_items")
+        .where("id", "=", itemId)
+        .where("order_id", "=", orderId)
+        .returning("id")
+        .executeTakeFirst();
+      if (!deleted) return deleted;
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req).id,
+        action: "order_item_removed",
+        ref: { module: "purchases", entityType: "order_item", entityId: itemId },
+        diff: { order_id: orderId },
+      });
+      return deleted;
+    });
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "order item not found" } });
       return;
@@ -771,13 +794,6 @@ ordersRouter.delete(
       .select(({ fn }) => fn.countAll<number>().as("n"))
       .where("order_id", "=", orderId)
       .executeTakeFirst();
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req).id,
-      action: "order_item_removed",
-      ref: { module: "purchases", entityType: "order_item", entityId: itemId },
-      diff: { order_id: orderId },
-    });
     res.json({ deleted: itemId, items_remaining: Number(remaining?.n ?? 0) });
   }),
 );

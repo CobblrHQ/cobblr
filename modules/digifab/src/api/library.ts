@@ -167,23 +167,27 @@ libraryRouter.post(
     if (!parsed.data.connection_id && !pool) {
       return void res.status(400).json({ error: { code: "no_target", message: "a send needs a connection_id or a target_pool" } });
     }
-    const job = await db
-      .insertInto("digifab_jobs")
-      .values({
-        connection_id: pool ? null : (parsed.data.connection_id ?? null),
-        file_ref: item.name,
-        target_device: parsed.data.target_device ?? null,
-        target_pool: pool,
-        file_id: item.file_id,
-      })
-      .returning(["id", "status", "target_pool"])
-      .executeTakeFirstOrThrow();
-    await platform().activity.log({
-      orgId,
-      userId: sessionUser(req)?.id ?? null,
-      action: "job_created",
-      ref: { module: "digifab", entityType: "job", entityId: job.id },
-      diff: { name: item.name },
+    const job = await platform().activity.transaction(orgId, db, async (trx, log) => {
+      const job = await trx
+        .insertInto("digifab_jobs")
+        .values({
+          connection_id: pool ? null : (parsed.data.connection_id ?? null),
+          file_ref: item.name,
+          target_device: parsed.data.target_device ?? null,
+          target_pool: pool,
+          file_id: item.file_id,
+        })
+        .returning(["id", "status", "target_pool"])
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId,
+        userId: sessionUser(req)?.id ?? null,
+        action: "job_created",
+        ref: { module: "digifab", entityType: "job", entityId: job.id },
+        diff: { name: item.name },
+      });
+
+      return job;
     });
     if (pool) {
       const { kickAssign } = await import("../assign-worker.js");

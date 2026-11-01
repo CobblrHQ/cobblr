@@ -14,11 +14,18 @@
 // Record with COBBLR_CATALOG_REPLAY_RECORD=1 on a box the engine answers:
 // the live call runs and its answer is written. A query with no cassette
 // under replay is an empty result, deterministically.
+//
+// COBBLR_WEB_REPLAY_OVERLAY_DIR is the narrow form, for a stack whose other
+// walks still ask the web (#9082): a cassette there answers its query, and a
+// query with none goes on as if the overlay were not set, as the tours'
+// barcode resolver does for its codes. The scan review walk's picture strip
+// came from a live search, so the tile it judged was there one night and
+// gone the next.
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { catalogRecording, catalogReplayDir } from "./catalog-replay.js";
+import { catalogRecording, catalogReplayDir, webReplayOverlayDir } from "./catalog-replay.js";
 
 export type WebCassetteKind = "text" | "images" | "library" | "store";
 
@@ -29,8 +36,7 @@ export function replayingWeb(): boolean {
 
 /** The file for a query: readable words, then a short hash so two queries
  *  that slug the same never share a file. */
-export function webCassetteFile(kind: WebCassetteKind, query: string): string | null {
-  const dir = catalogReplayDir();
+export function webCassetteFile(kind: WebCassetteKind, query: string, dir: string | null = catalogReplayDir()): string | null {
   if (!dir) return null;
   const q = query.trim();
   const slug = q.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "query";
@@ -38,10 +44,7 @@ export function webCassetteFile(kind: WebCassetteKind, query: string): string | 
   return join(dir, "web", kind, `${slug}-${hash}.json`);
 }
 
-/** The recorded answer, or null when not replaying / nothing recorded. */
-export function readWebCassette<T>(kind: WebCassetteKind, query: string): T | null {
-  if (!replayingWeb()) return null;
-  const file = webCassetteFile(kind, query);
+function readCassetteFile<T>(file: string | null): T | null {
   if (!file || !existsSync(file)) return null;
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as { query?: string; results?: T };
@@ -49,6 +52,16 @@ export function readWebCassette<T>(kind: WebCassetteKind, query: string): T | nu
   } catch {
     return null;
   }
+}
+
+/** The overlay's recorded answer, or null when it holds none for the query. */
+export function readOverlayCassette<T>(kind: WebCassetteKind, query: string): T | null {
+  return readCassetteFile<T>(webCassetteFile(kind, query, webReplayOverlayDir()));
+}
+
+/** The recorded answer, or null when not replaying / nothing recorded. */
+export function readWebCassette<T>(kind: WebCassetteKind, query: string): T | null {
+  return readOverlayCassette<T>(kind, query) ?? (replayingWeb() ? readCassetteFile<T>(webCassetteFile(kind, query)) : null);
 }
 
 /** Under a recording session, write what the live door answered. */

@@ -52,6 +52,7 @@ interface MetaDbLike {
   deleteFrom(t: string): {
     where(c: string, op: string, v: unknown): { execute(): Promise<unknown> };
   };
+  transaction(): { execute<T>(fn: (trx: MetaDbLike) => Promise<T>): Promise<T> };
 }
 
 export function metaDb(): MetaDbLike {
@@ -72,9 +73,11 @@ surfacesRouter.post(
   }),
 );
 
-/** Make a surface (a link): the tenant row, then the meta-side token index
- *  the public route reads. Tenant-side first, so a failure there leaves no
- *  orphan in the lookup. */
+/** Make a surface (a link): the tenant row, and the meta-side token index
+ *  the public route reads, with the row committed only after the index is
+ *  written. A refused index used to leave a link listed in Settings that
+ *  answered 404 to everyone it was given to (#9071). An index a crash leaves
+ *  behind names a row that is not there, and the public route re-reads it. */
 export async function createSurface(
   db: ReturnType<typeof tenantDb>,
   orgId: string,
@@ -83,23 +86,27 @@ export async function createSurface(
 ) {
   const token = mintToken();
   const expiresAt = instantFromInput(input.expires_at, null, "end");
-  const row = await db
-    .insertInto("core_public_surfaces_surfaces")
-    .values({
-      name: input.name,
-      token,
-      scope_type: input.scope_type,
-      scope_id: input.scope_id,
-      config: input.config ?? {},
-      expires_at: expiresAt,
-      created_by: userId,
-    })
-    .returningAll()
-    .executeTakeFirstOrThrow();
-  await metaDb()
-    .insertInto("public_surface_tokens")
-    .values({ token, org_id: orgId, surface_id: row.id, enabled: true, expires_at: expiresAt })
-    .execute();
+  const write = async (trx: typeof db) => {
+    const made = await trx
+      .insertInto("core_public_surfaces_surfaces")
+      .values({
+        name: input.name,
+        token,
+        scope_type: input.scope_type,
+        scope_id: input.scope_id,
+        config: input.config ?? {},
+        expires_at: expiresAt,
+        created_by: userId,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await metaDb()
+      .insertInto("public_surface_tokens")
+      .values({ token, org_id: orgId, surface_id: made.id, enabled: true, expires_at: expiresAt })
+      .execute();
+    return made;
+  };
+  const row = db.isTransaction ? await write(db) : await db.transaction().execute((trx) => write(trx as unknown as typeof db));
   await platform().events.emit("core-public-surfaces.surface.created", {
     orgId,
     surfaceId: row.id,
@@ -125,13 +132,21 @@ surfacesRouter.post(
       return;
     }
     const token = mintToken();
-    await metaDb().deleteFrom("public_surface_tokens").where("token", "=", old.token).execute();
-    const row = await db.updateTable("core_public_surfaces_surfaces").set({ token, updated_at: new Date() }).where("id", "=", old.id).returningAll().executeTakeFirstOrThrow();
-    // check-then-insert: the key is a random public token minted here
-    await metaDb()
-      .insertInto("public_surface_tokens")
-      .values({ token, org_id: ctx.org.id, surface_id: row.id, enabled: row.enabled, expires_at: row.expires_at })
-      .execute();
+    // The old address goes and the new one comes in one commit on the
+    // server, inside the row's own: a refusal between them used to leave the
+    // link with no working address (#9071).
+    const row = await db.transaction().execute(async (trx) => {
+      const moved = await trx.updateTable("core_public_surfaces_surfaces").set({ token, updated_at: new Date() }).where("id", "=", old.id).returningAll().executeTakeFirstOrThrow();
+      await metaDb().transaction().execute(async (m) => {
+        await m.deleteFrom("public_surface_tokens").where("token", "=", old.token).execute();
+        // check-then-insert: the key is a random public token minted here
+        await m
+          .insertInto("public_surface_tokens")
+          .values({ token, org_id: ctx.org.id, surface_id: moved.id, enabled: moved.enabled, expires_at: moved.expires_at })
+          .execute();
+      });
+      return moved;
+    });
     res.json({ ...row, public_url: `/api/v1/public/${token}` });
   }),
 );

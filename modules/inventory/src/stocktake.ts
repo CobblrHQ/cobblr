@@ -251,6 +251,7 @@ export async function runStocktake(orgId: string, userId: string | null, input: 
     await t.deleteFrom("inventory_stocktakes").where("id", "=", row.id).execute();
     throw err;
   }
+  // capability-except activity:a-change-and-its-history-line-commit-together: stocktaking calls disposition and count actions through reconcile-engine on their own connections; its summary cannot commit with those service writes (#9035)
   await platform().activity.log({
     orgId,
     userId,

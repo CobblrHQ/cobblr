@@ -171,16 +171,27 @@ assetsRouter.post(
     // Create-then-place: location rides the placement seam
     // (placement-cutover-plan step 1); place() mirrors the legacy column.
     const { location_id: createLocationId, ...createRest } = parsed.data;
-    const inserted = await db
-      .insertInto("assets_assets")
-      .values({
-        ...createRest,
-        instance: instanceOf(req),
-        flags: jsonbArray(parsed.data.flags ?? []),
-        metadata: { ...parsed.data.metadata, ...(parsed.data.purchase_price_cents == null ? {} : { money_currencies: { ...((parsed.data.metadata?.money_currencies as Record<string, string>) || {}), purchase_price_cents: fieldCurrency(parsed.data.metadata, "purchase_price_cents", await platform().money.currency(ctx.org.id)) } }) },
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const inserted = await trx
+        .insertInto("assets_assets")
+        .values({
+          ...createRest,
+          instance: instanceOf(req),
+          flags: jsonbArray(parsed.data.flags ?? []),
+          metadata: { ...parsed.data.metadata, ...(parsed.data.purchase_price_cents == null ? {} : { money_currencies: { ...((parsed.data.metadata?.money_currencies as Record<string, string>) || {}), purchase_price_cents: fieldCurrency(parsed.data.metadata, "purchase_price_cents", await platform().money.currency(ctx.org.id)) } }) },
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req).id,
+        action: "asset_created",
+        ref: { module: "assets", entityType: "asset", entityId: inserted.id },
+        diff: { name: parsed.data.name },
+      });
+      return inserted;
+    });
+
     if (createLocationId) {
       try {
         await platform().placement.place({
@@ -194,13 +205,6 @@ assetsRouter.post(
         (inserted as { location_id?: string | null }).location_id = createLocationId;
       }
     }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req).id,
-      action: "asset_created",
-      ref: { module: "assets", entityType: "asset", entityId: inserted.id },
-      diff: { name: parsed.data.name },
-    });
     platform().events.emit("assets.asset.created", {
       orgId: ctx.org.id,
       assetId: inserted.id,
@@ -252,36 +256,51 @@ assetsRouter.patch(
     if (patchRest.flags !== undefined) {
       (patchRest as Record<string, unknown>).flags = jsonbArray(patchRest.flags);
     }
-    const updated = await db
-      .updateTable("assets_assets")
-      // The custom fields MERGE into the live row: a partial edit never
-      // replaces the bag (withMetadataMerged, #3625).
-      .set(withMetadataMerged({ ...patchRest, updated_at: new Date() } as Record<string, unknown>, smNames) as never)
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returningAll()
-      .executeTakeFirst();
+    const updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const updated = await trx
+        .updateTable("assets_assets")
+        // The custom fields MERGE into the live row: a partial edit never
+        // replaces the bag (withMetadataMerged, #3625).
+        .set(withMetadataMerged({ ...patchRest, updated_at: new Date() } as Record<string, unknown>, smNames) as never)
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returningAll()
+        .executeTakeFirst();
+      if (!updated) return updated;
+      // The State picker and "No longer mine" are one fact: picking sold or given
+      // away puts the asset away (out of the register and its total), and
+      // picking a state it is still yours in brings back one that left that way.
+      if (parsed.data.state !== undefined && parsed.data.state !== before.state) {
+        const how = dispositionOf(parsed.data.state);
+        const left = readRecordDisposition(beforeMeta);
+        if (how && !before.archived_at) {
+          const on = await platform().accounts.dayFor(sessionUser(req).id);
+          await trx.updateTable("assets_assets").set({ archived_at: new Date() } as never).where("id", "=", id).execute();
+          await mergeRowMetadata(trx, "assets_assets", id, { [DISPOSITION_KEY]: { ...(left ?? {}), how, on: left?.on ?? on } });
+          (updated as { archived_at?: unknown }).archived_at = new Date();
+        } else if (!how && left && before.archived_at) {
+          await trx.updateTable("assets_assets").set({ archived_at: null } as never).where("id", "=", id).execute();
+          await mergeRowMetadata(trx, "assets_assets", id, { [DISPOSITION_KEY]: null });
+          (updated as { archived_at?: unknown }).archived_at = null;
+        }
+      }
+      if (updated) await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req).id,
+        action: "asset_updated",
+        ref: { module: "assets", entityType: "asset", entityId: id },
+        // The history is read by people who may not see serials: it says a serial
+        // changed, never what it was or became.
+        diff: serialInHistory(parsed.data),
+        before: withoutSerial(before as Record<string, unknown>),
+      });
+      return updated;
+    });
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "asset not found" } });
       return;
     }
-    // The State picker and "No longer mine" are one fact: picking sold or given
-    // away puts the asset away (out of the register and its total), and
-    // picking a state it is still yours in brings back one that left that way.
-    if (parsed.data.state !== undefined && parsed.data.state !== before.state) {
-      const how = dispositionOf(parsed.data.state);
-      const left = readRecordDisposition(beforeMeta);
-      if (how && !before.archived_at) {
-        const on = await platform().accounts.dayFor(sessionUser(req).id);
-        await db.updateTable("assets_assets").set({ archived_at: new Date() } as never).where("id", "=", id).execute();
-        await mergeRowMetadata(db, "assets_assets", id, { [DISPOSITION_KEY]: { ...(left ?? {}), how, on: left?.on ?? on } });
-        (updated as { archived_at?: unknown }).archived_at = new Date();
-      } else if (!how && left && before.archived_at) {
-        await db.updateTable("assets_assets").set({ archived_at: null } as never).where("id", "=", id).execute();
-        await mergeRowMetadata(db, "assets_assets", id, { [DISPOSITION_KEY]: null });
-        (updated as { archived_at?: unknown }).archived_at = null;
-      }
-    }
+
     if (patchLocationId !== undefined) {
       try {
         if (patchLocationId) {
@@ -301,16 +320,6 @@ assetsRouter.patch(
       }
       (updated as { location_id?: string | null }).location_id = patchLocationId ?? null;
     }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req).id,
-      action: "asset_updated",
-      ref: { module: "assets", entityType: "asset", entityId: id },
-      // The history is read by people who may not see serials: it says a serial
-      // changed, never what it was or became.
-      diff: serialInHistory(parsed.data),
-      before: withoutSerial(before as Record<string, unknown>),
-    });
     // Flat before/after bags (native columns + flattened metadata) so a
     // transition wire can compare {{event.before.x}} vs {{event.after.x}}.
     // AWAITED: a reactor (e.g. core-mobility) writes back to this asset and
@@ -346,22 +355,26 @@ assetsRouter.delete(
     }
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const deleted = await db
-      .deleteFrom("assets_assets")
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returning(["id", "name"])
-      .executeTakeFirst();
+    const deleted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const deleted = await trx
+        .deleteFrom("assets_assets")
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returning(["id", "name"])
+        .executeTakeFirst();
+      if (deleted) await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req).id,
+        action: "asset_deleted",
+        ref: { module: "assets", entityType: "asset", entityId: id },
+      });
+      return deleted;
+    });
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "asset not found" } });
       return;
     }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req).id,
-      action: "asset_deleted",
-      ref: { module: "assets", entityType: "asset", entityId: id },
-    });
+
     await platform().events.emit("assets.asset.deleted", { orgId: ctx.org.id, assetId: id, name: deleted.name });
     res.status(204).end();
   }),

@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-import",
-  version: "0.7.2",
+  version: "0.7.3",
   displayName: "Import",
   description:
     "Bring your records in from a spreadsheet or another app: your items, where they are kept and their labels.",

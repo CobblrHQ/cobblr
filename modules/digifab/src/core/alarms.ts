@@ -64,12 +64,15 @@ async function tell(orgId: string, level: number, people: string[], alarms: Alar
 export async function raiseAlarm(db: Kysely<DigifabDB>, orgId: string, a: NewAlarm): Promise<Alarm | null> {
   const policy = await escalationOf(db);
   const next = a.severity === "error" ? nextEscalationAt(0, a.occurred_at, policy) : null;
-  const row = await db.insertInto("digifab_alarms").values({ machine_id: a.machine_id, source: a.source, source_ref: a.source_ref.slice(0, 300), code: a.code.slice(0, 100), text: a.text.slice(0, 500), severity: a.severity, program: a.program ?? null, step: a.step ?? null, camera_file_id: null, occurred_at: a.occurred_at, next_escalation_at: next, acknowledged_by: null, acknowledged_at: null })
-    .onConflict((oc) => oc.columns(["machine_id", "source_ref"]).doNothing()).returningAll().executeTakeFirst();
+  const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx.insertInto("digifab_alarms").values({ machine_id: a.machine_id, source: a.source, source_ref: a.source_ref.slice(0, 300), code: a.code.slice(0, 100), text: a.text.slice(0, 500), severity: a.severity, program: a.program ?? null, step: a.step ?? null, camera_file_id: null, occurred_at: a.occurred_at, next_escalation_at: next, acknowledged_by: null, acknowledged_at: null })
+      .onConflict((oc) => oc.columns(["machine_id", "source_ref"]).doNothing()).returningAll().executeTakeFirst();
+    if (row) await log({ orgId, userId: null, action: "machine_alarm_raised", ref: machineRef(a.machine_id), diff: { code: a.code, text: a.text, severity: a.severity, program: a.program ?? null, step: a.step ?? null } });
+    return row;
+  });
   if (!row) return null;
   const camera = await cameraFrame(db, orgId, a.machine_id, a.device);
   if (camera) await db.updateTable("digifab_alarms").set({ camera_file_id: camera }).where("id", "=", row.id).execute();
-  await platform().activity.log({ orgId, userId: null, action: "machine_alarm_raised", ref: machineRef(a.machine_id), diff: { code: a.code, text: a.text, severity: a.severity, program: a.program ?? null, step: a.step ?? null } });
   if (a.severity !== "info") await tell(orgId, 0, policy.operators, [row]);
   return { ...row, camera_file_id: camera };
 }
@@ -78,9 +81,12 @@ const AckSchema = z.object({ alarm_id: z.string().uuid(), note: z.string().trim(
 /** Someone has it: no one further is told. */
 export async function acknowledgeAlarm(db: Kysely<DigifabDB>, orgId: string, userId: string, value: unknown) {
   const input = AckSchema.parse(value);
-  const row = await db.updateTable("digifab_alarms").set({ acknowledged_by: userId, acknowledged_at: new Date(), next_escalation_at: null, note: input.note }).where("id", "=", input.alarm_id).where("acknowledged_at", "is", null).returningAll().executeTakeFirst();
-  if (!row) throw new AlarmRefusal("That alarm is already acknowledged, or not here.");
-  await platform().activity.log({ orgId, userId, action: "machine_alarm_acknowledged", ref: machineRef(row.machine_id), diff: { code: row.code, note: input.note } });
+  const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx.updateTable("digifab_alarms").set({ acknowledged_by: userId, acknowledged_at: new Date(), next_escalation_at: null, note: input.note }).where("id", "=", input.alarm_id).where("acknowledged_at", "is", null).returningAll().executeTakeFirst();
+    if (!row) throw new AlarmRefusal("That alarm is already acknowledged, or not here.");
+    await log({ orgId, userId, action: "machine_alarm_acknowledged", ref: machineRef(row.machine_id), diff: { code: row.code, note: input.note } });
+    return row;
+  });
   return row;
 }
 
@@ -95,8 +101,10 @@ export async function setEscalation(db: Kysely<DigifabDB>, orgId: string, userId
   for (const id of [...p.operators, ...p.supervisors, ...p.integrators]) if (!await platform().auth.userHasRole({ orgId, userId: id, minRole: "member" })) throw new AlarmRefusal("Choose people in this workspace.");
   const before = await escalationOf(db);
   const values = { operators: JSON.stringify(p.operators), supervisors: JSON.stringify(p.supervisors), integrators: JSON.stringify(p.integrators), supervisor_after_minutes: p.supervisor_after_minutes, integrator_after_minutes: p.integrator_after_minutes, updated_at: new Date() };
-  await db.insertInto("digifab_alarm_escalation").values({ id: 1, ...values }).onConflict((oc) => oc.column("id").doUpdateSet(values)).execute();
-  await platform().activity.log({ orgId, userId, action: "alarm_escalation_set", ref: { module: "digifab", entityType: "settings", entityId: "alarm-escalation" }, diff: { before: { ...before, updated_at: undefined }, after: p } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.insertInto("digifab_alarm_escalation").values({ id: 1, ...values }).onConflict((oc) => oc.column("id").doUpdateSet(values)).execute();
+    await log({ orgId, userId, action: "alarm_escalation_set", ref: { module: "digifab", entityType: "settings", entityId: "alarm-escalation" }, diff: { before: { ...before, updated_at: undefined }, after: p } });
+  });
   return { ok: true };
 }
 

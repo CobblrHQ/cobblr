@@ -131,6 +131,8 @@ orgsRouter.get("/", requireAuth, async (req, res, next) => {
       .innerJoin("orgs as o", "o.id", "m.org_id")
       .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "o.trial_expires_at", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
+      // A workspace whose delete has begun is not offered to switch to (#9071).
+      .where("o.dropping_at", "is", null)
       // A token held to one workspace sees that one: the others are not its business.
       .$if(!!req.session!.token_org_id, (qb) => qb.where("o.id", "=", req.session!.token_org_id!))
       .orderBy("o.created_at")

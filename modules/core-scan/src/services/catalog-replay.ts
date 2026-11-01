@@ -32,6 +32,11 @@ export function catalogReplayDir(): string | null {
   return dir ? dir : null;
 }
 
+/** The narrow replay (web-replay.ts): what it holds answers, the rest goes live. */
+export function webReplayOverlayDir(): string | null {
+  return process.env.COBBLR_WEB_REPLAY_OVERLAY_DIR?.trim() || null;
+}
+
 export function catalogRecording(): boolean {
   return !!catalogReplayDir() && /^(1|true|yes)$/i.test(process.env.COBBLR_CATALOG_REPLAY_RECORD ?? "");
 }
@@ -116,11 +121,16 @@ const missedImages = new Set<string>();
 /** The recorded picture for a url, as a Response; a 404 when the dir is set
  *  and holds none; null when the fetch should go live (no dir, or recording). */
 export function replayImage(url: string): Response | null {
+  const key = imageCassetteKey(url);
+  const overlay = webReplayOverlayDir();
+  if (overlay) {
+    const recorded = imageFile(join(overlay, "images"), key);
+    if (recorded) return imageResponse(join(overlay, "images"), recorded, key);
+  }
   const dir = catalogReplayDir();
   if (!dir || catalogRecording()) return null;
   const images = join(dir, "images");
-  const key = imageCassetteKey(url);
-  const file = existsSync(images) ? readdirSync(images).find((f) => f.startsWith(`${key}.`)) : undefined;
+  const file = imageFile(images, key);
   if (!file) {
     // Said once per picture, with how to fill it: a missing picture under
     // replay was a silent empty tile, and a nightly walk of a ten-spool pack
@@ -131,6 +141,14 @@ export function replayImage(url: string): Response | null {
     }
     return new Response(null, { status: 404, statusText: "no image cassette" });
   }
+  return imageResponse(images, file, key);
+}
+
+function imageFile(images: string, key: string): string | undefined {
+  return existsSync(images) ? readdirSync(images).find((f) => f.startsWith(`${key}.`)) : undefined;
+}
+
+function imageResponse(images: string, file: string, key: string): Response {
   const ext = file.slice(key.length + 1);
   const bytes = readFileSync(join(images, file));
   return new Response(new Uint8Array(bytes), { status: 200, headers: { "content-type": EXT_TYPE[ext] ?? "application/octet-stream", "content-length": String(bytes.length) } });

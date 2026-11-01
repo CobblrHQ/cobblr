@@ -150,10 +150,34 @@ export async function heldChangeRequester(changeId: string): Promise<string | nu
   return row?.user_id ?? null;
 }
 
+/** How long a Delete it may run before a press is taken for one that died:
+ *  the replay takes seconds, and two at once would both delete. */
+export const CONFIRM_STALE_MS = 2 * 60_000;
+
 async function claim(changeId: string, userId: string, to: "done" | "kept") {
   const row = await meta.selectFrom("ai_held_changes").selectAll().where("id", "=", changeId).executeTakeFirst();
   if (!row) return { refusal: "That request is not here any more." } as const;
   if (row.user_id !== userId) return { refusal: "Only the person the assistant was working for can answer this." } as const;
+  // A Delete it whose run died after its claim (a restart, a refused write)
+  // left the change answered with no outcome, the card still asking, and
+  // every press told it was already answered while nothing was deleted
+  // (#9071). Pressed again once that run is surely over, it runs again.
+  if (to === "done" && row.status === "done" && row.outcome == null && row.decided_at && Date.now() - new Date(row.decided_at).getTime() > CONFIRM_STALE_MS) {
+    const retaken = await meta
+      .updateTable("ai_held_changes")
+      .set({ decided_at: new Date() })
+      .where("id", "=", changeId)
+      .where("status", "=", "done")
+      .where("outcome", "is", null)
+      // Still stale when written, so of two presses at once only the first
+      // takes it (it moves decided_at to now). Not an equality on the read
+      // value: the column keeps microseconds a JS Date does not, and an
+      // equality never matched one Postgres stamped (#9077's set run).
+      .where("decided_at", "<", new Date(Date.now() - CONFIRM_STALE_MS))
+      .returningAll()
+      .executeTakeFirst();
+    if (retaken) return { row: retaken, retaken: true } as const;
+  }
   if (row.status !== "waiting") return { refusal: "That was already answered." } as const;
   if (Date.now() - new Date(row.created_at).getTime() > HELD_CHANGE_TTL_MS) {
     await meta.updateTable("ai_held_changes").set({ status: "expired", decided_at: new Date() }).where("id", "=", changeId).where("status", "=", "waiting").execute();
@@ -168,7 +192,7 @@ async function claim(changeId: string, userId: string, to: "done" | "kept") {
     .returningAll()
     .executeTakeFirst();
   if (!won) return { refusal: "That was already answered." } as const;
-  return { row: won } as const;
+  return { row: won, retaken: false } as const;
 }
 
 /** Delete it: replay the request as the person, once. */
@@ -188,7 +212,9 @@ export async function confirmHeldChange(changeId: string, userId: string): Promi
       headers: { authorization: `Bearer ${token}` },
     });
     const body = (await r.json().catch(() => ({}))) as { error?: { message?: string } };
-    ok = r.ok;
+    // Run again after one that died: a record already gone is the first
+    // run's delete, which landed before its outcome could be kept.
+    ok = r.ok || (c.retaken && r.status === 404);
     outcome = ok ? `Deleted ${row.summary}.` : body.error?.message ?? `The delete did not go through (${r.status}).`;
   } catch (err) {
     outcome = `The delete did not go through: ${(err as Error).message}`;

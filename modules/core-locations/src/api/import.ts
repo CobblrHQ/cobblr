@@ -158,7 +158,7 @@ locationsImportRouter.post(
     let created = 0;
     let updated = 0;
 
-    const offTree = await db.transaction().execute(async (trx) => {
+    const offTree = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
       await lockTree(trx);
       const lostBefore = new Set((await placesOffTheTree(trx)).map((p) => p.id));
       const idOfRow = new Map<number, string>();
@@ -197,6 +197,7 @@ locationsImportRouter.post(
         )
         update core_locations_locations l set depth = tree.d from tree where tree.id = l.id
       `.compile(trx));
+      await log({ orgId: ctx.org.id, userId: session.id, action: "locations_imported", ref: { module: "core-locations", entityType: "location", entityId: "" }, diff: { created, updated, match_on } });
     }).then((): string[] => []).catch((e: unknown) => {
       if (e instanceof ImportLoop) return e.names;
       throw e;
@@ -208,7 +209,6 @@ locationsImportRouter.post(
       return;
     }
 
-    await platform().activity.log({ orgId: ctx.org.id, userId: session.id, action: "locations_imported", ref: { module: "core-locations", entityType: "location", entityId: "" }, diff: { created, updated, match_on } }).catch(() => {});
     res.json({ committed: created + updated, created, updated, errors });
   }),
 );

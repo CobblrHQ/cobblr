@@ -103,7 +103,7 @@ export function registerBoardRevisionActions() {
     const fingerprint = createHash("sha256").update(JSON.stringify({ files, notes: p.notes ?? "" })).digest("hex");
     const spec: BoardRevision = { ...files, ...config, project_id: p.project_id, project_kind: p.project_kind, revision: p.revision, fingerprint };
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<BuildsDB>;
-    const saved = await db.transaction().execute(async trx => {
+    const saved = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
       await sql`select pg_advisory_xact_lock(hashtextextended(${`board-revision:${p.project_id}:${p.revision}`}, 0))`.execute(trx);
       const old = await trx.selectFrom("builds_builds").select(["id", "metadata"]).where(sql<boolean>`metadata->'assembly'->>'project_id' = ${p.project_id} and metadata->'assembly'->>'revision' = ${p.revision}`).executeTakeFirst();
       if (old) {
@@ -111,6 +111,7 @@ export function registerBoardRevisionActions() {
         return { build_id: old.id, already_imported: true };
       }
       const build = await trx.insertInto("builds_builds").values({ name: `${project.title} rev ${p.revision}`, notes: p.notes ?? null, metadata: { assembly: spec } } as never).returning("id").executeTakeFirstOrThrow();
+      await log({ orgId: ctx.orgId, userId: ctx.userId, action: "build_created", ref: { module: "builds", entityType: "build", entityId: build.id }, diff: { name: `${project.title} rev ${p.revision}` } });
       return { build_id: build.id, already_imported: false };
     });
     for (const [role, text] of [["bom", p.bom], ["centroid", p.positions]] as const) {
@@ -119,7 +120,6 @@ export function registerBoardRevisionActions() {
       await platform().files.attach(ctx.orgId, { fileId: file.fileId, source_module: "builds", source_type: "build", source_id: saved.build_id, role });
     }
     if (!saved.already_imported) {
-      await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: "build_created", ref: { module: "builds", entityType: "build", entityId: saved.build_id }, diff: { name: `${project.title} rev ${p.revision}` } });
       await platform().events.emit("builds.build.created", { orgId: ctx.orgId, buildId: saved.build_id });
     }
     return { ok: true, changed: !saved.already_imported, data: saved };

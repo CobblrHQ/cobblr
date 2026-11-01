@@ -56,6 +56,7 @@ unconfirmedRouter.post(
       return;
     }
     if (settled) {
+      // capability-except activity:a-change-and-its-history-line-commit-together: settleUnconfirmedLine owns a receipt transaction, then flushReceipts tells inventory about stock and may restore the question before the settlement result is known (#9035)
       await platform().activity.log({
         orgId,
         userId: sessionUser(req)?.id ?? null,

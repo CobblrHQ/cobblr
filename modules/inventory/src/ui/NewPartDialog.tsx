@@ -373,7 +373,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
           if (template) setMeta(m => ({ ...m, ...template.fields }));
         }}><option value="">Choose a template (optional)</option>{recordTemplates.map((t, i) => <option key={t.label} value={i}>{t.label}</option>)}</select></label>}
         {receiptDraft && <details ref={receiptArea} className="rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm text-accent">Draft from a receipt or invoice</summary><div className="space-y-3 mt-3">
-          <label className="block text-sm">Scan or choose a receipt<input aria-label="Receipt or invoice" type="file" accept="image/*,application/pdf,text/plain,text/csv" disabled={readingReceipt} onChange={async e => {
+          <label className="block text-sm">Scan or choose a receipt<input aria-label="Receipt or invoice" type="file" className="mt-1 block w-full min-w-0 text-sm" accept="image/*,application/pdf,text/plain,text/csv" disabled={readingReceipt} onChange={async e => {
             const file = e.target.files?.[0]; if (!file) return;
             await uploadAndDraft(file);
           }} /></label>

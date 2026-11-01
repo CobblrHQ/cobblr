@@ -253,6 +253,7 @@ async function rollForwardLocked(
       .where("id", "!=", entry.id)
       .execute();
     const next = await ensureOccurrence(db, orgId, rolled);
+    // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
     if (s.anchor && !entry.is_term) await platform().activity.log({ orgId, userId: entry.performed_by, action: "term_created", ref: { module: "core-maintenance", entityType: "term", entityId: entry.id }, diff: { name: entry.name } });
     const was: RolledFrom = {
       schedule_id: s.id,

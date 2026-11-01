@@ -60,12 +60,22 @@ export async function updateAssetFields(ctx: EntityUpdateContext): Promise<Entit
   const set: Record<string, unknown> = { ...rest, updated_at: new Date() };
   if (Array.isArray(set.flags)) set.flags = JSON.stringify(set.flags);
   if (Object.keys(split.custom).length) set.metadata = split.custom;
-  await db
-    .updateTable("assets_assets")
-    .set(withMetadataMerged(set, smNames) as never)
-    .where("id", "=", ctx.id)
-    .execute();
+  await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+    await trx
+      .updateTable("assets_assets")
+      .set(withMetadataMerged(set, smNames) as never)
+      .where("id", "=", ctx.id)
+      .execute();
 
+    await log({
+      orgId: ctx.orgId,
+      userId: ctx.userId,
+      action: "asset_updated",
+      ref: { module: "assets", entityType: "asset", entityId: ctx.id },
+      diff: Object.keys(split.custom).length ? { ...parsed.data, metadata: split.custom } : parsed.data,
+      before,
+    });
+  });
   if (locationId !== undefined) {
     const containee = { kind: "assets:asset", id: ctx.id };
     try {
@@ -75,15 +85,6 @@ export async function updateAssetFields(ctx: EntityUpdateContext): Promise<Entit
       await db.updateTable("assets_assets").set({ location_id: locationId ?? null } as never).where("id", "=", ctx.id).execute();
     }
   }
-
-  await platform().activity.log({
-    orgId: ctx.orgId,
-    userId: ctx.userId,
-    action: "asset_updated",
-    ref: { module: "assets", entityType: "asset", entityId: ctx.id },
-    diff: Object.keys(split.custom).length ? { ...parsed.data, metadata: split.custom } : parsed.data,
-    before,
-  });
   const after = await db.selectFrom("assets_assets").selectAll().where("id", "=", ctx.id).executeTakeFirst();
   await platform().events.emit("assets.asset.updated", {
     orgId: ctx.orgId,

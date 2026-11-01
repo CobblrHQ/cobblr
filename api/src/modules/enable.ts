@@ -17,7 +17,7 @@ import { migrateConcurrently } from "./migrate-concurrently.js";
 import { describeMigrationFiles, healthVerdict, unreadableMigrationFiles, moduleIsBehind, needsCatchUp, newerName, pendingCause, type ModuleMigrationFiles, type PendingCause } from "./migration-currency.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getTenantPool, evictTenantPool, releaseIdleTenantPool, setTenantOpenGate, tenantConnectionsContended } from "../db/tenant.js";
-import { appliedBudget } from "../db/connection-budget.js";
+import { appliedBudget, isConnectionRefusal, isPoolAcquireTimeout } from "../db/connection-budget.js";
 import { canonicalModuleName, getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
 import { isTrialDenied, isTrialDeniedForOrg } from "../platform/trial.js";
@@ -72,6 +72,7 @@ import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
 import { bumpWorkspaceShape } from "../platform/workspace-shape.js";
 import { ensureModuleRole, moduleRolesEnabled } from "../sandbox/module-role.js";
 import { notePassFailure } from "../platform/pass-failures.js";
+import { catchUpPace } from "./catch-up-pace.js";
 
 /** Provision the per-module Postgres role for a sandboxed module (no-op
  *  for in-process modules / when superuser DB access is unavailable).
@@ -480,7 +481,47 @@ export function moduleMigrationFiles(moduleName: string): ModuleMigrationFiles {
 
 /** Run one module's migrations on one workspace and save its marker. True
  *  when something was applied. Throws what the migration threw. */
+let refuseForTests = 0;
+/** The next `times` workspace migrations fail the way a full server refuses
+ *  a connection (53300), for the test that holds the catch-up's answer. */
+export function refuseMigrationConnectionsForTests(times: number): void {
+  refuseForTests = times;
+}
+
+/** The meta-side marker of one workspace's module, from the ledger a run just
+ *  read, so /modules/:slug/health and the next boot's pre-check stay
+ *  accurate. Written even when nothing was applied: a workspace opened
+ *  because its count was NULL must not be opened again next boot for the
+ *  same reason.
+ *
+ *  Never backwards. The run reads the ledger under its advisory lock, but
+ *  this write lands after the lock is released, so two apis catching up one
+ *  workspace in a roll can write in the other order, and the snapshot taken
+ *  first, without the newer api's migration, overwrote the newer marker:
+ *  the newer api then read the workspace as behind and opened it again
+ *  (800 of 2,000 on a rig, 2026-11-01). greatest() keeps the newer of what
+ *  is stored and what this run saw, and skips a NULL. */
+export async function recordModuleMarker(orgId: string, moduleName: string, result: { latest: string | null; total: number; breaking: readonly string[] }): Promise<void> {
+  // SHAPE-UNCHANGED: migration bookkeeping on a module already on.
+  await meta
+    .updateTable("org_modules")
+    .set({
+      last_migration: sql<string>`greatest(last_migration, ${result.latest})`,
+      migration_count: sql<number>`greatest(migration_count, ${result.total}::int)`,
+      ...(result.breaking.length
+        ? { newest_breaking_migration: sql<string>`greatest(newest_breaking_migration, ${result.breaking.reduce<string | null>((a, b) => newerName(a, b), null)})` }
+        : {}),
+    })
+    .where("org_id", "=", orgId)
+    .where("module_name", "=", moduleName)
+    .execute();
+}
+
 async function migrateOrgModule(orgId: string, moduleName: string): Promise<boolean> {
+  if (refuseForTests > 0) {
+    refuseForTests--;
+    throw Object.assign(new Error("sorry, too many clients already"), { code: "53300" });
+  }
   const entry = getEntry(moduleName);
   if (!entry || !entry.manifest.schema) return false;
   const migrationsDir = resolve(entry.rootPath, entry.manifest.schema.migrationsDir);
@@ -490,25 +531,7 @@ async function migrateOrgModule(orgId: string, moduleName: string): Promise<bool
     directory: migrationsDir,
     scope: `tenant ${orgId} / module ${moduleName}`,
   });
-  // Update the meta-side marker so /modules/:slug/health and the next
-  // boot's pre-check stay accurate. Written even when nothing was
-  // applied: a workspace opened because its count was NULL must not be
-  // opened again next boot for the same reason.
-  // SHAPE-UNCHANGED: migration bookkeeping on a module already on.
-  await meta
-    .updateTable("org_modules")
-    .set({
-      last_migration: result.latest,
-      migration_count: result.total,
-      // greatest() skips a NULL, so an api that applied nothing
-      // breaking never erases what a newer one recorded.
-      ...(result.breaking.length
-        ? { newest_breaking_migration: sql<string>`greatest(newest_breaking_migration, ${result.breaking.reduce<string | null>((a, b) => newerName(a, b), null)})` }
-        : {}),
-    })
-    .where("org_id", "=", orgId)
-    .where("module_name", "=", moduleName)
-    .execute();
+  await recordModuleMarker(orgId, moduleName, result);
   return result.applied.length > 0;
 }
 
@@ -566,7 +589,7 @@ export async function catchUpOrgMigrations(orgId: string): Promise<number> {
 // so no request is ever served against tables this build has not shaped.
 const BOOT_MIGRATION_BUDGET_MS = 60_000;
 const deferred = new Map<string, string[]>();
-const deferredInFlight = new Map<string, Promise<void>>();
+const deferredInFlight = new Map<string, Promise<boolean>>();
 const migratingOrg = new AsyncLocalStorage<string>();
 const deferredProgress = { total: 0, done: 0, since: 0, lastAt: 0 };
 
@@ -591,13 +614,18 @@ export function deferredMigrations(): DeferredMigrations | null {
   };
 }
 
-async function migrateOrgModules(orgId: string, moduleNames: string[]): Promise<number> {
+/** A failure that says the server had no connection to give, not that the
+ *  migration is wrong: the workspace is tried again, later. */
+const outOfConnections = (err: unknown) => isConnectionRefusal(err) || isPoolAcquireTimeout(err);
+
+async function migrateOrgModules(orgId: string, moduleNames: string[], refused: string[] = []): Promise<number> {
   let touched = 0;
   for (const moduleName of moduleNames) {
     try {
       if (await migrateOrgModule(orgId, moduleName)) touched++;
     } catch (err) {
-      console.error(`[migrate-sync] failed for ${moduleName} on ${orgId}:`, (err as Error).message);
+      if (outOfConnections(err)) refused.push(moduleName);
+      else console.error(`[migrate-sync] failed for ${moduleName} on ${orgId}:`, (err as Error).message);
     }
   }
   // After ALL of this org's modules have migrated (so every read-target
@@ -608,21 +636,34 @@ async function migrateOrgModules(orgId: string, moduleNames: string[]): Promise<
   return touched;
 }
 
-function catchUpDeferred(orgId: string): Promise<void> {
+/** Resolves true when the server refused it connections: its refused
+ *  modules are back on the list, and the caller should wait before the next. */
+function catchUpDeferred(orgId: string): Promise<boolean> {
   const running = deferredInFlight.get(orgId);
   if (running) return running;
   const moduleNames = deferred.get(orgId);
-  if (!moduleNames) return Promise.resolve();
+  if (!moduleNames) return Promise.resolve(false);
   deferred.delete(orgId);
+  const refused: string[] = [];
   const p = migratingOrg
-    .run(orgId, () => migrateOrgModules(orgId, moduleNames))
+    .run(orgId, () => migrateOrgModules(orgId, moduleNames, refused))
     .then(
       () => undefined,
-      (err) => console.error(`[migrate-sync] catching up ${orgId} after boot:`, (err as Error).message),
+      (err) => {
+        if (outOfConnections(err)) refused.push(...moduleNames);
+        else console.error(`[migrate-sync] catching up ${orgId} after boot:`, (err as Error).message);
+      },
     )
+    .then(() => {
+      // Dropped, a refused workspace stayed behind until the next boot, and
+      // its worker went straight on to open the next workspace: a catch-up
+      // refused at every workspace became a storm of logins (2026-11-01).
+      if (refused.length) deferred.set(orgId, [...new Set(refused)]);
+      else deferredProgress.done++;
+      return refused.length > 0;
+    })
     .finally(() => {
       deferredInFlight.delete(orgId);
-      deferredProgress.done++;
       deferredProgress.lastAt = Date.now();
     });
   deferredInFlight.set(orgId, p);
@@ -635,7 +676,7 @@ function catchUpDeferred(orgId: string): Promise<void> {
 function deferredOpenGate(orgId: string): Promise<void> | null {
   if (!deferred.has(orgId) && !deferredInFlight.has(orgId)) return null;
   if (migratingOrg.getStore() === orgId) return null;
-  return catchUpDeferred(orgId);
+  return catchUpDeferred(orgId).then(() => undefined);
 }
 
 /** Requests are waiting for a connection, workspace or meta: the catch-up waits. */
@@ -645,6 +686,9 @@ function requestsWaiting(): boolean {
 
 const YIELD_STEP_MS = 200;
 const CATCH_UP_WORKERS = 4;
+/** How long a catch-up worker waits after the server refused it a
+ *  connection, doubling to the cap while it keeps refusing. */
+export const REFUSED_WAIT_MS = { first: 2_000, cap: 30_000 };
 
 /** Catch up what the boot walk left, after listen, up to four workspaces at
  *  a time, each started only while no request waits for a connection and one
@@ -654,22 +698,34 @@ const CATCH_UP_WORKERS = 4;
  *  connection. A workspace a request asks for is migrated at once by the open
  *  gate, so waiting here delays only workspaces nobody is using. The wait for
  *  each workspace is capped, so a busy api still finishes. */
-export async function drainDeferredMigrations(opts: { waiting?: () => boolean; maxYieldMs?: number } = {}): Promise<number> {
+export async function drainDeferredMigrations(opts: { waiting?: () => boolean; maxYieldMs?: number; refusedWaitMs?: { first: number; cap: number } } = {}): Promise<number> {
   const waiting = opts.waiting ?? requestsWaiting;
   const maxYieldMs = opts.maxYieldMs ?? 30_000;
   const start = Date.now();
   const before = deferredProgress.done;
-  const worker = async (): Promise<void> => {
+  const pause = opts.refusedWaitMs ?? REFUSED_WAIT_MS;
+  const workers = Math.min(CATCH_UP_WORKERS, walkWorkers(), deferred.size);
+  const pace = catchUpPace(workers, pause);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const worker = async (index: number): Promise<void> => {
     for (;;) {
       const yieldFrom = Date.now();
-      while (waiting() && Date.now() - yieldFrom < maxYieldMs) await new Promise((r) => setTimeout(r, YIELD_STEP_MS));
+      while (waiting() && Date.now() - yieldFrom < maxYieldMs) await sleep(YIELD_STEP_MS);
+      for (;;) {
+        if (!deferred.size) return;
+        const rest = pace.restMs(index);
+        if (rest === 0) break;
+        await sleep(Math.min(rest, YIELD_STEP_MS * 5));
+      }
       const next = deferred.keys().next();
       if (next.done) return;
-      await catchUpDeferred(next.value);
+      const refused = await catchUpDeferred(next.value);
       await releaseIdleTenantPool(next.value);
+      if (refused) pace.refused();
+      else pace.caughtUp();
     }
   };
-  await Promise.all(Array.from({ length: Math.min(CATCH_UP_WORKERS, walkWorkers(), deferred.size) }, worker));
+  await Promise.all(Array.from({ length: workers }, (_, i) => worker(i)));
   await Promise.all(deferredInFlight.values());
   const caught = deferredProgress.done - before;
   if (caught) console.log(`[cobblr-api] tenant migration catch-up after listen: ${caught} workspace(s) in ${Date.now() - start}ms`);
@@ -743,10 +799,13 @@ export async function syncTenantMigrations(opts: { budgetMs?: number; orgIds?: s
       else byOrg.set(row.org_id, [row.module_name]);
     }
   }
+  const refusedAt = new Map<string, string[]>();
   const processOrg = async (orgId: string, moduleNames: string[]): Promise<void> => {
+    const refused: string[] = [];
     try {
-      touched += await migrateOrgModules(orgId, moduleNames); // single-threaded event loop: += between awaits is safe
+      touched += await migrateOrgModules(orgId, moduleNames, refused); // single-threaded event loop: += between awaits is safe
     } finally {
+      if (refused.length) refusedAt.set(orgId, refused);
       // Safe pre-`listen`: nothing is serving traffic, and the pool lazily
       // reopens on this org's first real request.
       await evictTenantPool(orgId);
@@ -764,7 +823,9 @@ export async function syncTenantMigrations(opts: { budgetMs?: number; orgIds?: s
     }
   };
   await Promise.all(Array.from({ length: Math.min(walkWorkers(), entries.length) }, worker));
-  const left = entries.slice(cursor);
+  // What the walk did not reach, and what the server refused it, is caught up
+  // after listen: a refused workspace is never dropped until the next boot.
+  const left = [...entries.slice(cursor), ...refusedAt.entries()];
   for (const [orgId, moduleNames] of left) deferred.set(orgId, moduleNames);
   if (left.length) {
     setTenantOpenGate(deferredOpenGate);
@@ -775,7 +836,7 @@ export async function syncTenantMigrations(opts: { budgetMs?: number; orgIds?: s
     const secs = (now - start) / 1000;
     console.log(
       `[cobblr-api] tenant migration sync: ${cursor} workspace(s) walked in ${secs.toFixed(1)}s (${(cursor / Math.max(secs, 0.001)).toFixed(1)}/s), ` +
-        `${left.length} left for after listen`,
+        `${left.length} left for after listen (${refusedAt.size} refused a connection)`,
     );
   }
   return touched;

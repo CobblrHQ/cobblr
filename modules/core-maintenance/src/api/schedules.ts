@@ -436,6 +436,7 @@ export async function renewSchedule(db: Kysely<CoreMaintenanceDB>, orgId: string
   const renewed = db.isTransaction ? await run(db) : await db.transaction().execute(run);
   const { entry } = renewed;
   if (d.file_id) await platform().files.attach(orgId, { fileId: d.file_id, source_module: "core-maintenance", source_type: "entry", source_id: entry.id, role: "receipt" });
+  // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
   await platform().activity.log({ orgId, userId, action: "term_created", ref: { module: "core-maintenance", entityType: "term", entityId: entry.id }, diff: { name: entry.name, term_start: entry.term_start, term_end: entry.term_end } });
   const updated = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", s.id).executeTakeFirstOrThrow();
   return { entry, schedule: await present(orgId, updated), was: renewed.was, occurrence: renewed.occurrence };

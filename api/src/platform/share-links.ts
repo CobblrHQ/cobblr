@@ -23,7 +23,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { isTheCloud, trustedPeers } from "./cloud.js";
 import { meta } from "../db/meta.js";
 import { outboxDelete } from "./share-outbox-rows.js";
-import { encryptCreds } from "../db/crypto.js";
+import { decryptCreds, encryptCreds } from "../db/crypto.js";
 import { provisionOrgForUser } from "../routes/auth.js";
 import { shapeShareSpace } from "./reconcile-share-spaces.js";
 import { sharePerson } from "./share-person.js";
@@ -35,9 +35,11 @@ import {
   SHARE_ENVELOPE_VERSION,
   addShareSyncPass,
   enqueueShareOp,
+  flushShareLink,
   flushShareLinkNow,
   getShareLink,
   peerFetch,
+  queueShareOpIn,
   registerShareOp,
   REVOKED_OP,
   settleEndingShare,
@@ -199,9 +201,30 @@ export interface ClaimRequest {
 
 /** The owner's side of accepting: the code is spent, the keys are kept, the
  *  link is live. Refuses an unknown, used or expired code. */
-export async function claimShareInvite(req: ClaimRequest): Promise<{ owner_link_id: string; owner_name: string | null; workspace_name: string; v: number; purpose?: "own"; owner_org_id?: string } | null> {
-  const row = await pendingInvite(req.code);
+type ClaimAnswer = { owner_link_id: string; owner_name: string | null; workspace_name: string; v: number; purpose?: "own"; owner_org_id?: string };
+
+/** The same claim asked again: the invite was claimed, with this share's own
+ *  link id, by an accept that died before its own side was written (#9071).
+ *  The link id is the accepting side's random one, so only that accept can
+ *  ask it; anyone else holding the code meets a used invite. The invite's
+ *  code stays hashed on the claimed link for this, and goes with a revoke. */
+async function repeatedClaim(req: ClaimRequest): Promise<ClaimAnswer | null> {
+  const row = await meta
+    .selectFrom("share_links as l")
+    .innerJoin("orgs as o", "o.id", "l.org_id")
+    .select(["l.id", "l.org_id", "l.created_by", "l.settings", "o.name as workspace_name"])
+    .where("l.invite_code_hash", "=", hash(req.code))
+    .where("l.status", "=", "active")
+    .where("l.peer_link_id", "=", req.share_link_id)
+    .executeTakeFirst();
   if (!row) return null;
+  const own = (row.settings as { purpose?: string } | null)?.purpose === "own";
+  return { owner_link_id: row.id, owner_name: await userName(row.created_by), workspace_name: row.workspace_name, v: SHARE_ENVELOPE_VERSION, ...(own ? { purpose: "own" as const, owner_org_id: row.org_id } : {}) };
+}
+
+export async function claimShareInvite(req: ClaimRequest): Promise<ClaimAnswer | null> {
+  const row = await pendingInvite(req.code);
+  if (!row) return repeatedClaim(req);
   const own = (row.settings as {purpose?: string} | null)?.purpose === "own";
   if (own !== (req.purpose === "own") || (own && !req.share_org_id)) throw new ShareInviteError(409, `This connection needs an updated ${productName()} and an existing workspace. Use a send file instead.`);
   const refused = bindingRefusal(row.invite_email, req.person_email);
@@ -212,7 +235,6 @@ export async function claimShareInvite(req: ClaimRequest): Promise<{ owner_link_
     .set({
       ...(own ? {settings: sql`coalesce(settings, '{}'::jsonb) || ${JSON.stringify({peer_org_id: req.share_org_id})}::jsonb` as never} : {}),
       status: "active",
-      invite_code_hash: null,
       peer_url: req.share_url || null,
       peer_link_id: req.share_link_id,
       peer_name: req.person_name.slice(0, 120) || null,
@@ -280,6 +302,12 @@ export async function readInvite(token: InviteToken, here: string): Promise<{
  *  Cobblr what the invite is, make the share space, then claim the invite. A
  *  claim that fails takes the new share space away again. */
 export async function acceptShareInvite(p: { userId: string; token: InviteToken; here: string; targetOrg?: string }): Promise<{ orgId: string; slug: string; linkId: string }> {
+  // An accept of this invite that stopped part way is taken up as it was
+  // kept, before anything asks the owner: its claim has used the invite up,
+  // so the owner's preview of it says "used", and asking it first refused
+  // every retry the share was waiting for (#9087).
+  const resumed = p.token.p === "own" || p.targetOrg ? null : await acceptAttempt(p.userId, p.token.c);
+  if (resumed) return finishAccept(p, resumed);
   const { ownerUrl, local, preview } = await readInvite(p.token, p.here);
   if (preview.v > SHARE_ENVELOPE_VERSION) throw new ShareInviteError(409, `The ${productName()} that sent this invite is newer than this one, which needs updating to accept it.`);
 
@@ -287,25 +315,33 @@ export async function acceptShareInvite(p: { userId: string; token: InviteToken;
   if (p.targetOrg) throw new ShareInviteError(409, "This is a share invite, not a connection to your own workspace.");
   const owner = preview.owner_name || preview.workspace_name;
   const shareName = `${owner}'s workspace (shared)`;
-  const made = await provisionOrgForUser(p.userId, shareName);
-  const linkId = randomUUID();
+  // The accept is written here before the owner is asked: the claim uses the
+  // invite up, possibly on another Cobblr, and an accept that died after it
+  // with nothing kept here left the owner a share nobody could finish and a
+  // used invite (#9071). Asked again, it takes up the same share space, link
+  // and keys, and the owner answers the same claim the same way.
+  return finishAccept(p, await beginAccept(p.userId, p.token.c, shareName, local ? null : ownerUrl));
+}
+
+/** Claim the invite for an accept written here, then make its link live. */
+async function finishAccept(p: { userId: string; token: InviteToken; here: string }, attempt: AcceptAttempt): Promise<{ orgId: string; slug: string; linkId: string }> {
+  const local = attempt.peerUrl === null;
+  const ownerUrl = attempt.peerUrl ?? "";
+  const shareName = attempt.shareName;
+  let claimed = false;
   try {
-    await meta.updateTable("orgs").set({ kind: "share" }).where("id", "=", made.orgId).execute();
     // The person is an admin here, not its owner: they can do anything in it,
     // and the share itself (ending it, who is in it) is the sharer's.
-    await shapeShareSpace(made.orgId);
-
-    const toShare = mintShareKey();
-    const toOwner = mintShareKey();
+    await shapeShareSpace(attempt.orgId);
     const claim: ClaimRequest = {
       code: p.token.c,
       share_url: local ? "" : p.here,
-      share_link_id: linkId,
+      share_link_id: attempt.linkId,
       person_name: (await userName(p.userId)) ?? "",
       person_email: await confirmedEmail(p.userId),
       share_workspace_name: shareName,
-      key_to_share: toShare.text,
-      key_to_owner: toOwner.text,
+      key_to_share: attempt.keyToShare,
+      key_to_owner: attempt.keyToOwner,
       v: SHARE_ENVELOPE_VERSION,
     };
     const got = local
@@ -317,31 +353,104 @@ export async function acceptShareInvite(p: { userId: string; token: InviteToken;
           body: JSON.stringify(claim),
         });
     if (!got) throw new ShareInviteError(404, "That invite is used, expired or was withdrawn. Ask for a new one.");
-    await meta
-      .insertInto("share_links")
-      .values({
-        id: linkId,
-        org_id: made.orgId,
-        side: "share",
-        status: "active",
-        peer_url: local ? null : ownerUrl,
-        peer_link_id: got.owner_link_id,
-        peer_name: got.owner_name,
-        peer_workspace_name: got.workspace_name,
-        send_key_encrypted: encryptCreds(toOwner.text),
-        receive_key_id: toShare.keyId,
-        receive_secret_encrypted: encryptCreds(toShare.secret),
-        created_by: p.userId,
-        peer_version: got.v,
-        last_synced_at: new Date(),
-      })
-      .execute();
-    await enqueueShareOp(linkId, "link.hello", { name: shareName });
-    return { orgId: made.orgId, slug: made.slug, linkId };
+    claimed = true;
+    acceptDiesHereForTests(p.userId);
+    await meta.transaction().execute(async (trx) => {
+      await trx
+        .updateTable("share_links")
+        .set({
+          status: "active",
+          peer_link_id: got.owner_link_id,
+          peer_name: got.owner_name,
+          peer_workspace_name: got.workspace_name,
+          peer_version: got.v,
+          last_synced_at: new Date(),
+          settings: sql`coalesce(settings, '{}'::jsonb) - 'accepting' - 'key_to_share'` as never,
+        })
+        .where("id", "=", attempt.linkId)
+        .execute();
+      await queueShareOpIn(trx, attempt.linkId, "link.hello", { name: shareName });
+    });
+    void flushShareLink(attempt.linkId).catch((err) => console.error(`[share] flush of ${attempt.linkId} failed:`, err));
+    return { orgId: attempt.orgId, slug: attempt.slug, linkId: attempt.linkId };
+  } catch (err) {
+    // Refused by the owner: nothing was claimed, so the share space goes. A
+    // claim that may have landed (it did, or the owner could not be heard)
+    // keeps this accept, for the person's next press to finish.
+    if (!claimed && err instanceof ShareInviteError && err.status !== 502) {
+      await hardDeleteOrg(attempt.orgId).catch((e) => console.error(`[share] could not take back share space ${attempt.orgId}:`, e));
+      throw err;
+    }
+    if (err instanceof ShareInviteError) throw err;
+    console.error(`[share] accepting into ${attempt.orgId} stopped part way; the next accept of this invite finishes it:`, err);
+    throw new ShareInviteError(503, "The share was not finished. Accept the invite again to finish it.");
+  }
+}
+
+interface AcceptAttempt { orgId: string; slug: string; linkId: string; keyToShare: string; keyToOwner: string; peerUrl: string | null; shareName: string }
+
+/** An accept of this invite by this person that stopped part way, if any. */
+async function acceptAttempt(userId: string, code: string): Promise<AcceptAttempt | null> {
+  const row = await meta
+    .selectFrom("share_links as l")
+    .innerJoin("orgs as o", "o.id", "l.org_id")
+    .select(["l.id", "l.org_id", "o.slug", "o.name", "l.peer_url", "l.send_key_encrypted", "l.settings"])
+    .where("l.side", "=", "share")
+    .where("l.status", "=", "pending")
+    .where("l.created_by", "=", userId)
+    .where(sql<string>`l.settings->>'accepting'`, "=", hash(code))
+    .executeTakeFirst();
+  const keyToShare = (row?.settings as { key_to_share?: string } | null)?.key_to_share;
+  if (!row || !row.send_key_encrypted || !keyToShare) return null;
+  return { orgId: row.org_id, slug: row.slug, linkId: row.id, keyToShare: decryptCreds(keyToShare), keyToOwner: decryptCreds(row.send_key_encrypted), peerUrl: row.peer_url, shareName: row.name };
+}
+
+/** The share space and its link, written before the owner is asked. */
+async function beginAccept(userId: string, code: string, shareName: string, peerUrl: string | null): Promise<AcceptAttempt> {
+  const made = await provisionOrgForUser(userId, shareName);
+  const linkId = randomUUID();
+  const toShare = mintShareKey();
+  const toOwner = mintShareKey();
+  try {
+    await meta.transaction().execute(async (trx) => {
+      await trx.updateTable("orgs").set({ kind: "share" }).where("id", "=", made.orgId).execute();
+      await trx
+        .insertInto("share_links")
+        .values({
+          id: linkId,
+          org_id: made.orgId,
+          side: "share",
+          status: "pending",
+          peer_url: peerUrl,
+          send_key_encrypted: encryptCreds(toOwner.text),
+          receive_key_id: toShare.keyId,
+          receive_secret_encrypted: encryptCreds(toShare.secret),
+          created_by: userId,
+          settings: { accepting: hash(code), key_to_share: encryptCreds(toShare.text) } as never,
+        })
+        .execute();
+    });
   } catch (err) {
     await hardDeleteOrg(made.orgId).catch((e) => console.error(`[share] could not take back share space ${made.orgId}:`, e));
     throw err;
   }
+  return { orgId: made.orgId, slug: made.slug, linkId, keyToShare: toShare.text, keyToOwner: toOwner.text, peerUrl, shareName };
+}
+
+/** Test-only: the next accepts by this person die after the owner's claim
+ *  and before this side is written, as a crash or a refused connection
+ *  would (#9071). Per person, so an accept in another test file running at
+ *  the same time never takes the death meant for this one (#9087). */
+const acceptFailures = new Map<string, number>();
+export function failShareAcceptForTests(userId: string, times: number): void {
+  if (times > 0) acceptFailures.set(userId, times);
+  else acceptFailures.delete(userId);
+}
+function acceptDiesHereForTests(userId: string): void {
+  const left = acceptFailures.get(userId) ?? 0;
+  if (left <= 0) return;
+  failShareAcceptForTests(userId, left - 1);
+  throw new Error("the accept stopped after the owner's claim (a test's injected failure)");
 }
 
 async function acceptOwnConnection(p: {userId: string; token: InviteToken; here: string; targetOrg?: string}, peer: {ownerUrl: string; local: boolean}) {

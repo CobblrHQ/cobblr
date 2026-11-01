@@ -62,7 +62,10 @@ export function observeActivity(fn: WriteObserver): void {
   writeObservers.push(fn);
 }
 
-export async function log(p: LogParams, db: Kysely<MetaDB> = meta): Promise<void> {
+/** The line `p` writes, with who made it, how, and what changed, read from
+ *  the request it is made in: the same for a line written now and one kept
+ *  in the workspace beside its change (activity-trace.ts). */
+export async function lineOf(p: LogParams, opts: { ownDiffOnly?: boolean } = {}): Promise<{ line: ActivityLine; write: ReturnType<typeof currentHistoryWrite> }> {
   // Auto-resolve actor from the current request's AsyncLocalStorage
   // context when caller didn't override.
   const actor = currentActor();
@@ -72,7 +75,13 @@ export async function log(p: LogParams, db: Kysely<MetaDB> = meta): Promise<void
   const apiTokenId =
     p.apiTokenId !== undefined ? p.apiTokenId : (actor?.apiTokenId ?? null);
   const via = p.via !== undefined ? p.via : currentVia();
-  const write = p.action === "updated" || p.action.endsWith("_updated")
+  // ownDiffOnly: the line is kept inside the record's own transaction, which
+  // holds one of the workspace pool's few connections. Nothing is read: not
+  // the record's after-state (it has not committed), and not the titles of
+  // the records the change refers to, which would ask the same pool for a
+  // second connection while this one is held; two such transactions at once
+  // ran the pool dry (#9041's rig run). The line sent after the commit has both.
+  const write = !opts.ownDiffOnly && (p.action === "updated" || p.action.endsWith("_updated"))
     ? currentHistoryWrite(p.orgId, `${p.ref.module}:${p.ref.entityType}`, p.ref.entityId)
     : null;
   const after = write ? await write.readAfter() : null;
@@ -81,10 +90,8 @@ export async function log(p: LogParams, db: Kysely<MetaDB> = meta): Promise<void
       ? { ...(p.diff as Record<string, unknown>), changes: changesOf(p.before, p.diff), ...((p.before as { id?: unknown })?.id === p.ref.entityId ? { version_before: p.before } : {}) }
       : p.diff;
 
-  const diff = await keepActivityReferenceTitles(p.orgId, [`${p.ref.module}:${p.ref.entityType}`], secretHistoryDiff(rawDiff));
+  const diff = opts.ownDiffOnly ? secretHistoryDiff(rawDiff) : await keepActivityReferenceTitles(p.orgId, [`${p.ref.module}:${p.ref.entityType}`], secretHistoryDiff(rawDiff));
 
-  const traceId = write && !write.logged ? write.traceId ?? null : null;
-  if (traceId && diesHereForTests(p.orgId)) throw new Error("the api died between the change and its History line (test)");
   const line: ActivityLine = {
     org_id: p.orgId,
     user_id: userId,
@@ -97,21 +104,15 @@ export async function log(p: LogParams, db: Kysely<MetaDB> = meta): Promise<void
     api_token_id: apiTokenId,
     via_kind: via?.kind ?? null,
     via_label: via?.label ?? null,
-    trace_id: traceId,
+    trace_id: write && !write.logged ? write.traceId ?? null : null,
     occurred_at: null,
   };
-  if (db === meta) {
-    // The change this records has already been made in the workspace: a
-    // line the server's database refuses is kept there, never lost.
-    try {
-      if (metaRefusedForTests(p.orgId)) throw new Error("the server's database refused the History line (test)");
-      await insertLine(line);
-    } catch (err) {
-      if (!(await keepLine(line, err))) throw err;
-    }
-  } else {
-    await insertLine(line, db);
-  }
+  return { line, write };
+}
+
+/** What follows a line landing: its write is logged, a create is noted, and
+ *  whoever watches the workspace's writes is told. */
+export function afterLogged(p: Pick<LogParams, "orgId" | "action" | "ref">, write: ReturnType<typeof currentHistoryWrite>): void {
   if (write) write.logged = true;
   if (p.action.endsWith("_created")) noteCreatedLog(p.ref.module, p.ref.entityType, p.ref.entityId);
   for (const fn of writeObservers) {
@@ -130,6 +131,24 @@ export async function log(p: LogParams, db: Kysely<MetaDB> = meta): Promise<void
       .execute()
       .catch((err) => console.error("[activity] retention sweep failed:", (err as Error).message)));
   }
+}
+
+export async function log(p: LogParams, db: Kysely<MetaDB> = meta): Promise<void> {
+  const { line, write } = await lineOf(p);
+  if (line.trace_id && diesHereForTests(p.orgId, { action: p.action, entityId: p.ref.entityId })) throw new Error("the api died between the change and its History line (test)");
+  if (db === meta) {
+    // The change this records has already been made in the workspace: a
+    // line the server's database refuses is kept there, never lost.
+    try {
+      if (metaRefusedForTests(p.orgId)) throw new Error("the server's database refused the History line (test)");
+      await insertLine(line);
+    } catch (err) {
+      if (!(await keepLine(line, err))) throw err;
+    }
+  } else {
+    await insertLine(line, db);
+  }
+  afterLogged(p, write);
 }
 
 /** The name each record of a kind was created with, for the ones whose

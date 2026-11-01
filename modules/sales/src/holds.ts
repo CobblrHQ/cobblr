@@ -1,3 +1,4 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 // A hold: a draft order that sets stock aside for a customer (#8838).
 //
 // Holding reserves each stocked line's quantity: inventory carries the
@@ -142,7 +143,7 @@ export async function releaseExpiredHolds(db: Kysely<SalesDB>, orgId: string, to
 }
 
 export function registerHoldSweep(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: "sales.holds",
     everyMs: 60 * 60 * 1000,
     module: "sales",
@@ -155,5 +156,11 @@ export function registerHoldSweep(): void {
         return { released: 0 };
       }
     },
-  });
+  }, hasHoldWork));
+}
+
+export async function hasHoldWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<SalesDB>).selectFrom("sales_orders").select("id")
+    .where("held_at", "is not", null).where("hold_until", "is not", null)
+    .limit(1).executeTakeFirst();
 }

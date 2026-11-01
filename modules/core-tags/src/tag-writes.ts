@@ -40,9 +40,6 @@ async function byName(db: Db, name: string) {
   return db.selectFrom("core_tags_tags").selectAll().where(sql`lower(name)`, "=", name.trim().toLowerCase()).executeTakeFirst();
 }
 
-async function log(w: Writer, action: string, ref: { module: string; entityType: string; entityId: string }, diff: unknown, before?: unknown): Promise<void> {
-  await platform().activity.log({ orgId: w.orgId, userId: w.userId, action, ref, diff, ...(before !== undefined ? { before } : {}) });
-}
 
 const tagRef = (id: string) => ({ module: "core-tags", entityType: "tag", entityId: id });
 const recordRef = (s: Source) => ({ module: s.source_module, entityType: s.source_type, entityId: s.source_id });
@@ -55,11 +52,15 @@ export async function createTag(
 ) {
   let row;
   try {
-    row = await db
-      .insertInto("core_tags_tags")
-      .values({ name: v.name.trim(), color: v.color ?? null, parent_id: v.parent_id ?? null, icon: v.icon ?? null })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    row = await platform().activity.transaction(w.orgId, db, async (trx, log) => {
+      const row = await trx
+        .insertInto("core_tags_tags")
+        .values({ name: v.name.trim(), color: v.color ?? null, parent_id: v.parent_id ?? null, icon: v.icon ?? null })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({ orgId: w.orgId, userId: w.userId, action: "tag_created", ref: tagRef(row.id), diff: { name: row.name } });
+      return row;
+    });
   } catch (err) {
     if (isUniqueViolation(err)) {
       const existing = await byName(db, v.name);
@@ -68,7 +69,6 @@ export async function createTag(
     throw err;
   }
   await platform().events.emit("core-tags.tag.created", { orgId: w.orgId, tagId: row.id, name: row.name });
-  await log(w, "tag_created", tagRef(row.id), { name: row.name });
   return row;
 }
 
@@ -93,8 +93,21 @@ export async function updateTag(db: Db, w: Writer, id: string, patch: Record<str
   const set: Record<string, unknown> = { ...patch, updated_at: new Date() };
   if (typeof set.name === "string") set.name = set.name.trim();
   let row;
+  let changed: Record<string, { from: unknown; to: unknown }> = {};
   try {
-    row = await db.updateTable("core_tags_tags").set(set).where("id", "=", id).returningAll().executeTakeFirst();
+    row = await platform().activity.transaction(w.orgId, db, async (trx, log) => {
+      const row = await trx.updateTable("core_tags_tags").set(set).where("id", "=", id).returningAll().executeTakeFirst();
+      if (!row) return row;
+      changed = {};
+      for (const k of Object.keys(patch)) {
+        const from = (before as Record<string, unknown>)[k] ?? null;
+        const to = (row as Record<string, unknown>)[k] ?? null;
+        if (from !== to) changed[k] = { from, to };
+      }
+
+      if (Object.keys(changed).length) await log({ orgId: w.orgId, userId: w.userId, action: "tag_updated", ref: tagRef(row.id), diff: patch, before });
+      return row;
+    });
   } catch (err) {
     if (isUniqueViolation(err) && typeof set.name === "string") {
       const existing = await byName(db, set.name);
@@ -103,16 +116,8 @@ export async function updateTag(db: Db, w: Writer, id: string, patch: Record<str
     throw err;
   }
   if (!row) return null;
-  const changed: Record<string, { from: unknown; to: unknown }> = {};
-  for (const k of Object.keys(patch)) {
-    const from = (before as Record<string, unknown>)[k] ?? null;
-    const to = (row as Record<string, unknown>)[k] ?? null;
-    if (from !== to) changed[k] = { from, to };
-  }
   if (Object.keys(changed).length) {
     await platform().events.emit("core-tags.tag.updated", { orgId: w.orgId, tagId: row.id, name: row.name, changed });
-    // The patch with the row as it was: the log works out old → new itself.
-    await log(w, "tag_updated", tagRef(row.id), patch, before);
   }
   return row;
 }
@@ -120,22 +125,30 @@ export async function updateTag(db: Db, w: Writer, id: string, patch: Record<str
 /** Delete a tag; its assignments go with it (the database cascades). */
 export async function deleteTag(db: Db, w: Writer, id: string) {
   const on = await db.selectFrom("core_tags_assignments").select(({ fn }) => fn.countAll<number>().as("n")).where("tag_id", "=", id).executeTakeFirst();
-  const row = await db.deleteFrom("core_tags_tags").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
+  const row = await platform().activity.transaction(w.orgId, db, async (trx, log) => {
+    const row = await trx.deleteFrom("core_tags_tags").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
+
+    if (row) await log({ orgId: w.orgId, userId: w.userId, action: "tag_deleted", ref: tagRef(row.id), diff: { name: row.name, was_on: Number(on?.n ?? 0) } });
+    return row;
+  });
   if (!row) return null;
   await platform().events.emit("core-tags.tag.deleted", { orgId: w.orgId, tagId: row.id, name: row.name });
-  await log(w, "tag_deleted", tagRef(row.id), { name: row.name, was_on: Number(on?.n ?? 0) });
   return row;
 }
 
 /** Put a tag on a record. Idempotent on (tag, record), including when two
  *  callers do it at once: the loser reads the winner's row. */
 export async function attachTag(db: Db, w: Writer, tag: { id: string; name: string }, s: Source) {
-  const inserted = await db
-    .insertInto("core_tags_assignments")
-    .values({ tag_id: tag.id, source_module: s.source_module, source_type: s.source_type, source_id: s.source_id })
-    .onConflict((oc) => oc.columns(["tag_id", "source_module", "source_type", "source_id"]).doNothing())
-    .returningAll()
-    .executeTakeFirst();
+  const inserted = await platform().activity.transaction(w.orgId, db, async (trx, log) => {
+    const inserted = await trx
+      .insertInto("core_tags_assignments")
+      .values({ tag_id: tag.id, source_module: s.source_module, source_type: s.source_type, source_id: s.source_id })
+      .onConflict((oc) => oc.columns(["tag_id", "source_module", "source_type", "source_id"]).doNothing())
+      .returningAll()
+      .executeTakeFirst();
+    if (inserted) await log({ orgId: w.orgId, userId: w.userId, action: "tag_attached", ref: recordRef(s), diff: { tag: tag.name, tag_id: tag.id } });
+    return inserted;
+  });
   if (!inserted) {
     const row = await db
       .selectFrom("core_tags_assignments")
@@ -148,26 +161,30 @@ export async function attachTag(db: Db, w: Writer, tag: { id: string; name: stri
     return { row, created: false };
   }
   await platform().events.emit("core-tags.assignment.created", { orgId: w.orgId, tagId: tag.id, ...s });
-  await log(w, "tag_attached", recordRef(s), { tag: tag.name, tag_id: tag.id });
   return { row: inserted, created: true };
 }
 
 /** Take a tag off a record, by the assignment's id or by (tag, record). */
 export async function detachTag(db: Db, w: Writer, by: { id: string } | { tag_id: string; source: Source }) {
-  let q = db.deleteFrom("core_tags_assignments");
-  if ("id" in by) q = q.where("id", "=", by.id);
-  else
-    q = q
-      .where("tag_id", "=", by.tag_id)
-      .where("source_module", "=", by.source.source_module)
-      .where("source_type", "=", by.source.source_type)
-      .where("source_id", "=", by.source.source_id);
-  const row = await q.returning(["id", "tag_id", "source_module", "source_type", "source_id"]).executeTakeFirst();
+  const row = await platform().activity.transaction(w.orgId, db, async (trx, log) => {
+    let q = trx.deleteFrom("core_tags_assignments");
+    if ("id" in by) q = q.where("id", "=", by.id);
+    else
+      q = q
+        .where("tag_id", "=", by.tag_id)
+        .where("source_module", "=", by.source.source_module)
+        .where("source_type", "=", by.source.source_type)
+        .where("source_id", "=", by.source.source_id);
+    const row = await q.returning(["id", "tag_id", "source_module", "source_type", "source_id"]).executeTakeFirst();
+    if (!row) return null;
+    const tag = await trx.selectFrom("core_tags_tags").select("name").where("id", "=", row.tag_id).executeTakeFirst();
+    const s: Source = { source_module: row.source_module, source_type: row.source_type, source_id: row.source_id };
+    await log({ orgId: w.orgId, userId: w.userId, action: "tag_detached", ref: recordRef(s), diff: { tag: tag?.name ?? null, tag_id: row.tag_id } });
+    return row;
+  });
   if (!row) return null;
-  const tag = await db.selectFrom("core_tags_tags").select("name").where("id", "=", row.tag_id).executeTakeFirst();
   const s: Source = { source_module: row.source_module, source_type: row.source_type, source_id: row.source_id };
   await platform().events.emit("core-tags.assignment.deleted", { orgId: w.orgId, tagId: row.tag_id, ...s });
-  await log(w, "tag_detached", recordRef(s), { tag: tag?.name ?? null, tag_id: row.tag_id });
   return row;
 }
 
@@ -176,7 +193,7 @@ export async function detachTag(db: Db, w: Writer, by: { id: string } | { tag_id
  *  Every record whose tags changed hears of it: the moved ones gain the
  *  target and lose the source, the dropped ones lose the source. */
 export async function mergeTag(db: Db, w: Writer, source: { id: string; name: string }, target: { id: string; name: string }) {
-  const { moved, dropped } = await db.transaction().execute(async (trx) => {
+  const { moved, dropped } = await platform().activity.transaction(w.orgId, db, async (trx, log) => {
     const dropped = await sql<Source>`
       delete from core_tags_assignments a
       where a.tag_id = ${source.id}
@@ -196,13 +213,13 @@ export async function mergeTag(db: Db, w: Writer, source: { id: string; name: st
       .returning(["source_module", "source_type", "source_id"])
       .execute();
     await trx.deleteFrom("core_tags_tags").where("id", "=", source.id).execute();
+    await log({ orgId: w.orgId, userId: w.userId, action: "tag_merged", ref: tagRef(target.id), diff: { from: source.name, from_id: source.id, into: target.name, moved: moved.length, already_there: dropped.rows.length } });
     return { moved, dropped: dropped.rows };
   });
   const events = platform().events;
   for (const s of [...moved, ...dropped]) await events.emit("core-tags.assignment.deleted", { orgId: w.orgId, tagId: source.id, ...s });
   for (const s of moved) await events.emit("core-tags.assignment.created", { orgId: w.orgId, tagId: target.id, ...s });
   await events.emit("core-tags.tag.deleted", { orgId: w.orgId, tagId: source.id, name: source.name });
-  await log(w, "tag_merged", tagRef(target.id), { from: source.name, from_id: source.id, into: target.name, moved: moved.length, already_there: dropped.length });
   return moved.length;
 }
 
@@ -278,33 +295,37 @@ export async function restoreTag(db: Db, orgId: string, id: string, by: string |
   // Its parent may have gone since: then it comes back at the top level.
   const parentThere =
     !row.parent_id || !!(await db.selectFrom("core_tags_tags").select("id").where("id", "=", row.parent_id).executeTakeFirst());
-  await restoreRowTree(db, "core_tags_tags", { image: parentThere ? row : { ...row, parent_id: null } }, "core_tags_");
+  const putBack = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await restoreRowTree(trx, "core_tags_tags", { image: parentThere ? row : { ...row, parent_id: null } }, "core_tags_");
 
-  let putBack = 0;
-  for (const a of parse<KeptAssignment[]>(kept.assignments)) {
-    const now = await db.selectFrom("core_tags_assignments").select(["id", "tag_id"]).where("id", "=", a.id).executeTakeFirst();
-    if (now) {
-      // Moved onto the tag it was merged into: move it back.
-      if (now.tag_id !== id) await db.updateTable("core_tags_assignments").set({ tag_id: id }).where("id", "=", a.id).execute();
-      putBack++;
-      continue;
+    let putBack = 0;
+    for (const a of parse<KeptAssignment[]>(kept.assignments)) {
+      const now = await trx.selectFrom("core_tags_assignments").select(["id", "tag_id"]).where("id", "=", a.id).executeTakeFirst();
+      if (now) {
+        // Moved onto the tag it was merged into: move it back.
+        if (now.tag_id !== id) await trx.updateTable("core_tags_assignments").set({ tag_id: id }).where("id", "=", a.id).execute();
+        putBack++;
+        continue;
+      }
+      // Removed with the tag, or dropped by the merge because the other tag
+      // already carried that record: add it again.
+      const added = await trx
+        .insertInto("core_tags_assignments")
+        .values({ id: a.id, tag_id: id, source_module: a.source_module, source_type: a.source_type, source_id: a.source_id, created_at: new Date(a.created_at) })
+        .onConflict((oc) => oc.doNothing())
+        .executeTakeFirst();
+      if (Number(added.numInsertedOrUpdatedRows ?? 0n) > 0) putBack++;
     }
-    // Removed with the tag, or dropped by the merge because the other tag
-    // already carried that record: add it again.
-    const added = await db
-      .insertInto("core_tags_assignments")
-      .values({ id: a.id, tag_id: id, source_module: a.source_module, source_type: a.source_type, source_id: a.source_id, created_at: new Date(a.created_at) })
-      .onConflict((oc) => oc.doNothing())
-      .executeTakeFirst();
-    if (Number(added.numInsertedOrUpdatedRows ?? 0n) > 0) putBack++;
-  }
-  const children = parse<string[]>(kept.children);
-  if (children.length) {
-    await db.updateTable("core_tags_tags").set({ parent_id: id }).where("id", "in", children).where("parent_id", "is", null).execute();
-  }
+    const children = parse<string[]>(kept.children);
+    if (children.length) {
+      await trx.updateTable("core_tags_tags").set({ parent_id: id }).where("id", "in", children).where("parent_id", "is", null).execute();
+    }
+
+    await log({ orgId, userId: by, action: "tag_restored", ref: tagRef(id), diff: { name: row.name, put_back_on: putBack, was_merged_into: kept.merged_into ?? null } });
+    return putBack;
+  });
   await platform().deletedRecords.forget(orgId, "core-tags:tag", id);
   await platform().events.emit("core-tags.tag.created", { orgId, tagId: id, name: row.name });
-  await log({ orgId, userId: by }, "tag_restored", tagRef(id), { name: row.name, put_back_on: putBack, was_merged_into: kept.merged_into ?? null });
   return { name: row.name, assignments: putBack, mergedInto: kept.merged_into };
 }
 

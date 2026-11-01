@@ -22,28 +22,68 @@ import { dropModuleRole } from "../sandbox/module-role.js";
 // deletion open. The held request errors through its own query path.
 const DRAIN_MS = Number(process.env.COBBLR_DELETE_DRAIN_MS) || 5_000;
 
-export async function hardDeleteOrg(orgId: string): Promise<void> {
-  // Who asked, by route and (in a test run) the test file, so a read that
-  // meets a workspace mid-deletion can be traced to the request that removed
-  // it (#7682: a search met one and nothing said whose teardown it was).
-  console.log(`[delete-org] deleting workspace ${orgId}, asked by ${currentRequestScope()?.label ?? "no request (a sweep or a boot pass)"}`);
+/** The steps of a workspace's delete, in the order that leaves nothing a
+ *  person can meet half done. The database and the server's rows are two
+ *  commits, so the intent is committed first: a delete that dies after the
+ *  drop leaves a row stamped `dropping_at`, which the tenant door answers as
+ *  being deleted, the switcher leaves out, and the deletion reaper finishes.
+ *  Unstamped, it left a workspace with no database in every member's
+ *  switcher, which the reaper could never finish (#9071). */
+export interface DeleteSteps {
+  /** Commits `orgs.dropping_at`; every later step may die and be run again. */
+  mark: (orgId: string) => Promise<void>;
+  eraseFiles: (orgId: string) => Promise<void>;
+  /** Drops the database and its roles; a database already gone is fine. */
+  dropDatabase: (orgId: string) => Promise<void>;
+  /** Every row of the workspace on the server, in one transaction. */
+  removeRows: (orgId: string) => Promise<void>;
+  afterRows: (orgId: string) => Promise<void>;
+  /** Holds the workspace closed to new requests while `work` runs. */
+  closed: (orgId: string, work: () => Promise<void>) => Promise<void>;
+}
+
+export async function deleteOrgWith(orgId: string, steps: DeleteSteps): Promise<void> {
+  await steps.mark(orgId);
   // The workspace's stored files first, while its database (which lists them)
   // still opens: inside withTenantDeleting nothing can open it. Dropping the
   // database used to be the whole delete, so every photo and file of every
   // deleted workspace stayed on disk for good. A failure is loud but does not
   // keep the workspace: the person asked for it gone.
   try {
-    await platform().files.eraseWorkspace(orgId);
+    await steps.eraseFiles(orgId);
   } catch (err) {
     console.error(`[delete-org] org ${orgId}: its stored files were not all removed:`, (err as Error).message);
   }
   // Marked as deleting for the whole run: a request that lands in here gets a
   // refusal from getTenantDb instead of opening a fresh pool to a database
   // whose backends are about to be terminated (#2957).
-  await withTenantDeleting(orgId, () => deleteOrg(orgId));
+  await steps.closed(orgId, async () => {
+    await steps.dropDatabase(orgId);
+    await steps.removeRows(orgId);
+  });
+  await steps.afterRows(orgId);
 }
 
-async function deleteOrg(orgId: string): Promise<void> {
+const realSteps: DeleteSteps = {
+  mark: async (orgId) => {
+    await meta.updateTable("orgs").set({ dropping_at: sql`coalesce(dropping_at, now())` as never }).where("id", "=", orgId).execute();
+  },
+  eraseFiles: (orgId) => platform().files.eraseWorkspace(orgId),
+  dropDatabase: (orgId) => dropDatabase(orgId),
+  removeRows: (orgId) => removeRows(orgId),
+  afterRows: (orgId) => removeServerBridgeEnrollment(orgId),
+  closed: (orgId, work) => withTenantDeleting(orgId, work),
+};
+
+export async function hardDeleteOrg(orgId: string): Promise<void> {
+  // Who asked, by route and (in a test run) the test file, so a read that
+  // meets a workspace mid-deletion can be traced to the request that removed
+  // it (#7682: a search met one and nothing said whose teardown it was).
+  console.log(`[delete-org] deleting workspace ${orgId}, asked by ${currentRequestScope()?.label ?? "no request (a sweep or a boot pass)"}`);
+  await deleteOrgWith(orgId, realSteps);
+}
+
+async function dropDatabase(orgId: string): Promise<void> {
   const dbName = await meta
     .selectFrom("orgs")
     .select("db_name")
@@ -121,24 +161,28 @@ async function deleteOrg(orgId: string): Promise<void> {
     }
   }
 
-  // FKs with ON DELETE CASCADE handle most child rows
-  // (memberships, modules, bundles, bindings, field_defs, invites).
-  // activity_log doesn't cascade — clear it explicitly.
-  await meta.deleteFrom("activity_log").where("org_id", "=", orgId).execute();
-  await meta.deleteFrom("notifications").where("org_id", "=", orgId).execute();
-  await meta.deleteFrom("notification_subscriptions").where("org_id", "=", orgId).execute();
-  // Feedback is the operator's, not the workspace's: the report stays, under
-  // the name it was filed from. (The foreign key clears org_id on its own too;
-  // this is what keeps the name.)
-  await meta
-    .updateTable("feedback")
-    .set((eb) => ({
-      workspace_name: eb.selectFrom("orgs").select("name").where("id", "=", orgId),
-      org_id: null,
-      updated_at: sql`updated_at`,
-    }))
-    .where("org_id", "=", orgId)
-    .execute();
-  await meta.deleteFrom("orgs").where("id", "=", orgId).execute();
-  await removeServerBridgeEnrollment(orgId);
+}
+
+async function removeRows(orgId: string): Promise<void> {
+  await meta.transaction().execute(async (trx) => {
+    // FKs with ON DELETE CASCADE handle most child rows
+    // (memberships, modules, bundles, bindings, field_defs, invites).
+    // activity_log doesn't cascade — clear it explicitly.
+    await trx.deleteFrom("activity_log").where("org_id", "=", orgId).execute();
+    await trx.deleteFrom("notifications").where("org_id", "=", orgId).execute();
+    await trx.deleteFrom("notification_subscriptions").where("org_id", "=", orgId).execute();
+    // Feedback is the operator's, not the workspace's: the report stays, under
+    // the name it was filed from. (The foreign key clears org_id on its own too;
+    // this is what keeps the name.)
+    await trx
+      .updateTable("feedback")
+      .set((eb) => ({
+        workspace_name: eb.selectFrom("orgs").select("name").where("id", "=", orgId),
+        org_id: null,
+        updated_at: sql`updated_at`,
+      }))
+      .where("org_id", "=", orgId)
+      .execute();
+    await trx.deleteFrom("orgs").where("id", "=", orgId).execute();
+  });
 }

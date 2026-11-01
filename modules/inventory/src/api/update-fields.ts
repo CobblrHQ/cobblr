@@ -74,17 +74,19 @@ export async function updatePartFields(ctx: EntityUpdateContext): Promise<Entity
   if (Object.keys(native).length) await writer.update(ctx.orgId, ctx.id, native);
   if (Object.keys(split.custom).length) await writer.mergeMetadata(ctx.orgId, ctx.id, split.custom);
 
+  await platform().activity.transaction(ctx.orgId, db, async (_trx, log) => {
+    await log({
+      orgId: ctx.orgId,
+      userId: ctx.userId,
+      action: "part_updated",
+      ref: { module: "inventory", entityType: "part", entityId: ctx.id },
+      diff: Object.keys(split.custom).length ? { ...native, metadata: split.custom } : native,
+      before,
+    });
+  });
   const holdings = await holdingsCtxForPart(ctx.orgId, ctx.userId, ctx.id);
   if (holdings) await spreadIdentity(holdings, ctx.id, native);
 
-  await platform().activity.log({
-    orgId: ctx.orgId,
-    userId: ctx.userId,
-    action: "part_updated",
-    ref: { module: "inventory", entityType: "part", entityId: ctx.id },
-    diff: Object.keys(split.custom).length ? { ...native, metadata: split.custom } : native,
-    before,
-  });
   const beforeMeta = coerceMetadata((before as { metadata?: unknown }).metadata);
   await platform().events.emit("inventory.part.updated", {
     orgId: ctx.orgId,

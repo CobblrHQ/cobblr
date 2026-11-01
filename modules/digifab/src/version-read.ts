@@ -9,11 +9,12 @@
 // the machine (machines/src/versions.ts), so a silent printer is never counted
 // as up to date.
 
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import type { DeviceVersions } from "./drivers/types.js";
-import { availableDriverKeys } from "./drivers/registry.js";
+import { availableDriverKeys, BUILTIN_DRIVERS } from "./drivers/registry.js";
 import { buildDriverById } from "./jobs-core.js";
 
 export const VERSION_READ_PASS = "digifab.version-read";
@@ -89,10 +90,19 @@ export async function reportLinkedVersions(db: Kysely<DigifabDB>, orgId: string,
 }
 
 export function registerVersionRead(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: VERSION_READ_PASS,
     module: "digifab",
     everyMs: EVERY_MS,
     visit: ({ orgId, db, now }) => readVersionsFor(orgId, db as Kysely<DigifabDB>, now),
-  });
+  }, hasVersionReadWork));
+}
+
+export async function hasVersionReadWork({ db, orgId }: { db: unknown; orgId: string }): Promise<boolean> {
+  const connections = (await platform().devices.connections().list(orgId)).filter(c => c.enabled);
+  if (!connections.length) return false;
+  if (connections.some(c => BUILTIN_DRIVERS.some(d => d.key === c.type))) return true;
+  return !!await (db as Kysely<DigifabDB>).selectFrom("digifab_drivers").select("key")
+    .where("enabled", "=", true).where("key", "in", connections.map(c => c.type))
+    .limit(1).executeTakeFirst();
 }

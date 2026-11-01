@@ -70,7 +70,7 @@ export function registerPackageReceiving() {
     const receiptKey = createHash("sha256").update(`${fam.child}\0${p.receipt_key ?? rawCode}`).digest("hex");
     const labelHash = createHash("sha256").update(rawCode).digest("hex");
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<InventoryDB>;
-    const received = await db.transaction().execute(async trx => {
+    const received = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
       await sql`select pg_advisory_xact_lock(hashtextextended(${`receipt:${receiptKey}`}, 0))`.execute(trx);
       await sql`select pg_advisory_xact_lock(hashtextextended(${`${fam.parent}:${identity.toLowerCase()}`}, 0))`.execute(trx);
       const prior = await trx.selectFrom("inventory_package_receipts").selectAll().where("receipt_key", "=", receiptKey).executeTakeFirst();
@@ -108,13 +108,13 @@ export function registerPackageReceiving() {
       }
       await trx.insertInto("inventory_package_receipts").values({ receipt_key: receiptKey, label_hash: labelHash, part_id: part.id, type_id: type.id, quantity: quantity.data }).execute();
       await recordConsumption(trx, { partId: part.id, delta: quantity.data, reason: "Package received", sourceKind: "inventory:package-receipt", sourceId: receiptKey, byUser: ctx.userId ?? null });
+      if (typeCreated) await log({ orgId: ctx.orgId, userId: ctx.userId ?? null, action: "part_created", ref: { module: "inventory", entityType: "part", entityId: type.id }, diff: { name: identity } });
+      await log({ orgId: ctx.orgId, userId: ctx.userId ?? null, action: p.partId ? "part_restocked" : "part_created", ref: { module: "inventory", entityType: "part", entityId: part.id }, diff: { name: identity, qty: quantity.data } });
       return { part_id: part.id, type_id: type.id, quantity: quantity.data, already_received: false, type_created: typeCreated, newQty: p.partId ? Number(part.qty) + quantity.data : quantity.data, minQty: part.min_qty == null ? null : Number(part.min_qty) };
     });
     await platform().pairings.create({ orgId: ctx.orgId, sourceKind: "inventory:part", sourceId: received.part_id, targetKind: "inventory:part", targetId: received.type_id, relationshipKind: fam.rel, createdBy: ctx.userId ?? null });
     if (!p.partId && p.location_id) await platform().placement.place({ orgId: ctx.orgId, containee: { kind: "inventory:part", id: received.part_id }, container: { kind: "core-locations:location", id: p.location_id } });
     if (!received.already_received) {
-      if (received.type_created) await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId ?? null, action: "part_created", ref: { module: "inventory", entityType: "part", entityId: received.type_id }, diff: { name: identity } });
-      await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId ?? null, action: p.partId ? "part_restocked" : "part_created", ref: { module: "inventory", entityType: "part", entityId: received.part_id }, diff: { name: identity, qty: quantity.data } });
       await stockMoved(db, ctx.orgId, { partId: received.part_id, delta: received.quantity, newQty: received.newQty, minQty: received.minQty, reason: "Package received", ledger: false });
       if (!p.partId) await platform().events.emit("inventory.part.created", { orgId: ctx.orgId, partId: received.part_id });
       // The label names who sold it and the buyer's PO, so whoever recorded the

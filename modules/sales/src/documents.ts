@@ -19,7 +19,7 @@ export type PrepareDocumentInput = z.input<typeof PrepareDocument>;
 export async function prepareDocument(db: Kysely<SalesDB>, orgId: string, userId: string | null, orderId: string, raw: unknown, instance?: string) {
   const input = PrepareDocument.parse(raw);
   const currency = await platform().money.currency(orgId);
-  const result = await db.transaction().execute(async trx => {
+  const result = await platform().activity.transaction(orgId, db, async (trx, log) => {
     let query = trx.selectFrom("sales_orders").selectAll().where("id", "=", orderId);
     if (instance) query = query.where("instance", "=", instance);
     const order = await query.forUpdate().executeTakeFirst();
@@ -49,9 +49,9 @@ export async function prepareDocument(db: Kysely<SalesDB>, orgId: string, userId
     const document = await trx.insertInto("sales_order_documents").values(values)
       .onConflict(oc => oc.columns(["order_id", "kind"]).doUpdateSet({ snapshot: values.snapshot, revision: sql`gen_random_uuid()`, created_at: new Date() }))
       .returningAll().executeTakeFirstOrThrow();
+    await log({ orgId, userId, action: "order_document_prepared", ref: { module: "sales", entityType: "order", entityId: orderId }, diff: { kind: input.kind, number: document.number } });
     return { document, reused: false };
   });
-  if (!result.reused) await platform().activity.log({ orgId, userId, action: "order_document_prepared", ref: { module: "sales", entityType: "order", entityId: orderId }, diff: { kind: input.kind, number: result.document.number } });
   return result;
 }
 

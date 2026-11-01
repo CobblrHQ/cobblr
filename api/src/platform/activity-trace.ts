@@ -206,6 +206,18 @@ export async function endIntent(orgId: string, id: string): Promise<void> {
  *  to read, once the intent is old enough. */
 export const leaveIntent = (orgId: string): void => noted(orgId);
 
+/** Mark a workspace a line may be left in: before a change whose line is
+ *  kept beside it (activity-outbox.ts), as before an intent. */
+export async function markForTrace(orgId: string): Promise<void> {
+  await markTouched(orgId).catch((err) => {
+    console.error(`[activity] could not mark ${orgId} for its History lines:`, err);
+    noted(orgId);
+  });
+}
+
+/** A kept line was not sent: a round sends it. */
+export const lineWaiting = (orgId: string): void => noted(orgId);
+
 async function recoverIntent(orgId: string, i: Selectable<TraceDB["core_activity_log_intents"]>): Promise<boolean> {
   const w = await platform().entities.getWriter(orgId, i.kind).catch(() => null);
   const read = w?.snapshot?.bind(w) ?? w?.read?.bind(w);
@@ -302,19 +314,26 @@ export function registerTraceSweep(): void {
 // ── Test doors (mounted only with COBBLR_TEST_ORG_POOL) ─────────────────
 
 type Fault = "refuse" | "die";
-const faults = new Map<string, Fault>();
+/** Which line a `die` is for: a test's own, never another line written in
+ *  the same workspace a moment earlier (an after-commit handler of the test
+ *  before it took a die meant for this one, #9052). */
+export interface FaultMatch { action?: string; entityId?: string }
+const faults = new Map<string, { fault: Fault; match: FaultMatch }>();
 /** `refuse`: the server's database refuses this workspace's History lines
- *  until cleared. `die`: the next writer's line is lost the way a process
- *  dying after the change would lose it, once. */
-export function setTraceFaultForTests(orgId: string, fault: Fault | null): void {
-  if (fault) faults.set(orgId, fault);
+ *  until cleared. `die`: the next line `match` names is lost the way a
+ *  process dying after the change would lose it, once. */
+export function setTraceFaultForTests(orgId: string, fault: Fault | null, match: FaultMatch = {}): void {
+  if (fault) faults.set(orgId, { fault, match });
   else faults.delete(orgId);
 }
 export function metaRefusedForTests(orgId: string): boolean {
-  return faults.get(orgId) === "refuse";
+  return faults.get(orgId)?.fault === "refuse";
 }
-export function diesHereForTests(orgId: string): boolean {
-  if (faults.get(orgId) !== "die") return false;
+export function diesHereForTests(orgId: string, line: { action: string; entityId: string }): boolean {
+  const f = faults.get(orgId);
+  if (f?.fault !== "die") return false;
+  if (f.match.action && f.match.action !== line.action) return false;
+  if (f.match.entityId && f.match.entityId !== line.entityId) return false;
   faults.delete(orgId);
   return true;
 }

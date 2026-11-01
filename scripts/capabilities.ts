@@ -50,7 +50,10 @@ export interface OwnsCapability extends Base {
   use: string;
   /** Files in `scope` that do a DIFFERENT thing with the same shape, each with
    *  why. Named one by one, never a pattern, so an exemption is a decision
-   *  somebody wrote down, and one whose file is gone fails as a stale scope. */
+   *  somebody wrote down, and one whose file is gone fails as a stale scope.
+   *  Prefer the file's own marker, `// capability-except <id>: <why>`
+   *  (scripts/lib/capability-except.ts): this table is one shared block, and
+   *  parallel PRs over different modules conflicted in it. */
   except?: Record<string, string>;
 }
 
@@ -71,6 +74,37 @@ export interface VocabularyCapability extends Base {
 }
 
 export const CAPABILITIES: Capability[] = [
+  {
+    kind: "owns",
+    id: "db:a-try-lock-takes-no-connection-of-its-own",
+    what: "a session advisory try-lock is taken through tryHoldExclusive, runExclusive or openLockSession, which hold every one this api takes on its one lock connection",
+    why: "every sweeps.run and runExclusive dialled a connection of its own for its lock, and on a catch-up roll the new api held 87 to 101 of them still logging in beside a plan of 46: 7,246 refusals in ten minutes (staging, 2026-11-01)",
+    owner: "api/src/platform/exclusive.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /\.query(<[^>]*>)?\(\s*["'`][^"'`]*pg_try_advisory_lock/,
+    use: "await tryHoldExclusive(name) or platform().exclusive.run(name, work) from api/src/platform/exclusive.ts",
+  },
+  {
+    kind: "owns",
+    id: "modules:a-migration-marker-never-moves-backwards",
+    what: "a workspace's module migration marker (org_modules.last_migration, migration_count) is updated only by recordModuleMarker, which never moves it backwards",
+    why: "two apis in a roll each wrote the marker after releasing the ledger lock, and the older api's snapshot landed last: the newer api read 800 of 2,000 workspaces as behind again (2026-11-01)",
+    owner: "api/src/modules/enable.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /^(?!\s*(\/\/|\*)).*\b(last_migration|migration_count)\s*:/,
+    also: /updateTable\(\s*["']org_modules["']/,
+    use: "await recordModuleMarker(orgId, moduleName, result) from api/src/modules/enable.ts",
+  },
+  {
+    kind: "owns",
+    id: "activity:a-change-and-its-history-line-commit-together",
+    what: "a module records a change in History with platform().activity.transaction, which commits the change and its line together in the workspace's database",
+    why: "a route wrote its record and then logged the line to the server's database, so a process dying between the two left the change with no trace of who made it (#9035, #7921)",
+    owner: "api/src/platform/activity-outbox.ts",
+    scope: ["modules/*/src/**/*.ts"],
+    detect: /^(?!\s*(\/\/|\*)).*\.activity\.log\(/,
+    use: "await platform().activity.transaction(orgId, db, async (trx, log) => { …write with trx…; await log({ … }) }), recipe on #9035",
+  },
   {
     kind: "owns",
     id: "code:map-limit",
@@ -245,7 +279,6 @@ export const CAPABILITIES: Capability[] = [
     use: "totalOfLines(lines, currency) with linesTotalWords or linesTotalLabel, so a partial total says how many lines are unpriced",
     except: {
       "modules/sales/src/order-email.ts": "checks a parsed email's lines against its printed subtotal; every parsed line has a price, and a mismatch rejects the read",
-      "web/src/pages/PurchasesPage.tsx": "the lines subtotal beside the stated total, labelled by linesTotalLabel with its unpriced count",
     },
   },
   {
@@ -257,9 +290,6 @@ export const CAPABILITIES: Capability[] = [
     scope: ["modules/*/src/**/*.ts", "modules/*/src/**/*.tsx", "web/src/**/*.ts", "web/src/**/*.tsx"],
     detect: /entities\/inventory:part\?|searchEntities\(\s*"inventory:part"|entities\.list\(\s*[^,]+,\s*(?:"inventory:part"|PART)\s*,\s*\{\s*q\b/,
     use: "searchStock / stockNamed from @cobblr/platform-contract/stock-search, behind a module route (GET /modules/sales/stock, GET /modules/builds/stock)",
-    except: {
-      "modules/inventory/src/ui/NewPartDialog.tsx": "inventory's own new-record dialog looks for a same-named part in the default collection it is adding to",
-    },
   },
   {
     kind: "owns",
@@ -422,9 +452,6 @@ export const CAPABILITIES: Capability[] = [
     // .local suffix test, or a named copy.
     detect: /===\s*168\b|192\\\.168|\.endsWith\(\s*["']\.local["']\s*\)|function\s+looksLike(?:Lan|Local)/,
     use: "addressReach(raw) or needsBridge(raw, { hosted }) from @cobblr/platform-contract/address-reach, and <HomeNetworkHint> in a form",
-    except: {
-      "packages/platform-web/src/local-network.test.ts": "the browser gate's own test names the addresses it must refuse",
-    },
   },
   {
     kind: "owns",
@@ -462,9 +489,6 @@ export const CAPABILITIES: Capability[] = [
     detect: /aria-label=(?:"(?:Decrease|Increase) quantity"|\{`One (?:fewer|more) )/,
     also: /stockAdjust|adjustStock|stock-adjust|onStep\b/,
     use: "<StockStepper qty={qty} unit={unit} label={name} onStep={(delta) => …} /> (or QtyStepper, which mounts it)",
-    except: {
-      "packages/platform-web/src/AmountControl.tsx": "the measured half StockStepper hands a kg/m/L thing to; its counted mode is StockStepper's own rule",
-    },
   },
   {
     kind: "owns",
@@ -1819,7 +1843,6 @@ export const CAPABILITIES: Capability[] = [
     detect: /\bfunction\s+stripComments\b|\bconst\s+stripComments\s*=|\.replace\(\/\\\/\\\*\[(?:\\s\\S|\^)\]\*\?/,
     except: {
       "scripts/lint-deprecated-table-fks.ts": "strips SQL (`--` and block comments) from migrations; SQL is not the language the scanner reads",
-      "scripts/lint-migration-additive.ts": "strips SQL, dollar-quoted bodies and quoted literals from migrations; not TypeScript",
       "scripts/lint-fixed-chrome.ts": "the regex here is checkCss, over stylesheets: CSS has no `//` comments, and a `url(http://…)` would read as one to the TS scanner",
       "scripts/lint-inline-style-overrides.ts": "strips comments from CSS, which has only block comments; the TS scanner would take `//` in a url() for a line comment",
     },
@@ -1874,9 +1897,6 @@ export const CAPABILITIES: Capability[] = [
     owner: "modules/core-integrations/src/services.ts",
     scope: ["modules/*/src/**/*.ts", "api/src/**/*.ts"],
     detect: /\bintegrations\.registerConnector\(/,
-    except: {
-      "api/src/index.ts": "the kernel wires platform().integrations.registerConnector to its own registry; that is the thing registered through, not a connector",
-    },
     use: "registerOutboundConnector(def) from modules/core-integrations/src/services.ts",
   },
   {

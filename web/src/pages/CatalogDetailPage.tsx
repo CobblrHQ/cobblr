@@ -414,7 +414,7 @@ function ImportCsvModal({
             type="file"
             accept=".csv,text/csv"
             onChange={onFile}
-            className="text-sm"
+            className="block w-full min-w-0 text-sm"
           />
         </label>
         {csvText && (

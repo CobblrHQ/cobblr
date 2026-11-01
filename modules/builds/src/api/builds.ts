@@ -112,26 +112,29 @@ buildsRouter.post(
       }
       outputPartId = out.partId;
     }
-    const row = await db
-      .insertInto("builds_builds")
-      .values({
-        name: parsed.data.name.trim(),
-        description: parsed.data.description ?? null,
-        output_part_id: outputPartId,
-        output_qty: String(parsed.data.output_qty ?? 1),
-        notes: parsed.data.notes ?? null,
-        ...(parsed.data.metadata ? { metadata: sql`${JSON.stringify(parsed.data.metadata)}::jsonb` } : {}),
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await platform().events.emit("builds.build.created", { orgId: ctx.org.id, buildId: row.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "build_created",
-      ref: { module: "builds", entityType: "build", entityId: row.id },
-      diff: { name: row.name },
+    const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .insertInto("builds_builds")
+        .values({
+          name: parsed.data.name.trim(),
+          description: parsed.data.description ?? null,
+          output_part_id: outputPartId,
+          output_qty: String(parsed.data.output_qty ?? 1),
+          notes: parsed.data.notes ?? null,
+          ...(parsed.data.metadata ? { metadata: sql`${JSON.stringify(parsed.data.metadata)}::jsonb` } : {}),
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "build_created",
+        ref: { module: "builds", entityType: "build", entityId: row.id },
+        diff: { name: row.name },
+      });
+      return row;
     });
+    await platform().events.emit("builds.build.created", { orgId: ctx.org.id, buildId: row.id });
     res.status(201).json(row);
   }),
 );
@@ -286,24 +289,28 @@ buildsRouter.patch(
     const set = withMetadataMerged(parsed.data.metadata !== undefined ? { ...patch, metadata: parsed.data.metadata } : patch);
     // The row as it was: the record's history says what this edit changed (#4517).
     const before = await db.selectFrom("builds_builds").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
-    const row = await db
-      .updateTable("builds_builds")
-      .set(set as never)
-      .where("id", "=", req.params.id!)
-      .returningAll()
-      .executeTakeFirst();
+    const row = await platform().activity.transaction(tenantContext(req).org.id, db, async (trx, log) => {
+      const row = await trx
+        .updateTable("builds_builds")
+        .set(set as never)
+        .where("id", "=", req.params.id!)
+        .returningAll()
+        .executeTakeFirst();
+
+      if (row) await log({
+        orgId: tenantContext(req).org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "build_updated",
+        ref: { module: "builds", entityType: "build", entityId: row.id },
+        diff: { ...patch, ...(parsed.data.metadata !== undefined ? { metadata: parsed.data.metadata } : {}) },
+        before,
+      });
+      return row;
+    });
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "build not found" } });
       return;
     }
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "build_updated",
-      ref: { module: "builds", entityType: "build", entityId: row.id },
-      diff: { ...patch, ...(parsed.data.metadata !== undefined ? { metadata: parsed.data.metadata } : {}) },
-      before,
-    });
     res.json(row);
   }),
 );

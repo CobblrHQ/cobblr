@@ -21,6 +21,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 
 /** Rows per workspace per tick. */
 export const SPLIT_SERIES_PER_TICK = 50;
@@ -31,7 +32,13 @@ export const SPLIT_SERIES_PASS = "core-scan.split-series-heal";
 /** The walk is the kernel's (platform().sweeps, #3036): this registers the
  *  per-workspace visit and its cadence. */
 export function startSplitSeriesHealer(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(splitSeriesPass());
+  console.log(`[core-scan] split-series healer registered — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
+}
+
+/** The pass, narrowed to the workspaces with work (#9048). */
+export function splitSeriesPass(read?: Parameters<typeof narrowSweep>[2]) {
+  return narrowSweep({
     name: SPLIT_SERIES_PASS,
     everyMs: TICK_MS,
     drainMs: DRAIN_MS,
@@ -40,8 +47,22 @@ export function startSplitSeriesHealer(): void {
       const done = await healSplitSeriesWorkspace(orgId);
       return { visited: done.visited, healed: done.healed, backlog: done.visited >= SPLIT_SERIES_PER_TICK };
     },
-  });
-  console.log(`[core-scan] split-series healer registered — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
+  }, hasUnjudgedSplitChild, read);
+}
+
+/** A pending split child with a series nobody has judged: unjudgedPage's
+ *  filter, without the parent it reads. */
+export async function hasUnjudgedSplitChild({ db }: { db: unknown }): Promise<boolean> {
+  const tdb = db as Kysely<unknown>;
+  const { rows } = await tdb.executeQuery(sql`
+      select 1 from core_scan_inbox_items
+      where status = 'pending'
+        and suggested_metadata->>'split_from' is not null
+        and suggested_metadata->>'series' is not null
+        and (suggested_metadata->'split_series_judged') is null
+      limit 1
+    `.compile(tdb));
+  return rows.length > 0;
 }
 
 export interface SplitChildRow {

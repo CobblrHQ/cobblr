@@ -51,8 +51,10 @@ export async function sendArmCommand(db: Kysely<DigifabDB>, orgId: string, machi
   result = refusal ? { ok: false, detail: refusal } : await send();
  }
  const { operation, ...params } = command;
- await db.insertInto("digifab_arm_commands").values({ machine_id: machineId, operation, program_id: programId, params: JSON.stringify({ ...params, ...(opts.run ? { run: opts.run.id } : {}) }), user_id: actor.userId, via: actor.via, ok: result.ok, detail: result.detail ?? "" }).execute();
- await platform().activity.log({ orgId, userId: actor.userId, action: "arm_command", ref: machineRef(machineId), diff: { operation, ...params, via: actor.via, ok: result.ok, ...(result.detail ? { detail: result.detail } : {}) } });
+ await platform().activity.transaction(orgId, db, async (trx, log) => {
+   await trx.insertInto("digifab_arm_commands").values({ machine_id: machineId, operation, program_id: programId, params: JSON.stringify({ ...params, ...(opts.run ? { run: opts.run.id } : {}) }), user_id: actor.userId, via: actor.via, ok: result.ok, detail: result.detail ?? "" }).execute();
+   await log({ orgId, userId: actor.userId, action: "arm_command", ref: machineRef(machineId), diff: { operation, ...params, via: actor.via, ok: result.ok, ...(result.detail ? { detail: result.detail } : {}) } });
+ });
  if (opts.run) return { ok: result.ok, detail: result.detail, state: result.state ?? null, run_id: result.run_id ?? result.state?.run_id ?? undefined, unanswered };
  if (!result.ok) throw new ArmRefusal(result.detail || UNANSWERED);
  return { ok: true, detail: result.detail, state: result.state ?? null };

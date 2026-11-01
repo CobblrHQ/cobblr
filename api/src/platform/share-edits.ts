@@ -362,7 +362,7 @@ export async function listShareEdits(orgId: string, where: { linkId?: string; ki
     .leftJoin("share_mirror_state as m", (j) => j.onRef("m.link_id", "=", "s.link_id").onRef("m.entity_kind", "=", "s.entity_kind").onRef("m.entity_id", "=", "s.entity_id"))
     .select(["s.id", "s.link_id", "s.entity_kind", "s.entity_id", "s.field", "s.in_metadata", "s.base", "s.proposed", "s.owner_before", "s.status", "s.by_name", "s.created_at", "m.entity_id as shared_id"])
     .where("s.org_id", "=", orgId)
-    // Never an edit (heal-void-share-suggestions.ts, #6038): on no list.
+    // A reading that carried no change is stored void (#6038): on no list.
     .where("s.status", "!=", "void")
     .$if(!!where.linkId, (q) => q.where("s.link_id", "=", where.linkId!))
     .$if(!!where.kind && !!where.id, (q) => q.where("s.entity_kind", "=", where.kind!).where("s.entity_id", "=", where.id!))

@@ -14,14 +14,14 @@
 //
 // The implementation lives at api/src/platform/activity.ts +
 // api/src/routes/activity.ts; the platform exposes it via
-// platform().activity.log() to every module already. This module
+// platform().activity.transaction() to every module. This module
 // is the "official home" — a declaration of ownership.
 
 import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-activity-log",
-  version: "0.2.0",
+  version: "0.2.1",
   displayName: "Activity Log",
   description:
     "A record of every change made in your workspace: who did what, and when.",

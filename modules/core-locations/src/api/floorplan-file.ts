@@ -13,7 +13,7 @@
 // place's layout was are returned, and Undo is a function of that.
 // See docs/design-decisions/location-floor-plan.md, "A whole house as one file".
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
-import { platform } from "@cobblr/platform-contract";
+import { platform, type ActivityLogParams } from "@cobblr/platform-contract";
 import { Router } from "express";
 import { isEdge, isRotation } from "@cobblr/platform-contract/plan-clearance";
 import { FLOORPLAN_FORMAT, problemSentence, readFloorplanFile, type FloorplanContainerT, type FloorplanFileT } from "@cobblr/platform-contract/floorplan-format";
@@ -102,150 +102,156 @@ function clamp(rect: { x_mm: number; y_mm: number; w_mm: number; d_mm: number },
 /** Import a plan. `dryRun`: say what it would do and write nothing. */
 export async function importFloorplan(orgId: string, plan: FloorplanFileT, opts: { dryRun: boolean; userId: string | null }): Promise<ImportResult> {
   const db = (await platform().tenants.getDb(orgId)) as unknown as Db;
-  const steps: ImportStep[] = [];
-  const warnings: string[] = [];
-  const created: string[] = [];
-  const updated: ImportResult["updated"] = [];
-  const unit = plan.units_entered ?? "mm";
-  let fake = 0;
+  let changedAnchor: string | undefined;
+  const run = async (trx: Db, log: (p: ActivityLogParams) => Promise<void>): Promise<ImportResult> => {
+    const steps: ImportStep[] = [];
+    const warnings: string[] = [];
+    const created: string[] = [];
+    const updated: ImportResult["updated"] = [];
+    const unit = plan.units_entered ?? "mm";
+    let fake = 0;
 
-  /** The place called `name` under `parentId`, made or brought up to date. */
-  const ensure = async (parentId: string | null, name: string, kind: "area" | "container", wantOf: Fp | ((cur: Fp) => Fp), path: string): Promise<string> => {
-    const row = parentId?.startsWith("new:")
-      ? undefined
-      : await db
-          .selectFrom("core_locations_locations")
-          .select(["id", "kind", "metadata", "depth"])
-          .where((eb) => (parentId ? eb("parent_id", "=", parentId) : eb("parent_id", "is", null)))
-          .where(sql<boolean>`lower(name) = lower(${name})`)
-          .executeTakeFirst();
-    if (row) {
-      if (row.kind !== kind) warnings.push(`${path} is already ${row.kind === "area" ? "a room or area" : "a container"} here; kept it that way.`);
-      const cur = floorplanOf(row.metadata);
-      const want = typeof wantOf === "function" ? wantOf(cur) : wantOf;
-      const changed = Object.keys(want).some((k) => !same(cur[k], want[k]));
-      steps.push({ path, kind, action: changed ? "update" : "unchanged" });
-      if (changed && !opts.dryRun) {
-        updated.push({ id: row.id, before: (row.metadata as { floorplan?: unknown } | null)?.floorplan ?? null });
-        await db
-          .updateTable("core_locations_locations")
-          .set({ metadata: platform().db.mergeJsonb("metadata", { floorplan: { ...cur, ...want } }) as never, updated_at: new Date() } as never)
-          .where("id", "=", row.id)
-          .execute();
-      }
-      return row.id;
-    }
-    const want = typeof wantOf === "function" ? wantOf({}) : wantOf;
-    steps.push({ path, kind, action: "create" });
-    if (opts.dryRun) return `new:${++fake}`;
-    const parent = parentId ? await db.selectFrom("core_locations_locations").select("depth").where("id", "=", parentId).executeTakeFirst() : null;
-    // SIBLING-DUP-OK: matched by name under this parent just above, so it is made only when none is there.
-    const ins = await db
-      .insertInto("core_locations_locations")
-      .values({ name, parent_id: parentId, depth: parent ? parent.depth + 1 : 0, kind, metadata: (Object.keys(want).length ? { floorplan: want } : {}) as never })
-      .returning("id")
-      .executeTakeFirstOrThrow();
-    created.push(ins.id);
-    await platform().activity.log({
-      orgId,
-      userId: opts.userId,
-      action: "location_created",
-      ref: { module: "core-locations", entityType: "location", entityId: ins.id },
-      diff: { name, parent_id: parentId, via: "floor plan import" },
-    });
-    return ins.id;
-  };
-
-  const container = async (c: FloorplanContainerT, parentId: string, bound: { w_mm: number; d_mm: number }, where: string, path: string, onFloor: boolean) => {
-    const rect = clamp(c, bound, c.name, where, (s) => warnings.push(s));
-    const shelves = c.face?.shelves ?? [];
-    const kids = c.containers ?? [];
-    const faceH = c.h_mm ? r(c.h_mm) : null;
-    // A face keeps its own width when it has one (it is not always the
-    // footprint's, location-floor-plan.md "A container's face is not its
-    // footprint"); the file says only how tall it is.
-    let face = { w_mm: rect.w_mm, d_mm: faceH ?? rect.d_mm };
-    const id = await ensure(
-      parentId,
-      c.name,
-      "container",
-      (cur) => {
-        const want: Fp = { ...rect };
-        if (onFloor) want.wall_mounted = c.wall_mounted === true;
-        if (onFloor && c.rot) want.rot = c.rot;
-        if (faceH || shelves.length || kids.length) {
-          const had = cur.face && typeof cur.face === "object" ? (cur.face as Fp) : null;
-          want.face = had ? { ...had, d_mm: faceH ?? had.d_mm } : { w_mm: rect.w_mm, d_mm: faceH ?? rect.d_mm, view: "front", unit };
-          face = { w_mm: Number((want.face as Fp).w_mm), d_mm: Number((want.face as Fp).d_mm) };
+    /** The place called `name` under `parentId`, made or brought up to date. */
+    const ensure = async (parentId: string | null, name: string, kind: "area" | "container", wantOf: Fp | ((cur: Fp) => Fp), path: string): Promise<string> => {
+      const row = parentId?.startsWith("new:")
+        ? undefined
+        : await trx
+            .selectFrom("core_locations_locations")
+            .select(["id", "kind", "metadata", "depth"])
+            .where((eb) => (parentId ? eb("parent_id", "=", parentId) : eb("parent_id", "is", null)))
+            .where(sql<boolean>`lower(name) = lower(${name})`)
+            .executeTakeFirst();
+      if (row) {
+        if (row.kind !== kind) warnings.push(`${path} is already ${row.kind === "area" ? "a room or area" : "a container"} here; kept it that way.`);
+        const cur = floorplanOf(row.metadata);
+        const want = typeof wantOf === "function" ? wantOf(cur) : wantOf;
+        const changed = Object.keys(want).some((k) => !same(cur[k], want[k]));
+        steps.push({ path, kind, action: changed ? "update" : "unchanged" });
+        if (changed && !opts.dryRun) {
+          updated.push({ id: row.id, before: (row.metadata as { floorplan?: unknown } | null)?.floorplan ?? null });
+          await trx
+            .updateTable("core_locations_locations")
+            .set({ metadata: platform().db.mergeJsonb("metadata", { floorplan: { ...cur, ...want } }) as never, updated_at: new Date() } as never)
+            .where("id", "=", row.id)
+            .execute();
         }
-        return want;
-      },
-      path,
-    );
-    // A shelf is the space from its surface up to the next one (or the top),
-    // drawn on the face; that is where things stand on it.
-    const sorted = [...shelves].sort((a, b) => a.from_bottom_mm - b.from_bottom_mm);
-    for (let i = 0; i < sorted.length; i++) {
-      const s = sorted[i]!;
-      const bottom = Math.min(r(s.from_bottom_mm), face.d_mm - 1);
-      const top = i + 1 < sorted.length ? Math.min(r(sorted[i + 1]!.from_bottom_mm), face.d_mm) : face.d_mm;
-      await ensure(id, s.name, "container", { x_mm: 0, y_mm: face.d_mm - top, w_mm: face.w_mm, d_mm: Math.max(1, top - bottom), shelf: true }, `${path} › ${s.name}`);
-    }
-    for (const k of kids) await container(k, id, face, c.name, `${path} › ${k.name}`, false);
-  };
-
-  const site = plan.site ? await ensure(null, plan.site.name, "area", {}, plan.site.name) : null;
-  for (const room of plan.rooms) {
-    const level = room.level ? await ensure(site, room.level, "area", {}, [plan.site?.name, room.level].filter(Boolean).join(" › ")) : null;
-    const parent = level ?? site;
-    const path = [plan.site?.name, room.level, room.name].filter(Boolean).join(" › ");
-    const bound = { w_mm: r(room.w_mm), d_mm: r(room.d_mm) };
-    const walls = normWalls(room.walls ?? [], bound);
-    if ((room.walls ?? []).some((w, i) => w.x1 !== walls[i]!.x1 || w.y1 !== walls[i]!.y1 || w.x2 !== walls[i]!.x2 || w.y2 !== walls[i]!.y2)) {
-      warnings.push(`A wall in ${room.name} reached outside it, so it was cut at the room's edge.`);
-    }
-    const roomId = await ensure(parent, room.name, "area", (cur) => ({ ...bound, unit: (cur.unit as string | undefined) ?? unit, view: "plan", walls }), path);
-    for (const z of room.zones ?? []) {
-      const at: Fp = clamp(z, bound, z.name, room.name, (s) => warnings.push(s));
-      if (z.closet) at.closet = normCloset(z.closet);
-      await ensure(roomId, z.name, "area", at, `${path} › ${z.name}`);
-    }
-    for (const c of room.containers ?? []) await container(c, roomId, bound, room.name, `${path} › ${c.name}`, true);
-  }
-
-  const n = (k: ImportStep["action"]) => steps.filter((s) => s.action === k).length;
-  const plural = (x: number, one: string, many: string) => `${x} ${x === 1 ? one : many}`;
-  const parts = [
-    n("create") ? `${opts.dryRun ? "make" : "made"} ${plural(n("create"), "place", "places")}` : null,
-    n("update") ? `${opts.dryRun ? "update" : "updated"} ${plural(n("update"), "place", "places")}` : null,
-  ].filter(Boolean);
-  const sentence = parts.length ? `${opts.dryRun ? "Would " : ""}${parts.join(" and ")}.` : "Nothing to change.";
-  const as = n("unchanged") ? ` ${plural(n("unchanged"), "place is", "places are")} already as the file says.` : "";
-  const note = (sentence.charAt(0).toUpperCase() + sentence.slice(1) + as).trim();
-  const rootId = site ?? null;
-  if (!opts.dryRun && (created.length || updated.length)) {
-    const firstRoom = await db.selectFrom("core_locations_locations").select(["id"]).where("name", "=", plan.rooms[0]!.name).executeTakeFirst();
-    const anchor = rootId && !rootId.startsWith("new:") ? rootId : (firstRoom?.id ?? created[0]);
-    if (anchor) {
-      await platform().activity.log({
+        return row.id;
+      }
+      const want = typeof wantOf === "function" ? wantOf({}) : wantOf;
+      steps.push({ path, kind, action: "create" });
+      if (opts.dryRun) return `new:${++fake}`;
+      const parent = parentId ? await trx.selectFrom("core_locations_locations").select("depth").where("id", "=", parentId).executeTakeFirst() : null;
+      // SIBLING-DUP-OK: matched by name under this parent just above, so it is made only when none is there.
+      const ins = await trx
+        .insertInto("core_locations_locations")
+        .values({ name, parent_id: parentId, depth: parent ? parent.depth + 1 : 0, kind, metadata: (Object.keys(want).length ? { floorplan: want } : {}) as never })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+      created.push(ins.id);
+      await log({
         orgId,
         userId: opts.userId,
-        action: "floorplan_imported",
-        ref: { module: "core-locations", entityType: "location", entityId: anchor },
-        diff: { made: created.length, updated: updated.length, warnings: warnings.length },
+        action: "location_created",
+        ref: { module: "core-locations", entityType: "location", entityId: ins.id },
+        diff: { name, parent_id: parentId, via: "floor plan import" },
       });
-      void platform().events.emit("core-locations.location.updated", { orgId, locationId: anchor });
+      return ins.id;
+    };
+
+    const container = async (c: FloorplanContainerT, parentId: string, bound: { w_mm: number; d_mm: number }, where: string, path: string, onFloor: boolean) => {
+      const rect = clamp(c, bound, c.name, where, (s) => warnings.push(s));
+      const shelves = c.face?.shelves ?? [];
+      const kids = c.containers ?? [];
+      const faceH = c.h_mm ? r(c.h_mm) : null;
+      // A face keeps its own width when it has one (it is not always the
+      // footprint's, location-floor-plan.md "A container's face is not its
+      // footprint"); the file says only how tall it is.
+      let face = { w_mm: rect.w_mm, d_mm: faceH ?? rect.d_mm };
+      const id = await ensure(
+        parentId,
+        c.name,
+        "container",
+        (cur) => {
+          const want: Fp = { ...rect };
+          if (onFloor) want.wall_mounted = c.wall_mounted === true;
+          if (onFloor && c.rot) want.rot = c.rot;
+          if (faceH || shelves.length || kids.length) {
+            const had = cur.face && typeof cur.face === "object" ? (cur.face as Fp) : null;
+            want.face = had ? { ...had, d_mm: faceH ?? had.d_mm } : { w_mm: rect.w_mm, d_mm: faceH ?? rect.d_mm, view: "front", unit };
+            face = { w_mm: Number((want.face as Fp).w_mm), d_mm: Number((want.face as Fp).d_mm) };
+          }
+          return want;
+        },
+        path,
+      );
+      // A shelf is the space from its surface up to the next one (or the top),
+      // drawn on the face; that is where things stand on it.
+      const sorted = [...shelves].sort((a, b) => a.from_bottom_mm - b.from_bottom_mm);
+      for (let i = 0; i < sorted.length; i++) {
+        const s = sorted[i]!;
+        const bottom = Math.min(r(s.from_bottom_mm), face.d_mm - 1);
+        const top = i + 1 < sorted.length ? Math.min(r(sorted[i + 1]!.from_bottom_mm), face.d_mm) : face.d_mm;
+        await ensure(id, s.name, "container", { x_mm: 0, y_mm: face.d_mm - top, w_mm: face.w_mm, d_mm: Math.max(1, top - bottom), shelf: true }, `${path} › ${s.name}`);
+      }
+      for (const k of kids) await container(k, id, face, c.name, `${path} › ${k.name}`, false);
+    };
+
+    const site = plan.site ? await ensure(null, plan.site.name, "area", {}, plan.site.name) : null;
+    for (const room of plan.rooms) {
+      const level = room.level ? await ensure(site, room.level, "area", {}, [plan.site?.name, room.level].filter(Boolean).join(" › ")) : null;
+      const parent = level ?? site;
+      const path = [plan.site?.name, room.level, room.name].filter(Boolean).join(" › ");
+      const bound = { w_mm: r(room.w_mm), d_mm: r(room.d_mm) };
+      const walls = normWalls(room.walls ?? [], bound);
+      if ((room.walls ?? []).some((w, i) => w.x1 !== walls[i]!.x1 || w.y1 !== walls[i]!.y1 || w.x2 !== walls[i]!.x2 || w.y2 !== walls[i]!.y2)) {
+        warnings.push(`A wall in ${room.name} reached outside it, so it was cut at the room's edge.`);
+      }
+      const roomId = await ensure(parent, room.name, "area", (cur) => ({ ...bound, unit: (cur.unit as string | undefined) ?? unit, view: "plan", walls }), path);
+      for (const z of room.zones ?? []) {
+        const at: Fp = clamp(z, bound, z.name, room.name, (s) => warnings.push(s));
+        if (z.closet) at.closet = normCloset(z.closet);
+        await ensure(roomId, z.name, "area", at, `${path} › ${z.name}`);
+      }
+      for (const c of room.containers ?? []) await container(c, roomId, bound, room.name, `${path} › ${c.name}`, true);
     }
-  }
-  return {
-    dry_run: opts.dryRun,
-    steps,
-    warnings,
-    created,
-    updated,
-    root: rootId && plan.site ? { id: rootId, name: plan.site.name } : null,
-    note,
+
+    const n = (k: ImportStep["action"]) => steps.filter((s) => s.action === k).length;
+    const plural = (x: number, one: string, many: string) => `${x} ${x === 1 ? one : many}`;
+    const parts = [
+      n("create") ? `${opts.dryRun ? "make" : "made"} ${plural(n("create"), "place", "places")}` : null,
+      n("update") ? `${opts.dryRun ? "update" : "updated"} ${plural(n("update"), "place", "places")}` : null,
+    ].filter(Boolean);
+    const sentence = parts.length ? `${opts.dryRun ? "Would " : ""}${parts.join(" and ")}.` : "Nothing to change.";
+    const as = n("unchanged") ? ` ${plural(n("unchanged"), "place is", "places are")} already as the file says.` : "";
+    const note = (sentence.charAt(0).toUpperCase() + sentence.slice(1) + as).trim();
+    const rootId = site ?? null;
+    if (!opts.dryRun && (created.length || updated.length)) {
+      const firstRoom = await trx.selectFrom("core_locations_locations").select(["id"]).where("name", "=", plan.rooms[0]!.name).executeTakeFirst();
+      const anchor = rootId && !rootId.startsWith("new:") ? rootId : (firstRoom?.id ?? created[0]);
+      if (anchor) {
+        await log({
+          orgId,
+          userId: opts.userId,
+          action: "floorplan_imported",
+          ref: { module: "core-locations", entityType: "location", entityId: anchor },
+          diff: { made: created.length, updated: updated.length, warnings: warnings.length },
+        });
+        changedAnchor = anchor;
+      }
+    }
+    return {
+      dry_run: opts.dryRun,
+      steps,
+      warnings,
+      created,
+      updated,
+      root: rootId && plan.site ? { id: rootId, name: plan.site.name } : null,
+      note,
+    };
   };
+  const result = opts.dryRun ? await run(db, async () => {}) : await platform().activity.transaction(orgId, db, run);
+  if (changedAnchor) void platform().events.emit("core-locations.location.updated", { orgId, locationId: changedAnchor });
+  return result;
 }
 
 /** Undo an import: each place it updated back to the layout it had, each it
@@ -355,7 +361,6 @@ export async function exportFloorplan(orgId: string, rootId: string): Promise<Fl
 }
 
 // ── the doors ──
-
 
 export const floorplanFileRouter = Router({ mergeParams: true });
 

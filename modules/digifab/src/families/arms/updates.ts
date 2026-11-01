@@ -88,9 +88,12 @@ export async function startUpdate(db: Kysely<DigifabDB>, orgId: string, userId: 
   }
   const guide = vendorOf(unit.last_info);
   // The partial unique index holds one open update per arm; a second start at once loses here.
-  const row = await db.insertInto("digifab_arm_updates").values({ machine_id: machineId, vendor: guide.vendor, file_id: input.file_id, file_sha256: sha, target_version: input.target_version, from_versions: JSON.stringify(unit.last_info?.software_versions ?? []), steps: JSON.stringify(guide.steps.map((step) => ({ step, done_by: null, done_at: null }))), read_back: null, created_by: userId, ended_by: null, ended_at: null }).returningAll().executeTakeFirstOrThrow()
-    .catch((e: { code?: string }) => { if (e?.code === "23505") throw new ArmRefusal("This arm already has an update open. Finish or cancel it first."); throw e; });
-  await platform().activity.log({ orgId, userId, action: "arm_update_started", ref: machineRef(machineId), diff: { target_version: input.target_version, vendor: guide.vendor, file_sha256: sha, from: unit.last_info?.software_versions ?? [] } });
+  const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx.insertInto("digifab_arm_updates").values({ machine_id: machineId, vendor: guide.vendor, file_id: input.file_id, file_sha256: sha, target_version: input.target_version, from_versions: JSON.stringify(unit.last_info?.software_versions ?? []), steps: JSON.stringify(guide.steps.map((step) => ({ step, done_by: null, done_at: null }))), read_back: null, created_by: userId, ended_by: null, ended_at: null }).returningAll().executeTakeFirstOrThrow()
+      .catch((e: { code?: string }) => { if (e?.code === "23505") throw new ArmRefusal("This arm already has an update open. Finish or cancel it first."); throw e; });
+    await log({ orgId, userId, action: "arm_update_started", ref: machineRef(machineId), diff: { target_version: input.target_version, vendor: guide.vendor, file_sha256: sha, from: unit.last_info?.software_versions ?? [] } });
+    return row;
+  });
   return row;
 }
 
@@ -105,8 +108,10 @@ export async function checkUpdateStep(db: Kysely<DigifabDB>, orgId: string, user
   const row = await openUpdate(db, input.update_id);
   if (!row.steps[input.item]) throw new ArmRefusal("No such step.");
   const steps = row.steps.map((s, i) => (i === input.item ? { ...s, done_by: input.done ? userId : null, done_at: input.done ? new Date().toISOString() : null } : s));
-  await db.updateTable("digifab_arm_updates").set({ steps: JSON.stringify(steps) }).where("id", "=", row.id).where("status", "=", "open").execute();
-  await platform().activity.log({ orgId, userId, action: "arm_update_step_checked", ref: machineRef(row.machine_id), diff: { step: steps[input.item]!.step, done: input.done } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.updateTable("digifab_arm_updates").set({ steps: JSON.stringify(steps) }).where("id", "=", row.id).where("status", "=", "open").execute();
+    await log({ orgId, userId, action: "arm_update_step_checked", ref: machineRef(row.machine_id), diff: { step: steps[input.item]!.step, done: input.done } });
+  });
   return { ok: true, steps };
 }
 
@@ -120,15 +125,20 @@ export async function verifyUpdate(db: Kysely<DigifabDB>, orgId: string, userId:
   const readBack = unit.last_info?.software_versions ?? [];
   const took = updateTook(readBack, row.target_version);
   const detail = took ? `The controller reports ${row.target_version}.` : `The controller reports ${readBack.map((v) => `${v.name} ${v.version}`).join(", ") || "no version"}, not ${row.target_version}.`;
-  const saved = await db.updateTable("digifab_arm_updates").set({ status: took ? "verified" : "failed", read_back: JSON.stringify(readBack), detail, ended_by: userId, ended_at: new Date() }).where("id", "=", row.id).where("status", "=", "open").returningAll().executeTakeFirstOrThrow();
-  await platform().activity.log({ orgId, userId, action: took ? "arm_update_verified" : "arm_update_failed", ref: machineRef(row.machine_id), diff: { target_version: row.target_version, read_back: readBack } });
+  const saved = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const saved = await trx.updateTable("digifab_arm_updates").set({ status: took ? "verified" : "failed", read_back: JSON.stringify(readBack), detail, ended_by: userId, ended_at: new Date() }).where("id", "=", row.id).where("status", "=", "open").returningAll().executeTakeFirstOrThrow();
+    await log({ orgId, userId, action: took ? "arm_update_verified" : "arm_update_failed", ref: machineRef(row.machine_id), diff: { target_version: row.target_version, read_back: readBack } });
+    return saved;
+  });
   return saved;
 }
 
 export async function cancelUpdate(db: Kysely<DigifabDB>, orgId: string, userId: string, updateId: string) {
   const row = await openUpdate(db, updateId);
-  await db.updateTable("digifab_arm_updates").set({ status: "cancelled", ended_by: userId, ended_at: new Date() }).where("id", "=", row.id).execute();
-  await platform().activity.log({ orgId, userId, action: "arm_update_cancelled", ref: machineRef(row.machine_id), diff: { target_version: row.target_version } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.updateTable("digifab_arm_updates").set({ status: "cancelled", ended_by: userId, ended_at: new Date() }).where("id", "=", row.id).execute();
+    await log({ orgId, userId, action: "arm_update_cancelled", ref: machineRef(row.machine_id), diff: { target_version: row.target_version } });
+  });
   return { ok: true };
 }
 

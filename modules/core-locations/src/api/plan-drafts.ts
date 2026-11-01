@@ -318,19 +318,21 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
         const parent = await db.selectFrom("core_locations_locations").select("depth").where("id", "=", parentId).executeTakeFirst();
         const fp: Record<string, unknown> = { x_mm: Math.round(p.rect.x_mm), y_mm: Math.round(p.rect.y_mm), w_mm: Math.round(p.rect.w_mm), d_mm: Math.round(p.rect.d_mm), ...(p.rect.rot ? { rot: p.rect.rot } : {}) };
         if (p.face) fp.face = { w_mm: Math.round(p.face.w_mm), d_mm: Math.round(p.face.d_mm), view: "front", unit: "mm" };
-        const ins = await db
-          .insertInto("core_locations_locations")
-          .values({ name: p.name, parent_id: parentId, depth: (parent?.depth ?? 0) + 1, kind: "container", metadata: { floorplan: fp } as never })
-          .returning(["id", "name"])
-          .executeTakeFirstOrThrow();
-        made.set(p.key, ins.id);
-        created.push({ key: p.key, id: ins.id, name: ins.name });
-        await platform().activity.log({
-          orgId,
-          userId,
-          action: "location_created",
-          ref: { module: "core-locations", entityType: "location", entityId: ins.id },
-          diff: { name: ins.name, parent_id: parentId, via: `layout ${draft.name}` },
+        await platform().activity.transaction(orgId, db, async (trx, log) => {
+          const ins = await trx
+            .insertInto("core_locations_locations")
+            .values({ name: p.name, parent_id: parentId, depth: (parent?.depth ?? 0) + 1, kind: "container", metadata: { floorplan: fp } as never })
+            .returning(["id", "name"])
+            .executeTakeFirstOrThrow();
+          made.set(p.key, ins.id);
+          created.push({ key: p.key, id: ins.id, name: ins.name });
+          await log({
+            orgId,
+            userId,
+            action: "location_created",
+            ref: { module: "core-locations", entityType: "location", entityId: ins.id },
+            diff: { name: ins.name, parent_id: parentId, via: `layout ${draft.name}` },
+          });
         });
       }
       left = left.filter((p) => !made.has(p.key));
@@ -402,6 +404,7 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
   const note = what.length ? `${draft.name}: ${what.join(", ")}.` : `${draft.name} matched the room already; nothing moved.`;
   const result: ApplyResult = { draft: { id: draft.id, name: draft.name }, room: { id: room.id, name: room.name }, created, moved, things, note: note.charAt(0).toUpperCase() + note.slice(1) };
 
+  // capability-except activity:a-change-and-its-history-line-commit-together: layout apply and undo move things through placement and deletePlace on their own connections; their summaries cannot commit with those service writes (#9035)
   await platform().activity.log({
     orgId,
     userId,
@@ -635,7 +638,6 @@ function floorOf(
 }
 
 // ── the doors: HTTP for the page, actions for the assistant ──
-
 
 export const planDraftsRouter = Router({ mergeParams: true });
 

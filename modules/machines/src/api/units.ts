@@ -86,6 +86,7 @@ async function load(c: UnitsCtx, id: string) {
 }
 
 async function log(c: UnitsCtx, action: string, id: string, diff: Record<string, unknown>) {
+  // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
   await platform().activity.log({ orgId: c.orgId, userId: c.userId ?? undefined, action, ref: { module: "machines", entityType: "machine", entityId: id }, diff } as never);
 }
 

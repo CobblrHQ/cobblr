@@ -162,6 +162,7 @@ export async function unlinkBoughtIn(orgId: string, subject: LineSubject, orderI
  *  route and for adding a line that already names what it bought. */
 export async function claimLine(args: {
   db: import("kysely").Kysely<import("../db.js").PurchasesDB>;
+  history?: import("@cobblr/platform-contract").ActivityLogParams;
   orgId: string;
   userId: string | null;
   orderId: string;
@@ -177,18 +178,25 @@ export async function claimLine(args: {
     .executeTakeFirst();
   if (!before) return null;
   const isPart = subject ? (await platform().entities.baseKindOf(orgId, subject.kind)) === "inventory:part" : false;
-  const updated = await db
-    .updateTable("purchases_order_items")
-    .set({
-      subject_kind: subject?.kind ?? null,
-      subject_id: subject?.id ?? null,
-      part_id: subject && isPart ? subject.id : null,
-      updated_at: new Date(),
-    } as never)
-    .where("id", "=", itemId)
-    .where("order_id", "=", orderId)
-    .returningAll()
-    .executeTakeFirstOrThrow();
+  const write = async (trx: typeof db, log?: (p: import("@cobblr/platform-contract").ActivityLogParams) => Promise<void>) => {
+    const updated = await trx
+      .updateTable("purchases_order_items")
+      .set({
+        subject_kind: subject?.kind ?? null,
+        subject_id: subject?.id ?? null,
+        part_id: subject && isPart ? subject.id : null,
+        updated_at: new Date(),
+      } as never)
+      .where("id", "=", itemId)
+      .where("order_id", "=", orderId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    if (args.history && log) await log(args.history);
+    return updated;
+  };
+  const updated = args.history
+    ? await platform().activity.transaction(orgId, db, write)
+    : await write(db);
   if (before.subject_kind && before.subject_id && (before.subject_kind !== subject?.kind || before.subject_id !== subject?.id)) {
     const stillClaimed = await db
       .selectFrom("purchases_order_items")

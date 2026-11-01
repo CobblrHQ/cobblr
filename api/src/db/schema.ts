@@ -158,6 +158,10 @@ export interface OrgsTable {
   deletion_requested_at: Generated<Date | null>;
   deletion_requested_by: Generated<string | null>;
   deletion_due_at: Generated<Date | null>;
+  /** A delete has begun (platform/delete-org.ts): stamped before the files and
+   *  the database go, so a delete that dies part way is hidden from members and
+   *  finished by the deletion reaper instead of left with no database (#9071). */
+  dropping_at: Generated<Date | null>;
   /** Slice 4 (demo workspaces): per-workspace entitlement overrides — an allow-list of
    *  feature keys ("files.upload", "workspaces.create") and module names ("core-ai") the
    *  trial guard + module-enable gate honour for THIS workspace, so an operator-provisioned
@@ -1398,6 +1402,19 @@ export interface PublicSurfaceTokensTable {
   created_at: Generated<Date>;
 }
 
+/** A move of records between collections, written before its two commits and
+ *  removed in the second (platform/move-records.ts, #9071). */
+export interface RecordMoveIntentsTable {
+  id: Generated<string>;
+  org_id: string;
+  module_name: string;
+  ids: string[];
+  from_instance: string;
+  to_instance: string;
+  carry_fields: Generated<string[]>;
+  created_at: Generated<Date>;
+}
+
 export interface WorkspaceModuleInstancesTable {
   id: Generated<string>;
   org_id: string;
@@ -2141,6 +2158,7 @@ export interface MetaDB {
   field_sections: FieldSectionsTable;
   calendar_feeds: CalendarFeedsTable;
   public_surface_tokens: PublicSurfaceTokensTable;
+  record_move_intents: RecordMoveIntentsTable;
   core_queue_jobs: CoreQueueJobsTable;
   shared_cache: SharedCacheTable;
   auth_magic_tokens: AuthMagicTokensTable;

@@ -92,6 +92,9 @@ function bornGuarded(label: string, Base: ClientClass): ClientClass {
     constructor(config?: ClientConfig) {
       super(config);
       this.on("error", onClientError(label));
+      // A connection still logging in holds a server slot no pool counts yet.
+      const connect = (this.connect as (...a: unknown[]) => unknown).bind(this);
+      (this as unknown as { connect: unknown }).connect = (...a: unknown[]) => dialled(kindOf(label), connect, a);
       // The last statement, for the starvation report (poolHolders).
       const query = (this.query as (...a: unknown[]) => unknown).bind(this);
       (this as unknown as { query: unknown }).query = (...a: unknown[]) => {
@@ -319,12 +322,32 @@ export function poolHolders(pool: Pool, now = Date.now()): string[] {
 // said which part of the api held the rest (10-31): a refusal now says.
 const openPools = new Map<Pool, string>();
 const openBare = new Map<string, number>();
+const dialling = new Map<string, number>();
+
+/** A connect in flight, counted as `<kind> dialling` until it lands or fails:
+ *  the server gives a backend its slot while it logs in, before any pool
+ *  holds it, and a burst of retries is all such slots (staging, 2026-11-01). */
+function dialled(kind: string, connect: (...a: unknown[]) => unknown, a: unknown[]): unknown {
+  const key = `${kind} dialling`;
+  dialling.set(key, (dialling.get(key) ?? 0) + 1);
+  let done = false;
+  const settle = () => {
+    if (done) return;
+    done = true;
+    dialling.set(key, Math.max(0, (dialling.get(key) ?? 1) - 1));
+  };
+  const cb = a[0];
+  if (typeof cb === "function") return connect((err?: Error) => { settle(); (cb as (err?: Error) => void)(err); });
+  const p = connect(...a) as Promise<unknown>;
+  return p.then((v) => { settle(); return v; }, (err: unknown) => { settle(); throw err; });
+}
 
 /** This api's open connections, by the kind each calls itself in pg_stat_activity. */
 export function openConnections(): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [pool, kind] of openPools) if (pool.totalCount) out[kind] = (out[kind] ?? 0) + pool.totalCount;
   for (const [kind, n] of openBare) if (n) out[kind] = (out[kind] ?? 0) + n;
+  for (const [kind, n] of dialling) if (n) out[kind] = (out[kind] ?? 0) + n;
   return out;
 }
 
@@ -377,9 +400,18 @@ export function createPool(config: PoolConfig, label: string): Pool {
   countRefusals(pool);
   openPools.set(pool, kindOf(label));
   const end = pool.end.bind(pool) as (...a: unknown[]) => unknown;
+  // An ending pool closes its idle clients now and a lent one only when it is
+  // given back, so it is counted as `<kind> ending` until its last is gone: a
+  // pool dropped from the count at end() hid every backend still lent from
+  // it, about 40 of staging's 97 during a catch-up (2026-11-01).
+  const forget = () => { if (pool.totalCount === 0) openPools.delete(pool); };
   (pool as unknown as { end: unknown }).end = (...a: unknown[]) => {
-    openPools.delete(pool);
-    return end(...a);
+    openPools.set(pool, `${kindOf(label)} ending`);
+    pool.on("remove", forget);
+    const out = end(...a);
+    if (out && typeof (out as Promise<unknown>).then === "function") void (out as Promise<unknown>).then(() => openPools.delete(pool), () => openPools.delete(pool));
+    forget();
+    return out;
   };
   budgetCheckouts(pool);
   // pg-pool re-emits an idle client's error on the pool and, being an
@@ -410,8 +442,8 @@ export function createClient(config: ClientConfig | string, label: string): Clie
   (client as unknown as { connect: unknown }).connect = (...a: unknown[]) => {
     noteMetaStatement(`(new connection: ${kind})`);
     const cb = a[0] as ((err?: Error) => void) | undefined;
-    if (typeof cb === "function") return connect((err?: Error) => { refused(err); cb(err); });
-    return (connect() as Promise<unknown>).catch((err: unknown) => {
+    if (typeof cb === "function") return dialled(kind, connect, [(err?: Error) => { refused(err); cb(err); }]);
+    return (dialled(kind, connect, []) as Promise<unknown>).catch((err: unknown) => {
       refused(err);
       throw err;
     });

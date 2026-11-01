@@ -16,6 +16,7 @@
 // time-of-day precision later, swap the interval for a daily-at-8am
 // schedule.
 
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import type { AttentionSubject, NotificationAction, NotificationCardRow } from "@cobblr/platform-contract";
 import { Kysely, sql } from "kysely";
 import { loanOfFields } from "@cobblr/platform-contract/loan";
@@ -32,12 +33,12 @@ export function startMaintenanceSweeper(): void {
   // The walk is the kernel's (platform().sweeps, #3036): this registers the
   // per-workspace visit and its cadence and owns no timer, so the pass shares
   // one walk and one connection budget with every other pass.
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: MAINTENANCE_PASS,
     everyMs: TICK_MS,
     module: "core-maintenance",
     visit: ({ orgId, db }) => visitWorkspace(orgId, db),
-  });
+  }, hasMaintenanceWork));
   console.log(
     `[core-maintenance] due-soon sweeper registered — every ${TICK_MS / 60_000} min, threshold ${DUE_SOON_DAYS}d`,
   );
@@ -270,4 +271,14 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     }
   }
   return { scanned, notified };
+}
+
+
+export async function hasMaintenanceWork({ db }: { db: unknown }): Promise<boolean> {
+  const { rows } = await sql<{ work: boolean }>`
+    select exists (select 1 from core_maintenance_schedules limit 1)
+      or exists (select 1 from core_maintenance_entries
+        where scheduled_at is not null and performed_at is null limit 1) as work
+  `.execute(db as Kysely<CoreMaintenanceDB>);
+  return rows[0]!.work;
 }

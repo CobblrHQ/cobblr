@@ -21,7 +21,7 @@ export function registerPlannedOrderAction() {
     if (p.source_file_id && !(await platform().files.describe(ctx.orgId, [p.source_file_id]))?.length) throw new ActionRefusal("Upload the source file to this workspace first.");
     const fingerprint = createHash("sha256").update(JSON.stringify(p)).digest("hex");
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<PurchasesDB>;
-    const saved = await db.transaction().execute(async trx => {
+    const saved = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
       await sql`select pg_advisory_xact_lock(hashtextextended(${`planned-order:${p.request_key}`}, 0))`.execute(trx);
       const old = await trx.selectFrom("purchases_orders").select(["id", "metadata"]).where(sql<boolean>`metadata->>'planned_request_key' = ${p.request_key}`).executeTakeFirst();
       if (old) {
@@ -29,17 +29,19 @@ export function registerPlannedOrderAction() {
         if (metadata.planned_fingerprint !== fingerprint) throw new ActionRefusal("That request already created a different order. Open it before changing the request.");
         return { order_id: old.id, already_recorded: true };
       }
-      const order = await trx.insertInto("purchases_orders").values({ vendor: p.vendor, status: "planned", expected_arrival: p.expected_arrival ?? null,
+      const order = await trx.insertInto("purchases_orders").values({
+        vendor: p.vendor, status: "planned", expected_arrival: p.expected_arrival ?? null,
         tracking_number: p.tracking_number ?? null,
         // Whoever planned it owns the parcel: the arrival sweep asks them alone.
         tracking_added_by_user_id: p.tracking_number ? ctx.userId ?? null : null, add_to_stock: p.add_to_stock, notes: p.notes ?? null,
-        metadata: { planned_request_key: p.request_key, planned_fingerprint: fingerprint, source_file_id: p.source_file_id ?? null } } as never).returning("id").executeTakeFirstOrThrow();
+        metadata: { planned_request_key: p.request_key, planned_fingerprint: fingerprint, source_file_id: p.source_file_id ?? null }
+      } as never).returning("id").executeTakeFirstOrThrow();
       await trx.insertInto("purchases_order_items").values(p.lines.map(l => ({ order_id: order.id, part_id: l.part_id ?? null, description: l.description, qty: l.qty, metadata: {} })) as never).execute();
+      await log({ orgId: ctx.orgId, userId: ctx.userId, action: "order_created", ref: { module: "purchases", entityType: "order", entityId: order.id }, diff: { vendor: p.vendor } });
       return { order_id: order.id, already_recorded: false };
     });
     if (p.source_file_id) await platform().files.attach(ctx.orgId, { fileId: p.source_file_id, source_module: "purchases", source_type: "order", source_id: saved.order_id, role: "source" });
     if (!saved.already_recorded) {
-      await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: "order_created", ref: { module: "purchases", entityType: "order", entityId: saved.order_id }, diff: { vendor: p.vendor } });
       await platform().events.emit("purchases.order.created", { orgId: ctx.orgId, orderId: saved.order_id });
     }
     return { ok: true, changed: !saved.already_recorded, data: saved };

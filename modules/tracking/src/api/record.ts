@@ -43,25 +43,28 @@ export async function logMeasurement(opts: {
   userId?: string | null;
 }): Promise<Selectable<MeasurementsTable>> {
   const { db, orgId, metric, value } = opts;
-  const row = await db
-    .insertInto("tracking_measurements")
-    .values({
-      metric_id: metric.id,
-      value: String(value),
-      measured_at: opts.measuredAt ?? new Date(),
-      note: opts.note ?? null,
-    })
-    .returningAll()
-    .executeTakeFirstOrThrow();
+  const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx
+      .insertInto("tracking_measurements")
+      .values({
+        metric_id: metric.id,
+        value: String(value),
+        measured_at: opts.measuredAt ?? new Date(),
+        note: opts.note ?? null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
-  void platform().events.emit("tracking.measurement.logged", { orgId, metricId: metric.id, value });
-  await platform().activity.log({
-    orgId,
-    userId: opts.userId ?? null,
-    action: "measurement_created",
-    ref: { module: "tracking", entityType: "measurement", entityId: row.id },
-    diff: { name: metric.name, value, metric_id: metric.id },
+    await log({
+      orgId,
+      userId: opts.userId ?? null,
+      action: "measurement_created",
+      ref: { module: "tracking", entityType: "measurement", entityId: row.id },
+      diff: { name: metric.name, value, metric_id: metric.id },
+    });
+    return row;
   });
+  void platform().events.emit("tracking.measurement.logged", { orgId, metricId: metric.id, value });
 
   const goal = num(metric.goal_value);
   if (goal != null && goalReached(value, goal, metric.goal_direction)) {

@@ -26,7 +26,7 @@
 // pass's first round.
 
 import type { Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, type TenantSweepPass } from "@cobblr/platform-contract";
 import { ENTITY_SAVED_EVENT, type EntitySavedEvent } from "@cobblr/platform-contract/entity-saved";
 import type { CoreScanDB } from "../db.js";
 import { derivedQueryFor, fetchImage, imagePathForFile, storeFetchedImage, type FetchedImage } from "./entity-image.js";
@@ -88,7 +88,28 @@ export function subscribeRecordPhotos(
  *  the round itself takes three, the rest following the drain cadence; a
  *  round another visit kept from running is asked for again (sweeps.soon). */
 export function nudge(orgId: string): void {
+  resting.delete(orgId);
   platform().sweeps.soon(RECORD_PHOTO_PASS, orgId);
+}
+
+/** Workspaces whose last visit found nothing to do: suggestions off and no
+ *  picture held. Most workspaces never turn suggestions on, and visiting
+ *  each every round opened every workspace's database every ten minutes;
+ *  during an api roll those opens failed by the hundred with every other
+ *  pass's (#9013). A workspace rests until something wakes it (suggestions
+ *  turned on, a record saved, a picture held again) or the api restarts. */
+const resting = new Set<string>();
+
+/** Something in this workspace may give the pass work again. */
+export function wakeRecordPhotos(orgId: string): void {
+  resting.delete(orgId);
+}
+
+/** Whether the pass has anything to do here: suggestions on, or a picture
+ *  held that its lifetime must still let go of. */
+export async function photoWorkLeft(store: SuggestionStore, db: Db): Promise<boolean> {
+  if (await store.enabled()) return true;
+  return !!(await db.selectFrom("core_scan_record_photo_suggestions").select("entity_id").where("held_bytes", "is not", null).limit(1).executeTakeFirst());
 }
 
 /** Where the queue lives. The Kysely store below in the product; a test
@@ -434,12 +455,18 @@ export async function photosOnEnable(orgId: string, store: SuggestionStore, deps
 
 /** The kernel's walk. Registered once at boot. */
 export function registerRecordPhotoSweep(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(recordPhotoPass());
+}
+
+export function recordPhotoPass(): TenantSweepPass {
+  return {
     name: RECORD_PHOTO_PASS,
     everyMs: IDLE_MS,
     drainMs: ROUND_MS,
     module: "core-scan",
+    candidates: async (orgIds, { named }) => (named ? orgIds : orgIds.filter((id) => !resting.has(id))),
     visit: async ({ orgId, db }) => {
+      const store = kyselyStore(db as Db);
       // The lifetime is kept whether or not suggestions are on: a workspace
       // that turned them off still holds what it was offered (#8941).
       const held = await keepHeldWithinLifetime(db as Db).catch((err) => {
@@ -451,8 +478,9 @@ export function registerRecordPhotoSweep(): void {
         console.log(`[core-scan] org ${orgId}: held suggestion pictures: ${held.dropped} past ${HELD_DAYS} days or answered let go, ${held.shrunk} shrunk to a preview (${Math.round(held.savedBytes / 1024)} KB freed)`);
       }
       const slug = (await platform().orgs.get(orgId).catch(() => null))?.slug;
-      if (!slug) return { backlog: held.more };
-      const more = await suggestRound(orgId, slug, kyselyStore(db as Db));
+      const more = slug ? await suggestRound(orgId, slug, store) : false;
+      if (more || held.more || (await photoWorkLeft(store, db as Db))) resting.delete(orgId);
+      else resting.add(orgId);
       return { backlog: more || held.more };
     },
     // The backfill, at enable: a workspace enabled with records queues them
@@ -461,5 +489,5 @@ export function registerRecordPhotoSweep(): void {
     onEnable: async ({ orgId, db }) => {
       if (await photosOnEnable(orgId, kyselyStore(db as Db))) nudge(orgId);
     },
-  });
+  };
 }

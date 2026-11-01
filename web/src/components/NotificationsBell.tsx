@@ -501,7 +501,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
 
       {/* DROPDOWN mode — compact popover anchored under the bell. */}
       {open && mode === "dropdown" && (
-        <div className="absolute right-0 top-9 w-80 max-h-96 overflow-y-auto rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-50 flex flex-col">
+        <div className="absolute right-0 top-9 w-80 max-w-[calc(100vw-2rem)] max-h-96 overflow-y-auto rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-50 flex flex-col">
           {body}
         </div>
       )}

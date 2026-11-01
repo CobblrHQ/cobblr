@@ -1,0 +1,12 @@
+{
+  "lint": "lint:mock-import-names",
+  "run": "node scripts/lint-mock-import-names.ts",
+  "rows": [
+    "unit-test"
+  ],
+  "ms": 8730,
+  "readMB": 37.4,
+  "readTreeMB": 86.9,
+  "recorded": "2026-11-01",
+  "source": "initial syntax-only scan measured locally after implementation, at twice its runtime; reads cover tests and two import levels; replaced by the first CI measurement"
+}

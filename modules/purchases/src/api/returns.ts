@@ -67,6 +67,7 @@ export async function takeReturnStep(orgId: string, userId: string | null, order
 
   const ret = outcome.ret;
   if (ret && (outcome.moved || outcome.created)) {
+    // capability-except activity:a-change-and-its-history-line-commit-together: recordReturnStep owns a transaction, then tells inventory about stock on another connection before saving the return stage; its History line cannot yet commit with all of that work (#9035)
     await platform().activity.log({
       orgId,
       userId,

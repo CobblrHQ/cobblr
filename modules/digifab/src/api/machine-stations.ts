@@ -28,7 +28,10 @@ machineStationsRouter.post("/", asyncHandler(async (req, res) => {
   const machine = await platform().devices.machineRecord(orgId, p.machine_kind, p.machine_id, sessionUser(req)?.id);
   if (!machine || machine.retired) return void res.status(422).json({ error: { code: "not_machine", message: "Choose an available machine." } });
   const token = randomBytes(32).toString("base64url");
-  const row = await tenantDb(req).insertInto("digifab_stations").values({ connection_id: null, remote_device_id: p.machine_id, purpose: p.purpose, machine_kind: p.machine_kind, machine_id: p.machine_id, label: machine.title, token_hash: stationTokenHash(token), revoked_at: null }).returning(["id", "label"]).executeTakeFirstOrThrow();
-  await platform().activity.log({ orgId, userId: sessionUser(req)?.id ?? null, action: "station_created", ref: { module: "digifab", entityType: "station", entityId: row.id }, diff: { label: row.label, purpose: p.purpose } });
+  const row = await platform().activity.transaction(orgId, tenantDb(req), async (trx, log) => {
+    const row = await trx.insertInto("digifab_stations").values({ connection_id: null, remote_device_id: p.machine_id, purpose: p.purpose, machine_kind: p.machine_kind, machine_id: p.machine_id, label: machine.title, token_hash: stationTokenHash(token), revoked_at: null }).returning(["id", "label"]).executeTakeFirstOrThrow();
+    await log({ orgId, userId: sessionUser(req)?.id ?? null, action: "station_created", ref: { module: "digifab", entityType: "station", entityId: row.id }, diff: { label: row.label, purpose: p.purpose } });
+    return row;
+  });
   res.status(201).json({ ...row, token });
 }));

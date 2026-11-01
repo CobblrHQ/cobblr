@@ -86,25 +86,28 @@ export function registerTrackingActionHandlers(): void {
         .where(sql<boolean>`lower(name) = lower(${name})`)
         .executeTakeFirst();
       if (!metric) {
-        metric = await db
-          .insertInto("tracking_metrics")
-          .values({
-            name,
-            unit: args.unit ?? null,
-            goal_value: args.goalValue != null ? String(args.goalValue) : null,
-            goal_direction: args.goalDirection ?? "hit",
-            metadata: sql`'{}'::jsonb` as never,
-          })
-          .returning(["id", "name", "unit", "goal_value", "goal_direction"])
-          .executeTakeFirstOrThrow();
-        void platform().events.emit("tracking.metric.created", { orgId: ctx.orgId, metricId: metric.id });
-        await platform().activity.log({
-          orgId: ctx.orgId,
-          userId: ctx.userId ?? null,
-          action: "metric_created",
-          ref: { module: "tracking", entityType: "metric", entityId: metric.id },
-          diff: { name: metric.name },
+        metric = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+          const made = await trx
+            .insertInto("tracking_metrics")
+            .values({
+              name,
+              unit: args.unit ?? null,
+              goal_value: args.goalValue != null ? String(args.goalValue) : null,
+              goal_direction: args.goalDirection ?? "hit",
+              metadata: sql`'{}'::jsonb` as never,
+            })
+            .returning(["id", "name", "unit", "goal_value", "goal_direction"])
+            .executeTakeFirstOrThrow();
+          await log({
+            orgId: ctx.orgId,
+            userId: ctx.userId ?? null,
+            action: "metric_created",
+            ref: { module: "tracking", entityType: "metric", entityId: made.id },
+            diff: { name: made.name },
+          });
+          return made;
         });
+        void platform().events.emit("tracking.metric.created", { orgId: ctx.orgId, metricId: metric.id });
       }
     }
     if (!metric) return { ok: false, error: "which metric? run this on the metric, or name it in `metricName`" };

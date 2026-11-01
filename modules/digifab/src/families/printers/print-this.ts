@@ -22,7 +22,7 @@ import { createHash } from "node:crypto";
 import { readGramsByTool } from "@cobblr/platform-contract/filament-draw";
 import { canonicalJson } from "@cobblr/platform-contract/service-consent";
 import type { Kysely } from "kysely";
-import { platform, type ActionHandler } from "@cobblr/platform-contract";
+import { platform, type ActionHandler, type ActivityLogParams } from "@cobblr/platform-contract";
 import type { DigifabDB } from "../../db.js";
 import { gatherCandidates } from "./api/printing-profiles.js";
 import { rankPrinters, type PickedPrinter } from "./pick-printer.js";
@@ -34,6 +34,8 @@ import { prepareBatch, startBatchPrint, recoverBatches } from "./print-batch.js"
 import type { PrintThisAsk, PrintThisResult } from "../../core/printing.js";
 
 export type { PrintThisAsk, PrintThisResult } from "../../core/printing.js";
+
+type PrintHistory = { log: (p: ActivityLogParams) => Promise<void>; db: Kysely<DigifabDB>; effects: Array<() => Promise<void>> };
 
 type MakeRow = { id: string; name: string; folder_id: string | null; start_step: string; created_by: string | null };
 
@@ -76,14 +78,19 @@ export async function startPrintThis(orgId: string, userId: string | null, ask: 
   const material = ask.material?.trim();
   if (!material) return { ok: false, code: "no_material", error: "Say which material to print in (PLA, PETG, ...)." };
   const db = await tenantDb(orgId);
-  if (ask.make_id) return db.transaction().execute(async (tx) => {
-    await tx.selectFrom("digifab_makes").select("id").where("id", "=", ask.make_id!).forUpdate().executeTakeFirst();
-    return preparePrintThis(tx, orgId, userId, ask, material);
-  });
+  if (ask.make_id) {
+    const effects: Array<() => Promise<void>> = [];
+    const result = await platform().activity.transaction(orgId, db, async (tx, log) => {
+      await tx.selectFrom("digifab_makes").select("id").where("id", "=", ask.make_id!).forUpdate().executeTakeFirst();
+      return preparePrintThis(tx, orgId, userId, ask, material, { log, db, effects });
+    });
+    for (const effect of effects) await effect();
+    return result;
+  }
   return preparePrintThis(db, orgId, userId, ask, material);
 }
 
-async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: string | null, ask: PrintThisAsk, material: string): Promise<PrintThisResult> {
+async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: string | null, ask: PrintThisAsk, material: string, history?: PrintHistory): Promise<PrintThisResult> {
   // 1. The Make and its model.
   let make: MakeRow | undefined;
   let created = false;
@@ -102,23 +109,28 @@ async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: st
     if (!role) return { ok: false, code: "not_printable", error: `${file.filename} is not a model or G-code. Print this takes an STL, a 3MF or G-code.` };
     const startStep = role === "gcode" ? "slice" : "model";
     const name = (ask.name?.trim() || file.filename.replace(/\.[^.]+$/, "")).slice(0, 200);
-    make = await db
-      .insertInto("digifab_makes")
-      .values({ name, prompt: null, start_step: startStep, created_by: userId })
-      .returning(["id", "name", "folder_id", "start_step", "created_by"])
-      .executeTakeFirstOrThrow();
-    created = true;
-    await recordMakeStep(db, orgId, userId, make, startStep, {
-      data: { source: "uploaded", origin: ask.origin ?? "page" },
-      produced_by: { kind: "upload" },
-      files: [{ file_id: ask.file_id, role }],
+    const effects: Array<() => Promise<void>> = [];
+    make = await platform().activity.transaction(orgId, db, async (trx, log) => {
+      const made = await trx
+        .insertInto("digifab_makes")
+        .values({ name, prompt: null, start_step: startStep, created_by: userId })
+        .returning(["id", "name", "folder_id", "start_step", "created_by"])
+        .executeTakeFirstOrThrow();
+      await recordMakeStep(trx, orgId, userId, made, startStep, {
+        data: { source: "uploaded", origin: ask.origin ?? "page" },
+        produced_by: { kind: "upload" },
+        files: [{ file_id: ask.file_id!, role }],
+      }, { db, effects });
+      await log({ orgId, userId, action: "make_created", ref: { module: "digifab", entityType: "make", entityId: made.id }, diff: { name: made.name } });
+      return made;
     });
-    await platform().activity.log({ orgId, userId, action: "make_created", ref: { module: "digifab", entityType: "make", entityId: make.id }, diff: { name: make.name } });
+    created = true;
+    for (const effect of effects) await effect();
     await platform().events.emit("digifab.make.created", { orgId, makeId: make.id });
     model = { fileId: ask.file_id, role, report: null };
   } else if (ask.prompt || ask.source || ask.template) {
     make = await db.insertInto("digifab_makes").values({ name: (ask.name?.trim() || ask.prompt?.trim() || "New part").slice(0, 200), prompt: ask.prompt ?? null, start_step: "request", created_by: userId }).returning(["id", "name", "folder_id", "start_step", "created_by"]).executeTakeFirstOrThrow();
-    await recordMakeStep(db, orgId, userId, make, "request", { data: { prompt: ask.prompt ?? ask.name ?? "New part", origin: ask.origin ?? "page", requested_by: userId }, produced_by: { kind: "person" } });
+    await recordMakeStep(db, orgId, userId, make, "request", { data: { prompt: ask.prompt ?? ask.name ?? "New part", origin: ask.origin ?? "page", requested_by: userId }, produced_by: { kind: "person" } }, history);
     const result = await startDesign(db, orgId, userId, make, ask);
     return { ...result, created_make: true };
   } else {
@@ -172,8 +184,8 @@ async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: st
       produced_by: sliceStep?.produced_by ?? { kind: "upload" },
       service_job_id: sliceStep?.service_job_id,
       copied_from: sliceStep?.copied_from,
-    });
-    const ready = await readyToPrint(db, orgId, make, { gcodeFileId: model.fileId, choice, grams, gramsByTool, seconds, previewFileId: null });
+    }, history);
+    const ready = await readyToPrint(db, orgId, make, { gcodeFileId: model.fileId, choice, grams, gramsByTool, seconds, previewFileId: null }, history);
     if (!ready.ok) return fail(ready.code, ready.error);
     return { ok: true, make_id: make.id, created_make: created, printer: { machine: printer.machine, reason: printer.reason }, slice_job_id: null, summary: `Ready to print on ${printer.machine ?? printer.device ?? "the printer"}. Confirm it on the Make.` };
   }
@@ -189,7 +201,7 @@ async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: st
     status: "running",
     data: { ...choice, printer_model: profile.printer_model, nozzle_mm: profile.nozzle_mm, quality: profile.quality, invocation: { input: sliceInput, files: { model: model.fileId } } },
     produced_by: { kind: "service", capability: SLICE_CAPABILITY },
-  });
+  }, history);
   let job: { id: string; status: string };
   try {
     job = await platform().services.invoke({
@@ -202,7 +214,7 @@ async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: st
     });
   } catch (err) {
     const message = (err as Error).message || "the slicer could not be reached";
-    await recordMakeStep(db, orgId, userId, make, "slice", { status: "failed", data: { ...choice }, produced_by: { kind: "service", capability: SLICE_CAPABILITY }, error: message });
+    await recordMakeStep(db, orgId, userId, make, "slice", { status: "failed", data: { ...choice }, produced_by: { kind: "service", capability: SLICE_CAPABILITY }, error: message }, history);
     return fail("slice_refused", `The slice could not start: ${message}`);
   }
   await db.updateTable("digifab_make_steps").set({ service_job_id: job.id, updated_at: new Date() }).where("id", "=", sliceStepId).execute();
@@ -273,10 +285,12 @@ function brief(p: PickedPrinter) {
 export async function onSliceSettled(orgId: string, jobId: string): Promise<void> {
   const db = await tenantDb(orgId).catch(() => null);
   if (!db) return;
-  await db.transaction().execute(async (tx) => settleSlice(tx, orgId, jobId));
+  const effects: Array<() => Promise<void>> = [];
+  await platform().activity.transaction(orgId, db, async (tx, log) => settleSlice(tx, orgId, jobId, { log, db, effects }));
+  for (const effect of effects) await effect();
 }
 
-async function settleSlice(db: Kysely<DigifabDB>, orgId: string, jobId: string): Promise<void> {
+async function settleSlice(db: Kysely<DigifabDB>, orgId: string, jobId: string, history: PrintHistory): Promise<void> {
   const step = await db
     .selectFrom("digifab_make_steps")
     .select(["id", "make_id", "status", "data"])
@@ -300,7 +314,7 @@ async function settleSlice(db: Kysely<DigifabDB>, orgId: string, jobId: string):
       produced_by: producedBy,
       service_job_id: jobId,
       error: sj.error?.message ?? (sj.status === "cancelled" ? "the slice was stopped" : "the slice failed"),
-    });
+    }, history);
     return;
   }
   if (sj.status !== "done") return;
@@ -313,7 +327,7 @@ async function settleSlice(db: Kysely<DigifabDB>, orgId: string, jobId: string):
   const seconds = typeof out.estimated_seconds === "number" ? out.estimated_seconds : null;
   const total = typeof out.total_grams === "number" ? out.total_grams : grams ? grams.reduce((a, b) => a + b, 0) : null;
   if (!gcode) {
-    await recordMakeStep(db, orgId, null, make, "slice", { status: "failed", data: prior, produced_by: producedBy, service_job_id: jobId, error: "the slicer finished without a file to print" });
+    await recordMakeStep(db, orgId, null, make, "slice", { status: "failed", data: prior, produced_by: producedBy, service_job_id: jobId, error: "the slicer finished without a file to print" }, history);
     return;
   }
   // The service already attached its outputs to this step; they join the
@@ -324,7 +338,7 @@ async function settleSlice(db: Kysely<DigifabDB>, orgId: string, jobId: string):
     const role: MakeFileRole = f.name === "preview" ? "preview" : stored && roleOf(stored.filename, stored.mimeType) === "3mf" ? "3mf" : f.name === "gcode" || f.name === "plain_gcode" ? "gcode" : f.name === "settings" ? "settings" : "other";
     files.push({ file_id: f.file_id, role });
   }
-  for (const f of files) await adoptIntoMake(db, orgId, make, f.file_id, f.role);
+  for (const f of files) history.effects.push(() => adoptIntoMake(history.db, orgId, make, f.file_id, f.role));
   await recordMakeStep(db, orgId, null, make, "slice", {
     status: "done",
     data: {
@@ -339,9 +353,9 @@ async function settleSlice(db: Kysely<DigifabDB>, orgId: string, jobId: string):
     },
     produced_by: producedBy,
     service_job_id: jobId,
-  });
+  }, history);
   const choice = prior as { printer?: Record<string, unknown>; material?: string; quantity?: number };
-  await readyToPrint(db, orgId, make, { gcodeFileId: gcode.file_id, choice, grams: total, gramsByTool: grams, seconds, previewFileId: preview?.file_id ?? null });
+  await readyToPrint(db, orgId, make, { gcodeFileId: gcode.file_id, choice, grams: total, gramsByTool: grams, seconds, previewFileId: preview?.file_id ?? null }, history);
 }
 
 function sliceName(output: unknown): string | null {
@@ -368,7 +382,14 @@ async function readyToPrint(
   orgId: string,
   make: MakeRow,
   o: { gcodeFileId: string; choice: { printer?: Record<string, unknown>; material?: string | null; quantity?: number }; grams: number | null; gramsByTool?: number[] | null; seconds: number | null; previewFileId: string | null },
+  history?: PrintHistory,
 ): Promise<{ ok: true; jobId: string } | { ok: false; code: string; error: string }> {
+  if (!history) {
+    const effects: Array<() => Promise<void>> = [];
+    const result = await platform().activity.transaction(orgId, db, (trx, log) => readyToPrint(trx, orgId, make, o, { log, db, effects }));
+    for (const effect of effects) await effect();
+    return result;
+  }
   const p = (o.choice.printer ?? {}) as { machine_id?: string; machine?: string | null; connection_id?: string; remote_device_id?: string; device?: string | null; spool?: { id?: string; name?: string | null; slot?: string | null } | null };
   if (!p.connection_id || !p.remote_device_id) return { ok: false, code: "no_printer", error: "The chosen printer is no longer known." };
   const file = await platform().files.read(orgId, o.gcodeFileId, "original");
@@ -389,7 +410,7 @@ async function readyToPrint(
     })
     .returningAll()
     .executeTakeFirstOrThrow();
-  await platform().activity.log({ orgId, userId: null, action: "job_created", ref: { module: "digifab", entityType: "job", entityId: job.id }, diff: { name: file?.filename ?? make.name, make: make.id } });
+  await history.log({ orgId, userId: null, action: "job_created", ref: { module: "digifab", entityType: "job", entityId: job.id }, diff: { name: file?.filename ?? make.name, make: make.id } });
   const card = {
       printer: p.machine ?? p.device ?? null,
       machine_id: p.machine_id ?? null,
@@ -405,8 +426,8 @@ async function readyToPrint(
     status: "awaiting_confirm", job_id: job.id,
     data: batch ? { ...card, batch, confirm_hash: batch.review_hash } : { ...card, confirm_hash: printHash(job, card, file?.bytes) },
     produced_by: { kind: "digifab" },
-  });
-  await announceReady(orgId, make, p.machine ?? p.device ?? null);
+  }, history);
+  history.effects.push(() => announceReady(orgId, make, p.machine ?? p.device ?? null));
   return { ok: true, jobId: job.id };
 }
 

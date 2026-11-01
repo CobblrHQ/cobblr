@@ -51,16 +51,17 @@ export async function runBench(db:Kysely<DigifabDB>,orgId:string,raw:unknown,use
   if(!edge||!["riden","esphome-bench","scpi"].includes(String(edge.driver)))throw new Error("Choose a supported supply bridge connection first.");
   const configured=edge.config&&typeof edge.config==="object"?{...edge,config:{...edge.config as Record<string,unknown>,control_enabled:input.control_enabled}}:{...edge,control_enabled:input.control_enabled};
   await store.update(orgId,link.connection_id,{creds:{edge:configured} as unknown as Record<string,string|null>});
+  // capability-except activity:a-change-and-its-history-line-commit-together: instrument control configuration is written by devices.connections().update in another service; readings and command event lines use activity.transaction (#9035)
   await platform().activity.log({orgId,userId,action:"instrument-control_configured",ref:{module:"digifab",entityType:"instrument",entityId:link.id},diff:{machine_id:input.machine_id,control_enabled:input.control_enabled}});
   return {control_enabled:input.control_enabled!};
  }
  if(["output_on","set_voltage","set_current"].includes(input.operation)){
   const bench=machine.device.raw?.bench as {control_enabled?:boolean}|undefined;
   if(bench?.control_enabled!==true)throw new Error("Control is off for this instrument. The owner can enable it in its settings.");
-  await platform().activity.log({orgId,userId,action:"instrument-control_requested",ref:{module:"digifab",entityType:"instrument",entityId:link.id},diff:{machine_id:input.machine_id,operation:input.operation,value:input.value}});
+  await platform().activity.transaction(orgId,db,async(_trx,log)=>{await log({orgId,userId,action:"instrument-control_requested",ref:{module:"digifab",entityType:"instrument",entityId:link.id},diff:{machine_id:input.machine_id,operation:input.operation,value:input.value}});});
   let result:Awaited<ReturnType<NonNullable<typeof driver.runControl>>>|undefined;
   try{result=await driver.runControl?.(link.remote_device_id,input.operation.replaceAll("_","-"),{confirmed:input.confirmed,value:input.value});}
-  finally{await platform().activity.log({orgId,userId,action:"instrument-control_finished",ref:{module:"digifab",entityType:"instrument",entityId:link.id},diff:{machine_id:input.machine_id,operation:input.operation,ok:result?.ok===true}});}
+  finally{await platform().activity.transaction(orgId,db,async(_trx,log)=>{await log({orgId,userId,action:"instrument-control_finished",ref:{module:"digifab",entityType:"instrument",entityId:link.id},diff:{machine_id:input.machine_id,operation:input.operation,ok:result?.ok===true}});});}
   if(!result?.ok)throw new Error(result?.detail || "The supply did not confirm the change.");
   return {ok:true};
  }
@@ -71,7 +72,7 @@ export async function runBench(db:Kysely<DigifabDB>,orgId:string,raw:unknown,use
  if(input.operation==="read")return driver.readBench!();
  if(input.operation==="output_off"){
   const result=await driver.runControl?.(link.remote_device_id,"output-off",{});if(!result?.ok)throw new Error(result?.detail || "The instrument did not confirm output-off.");
-  await platform().activity.log({orgId,userId,action:"instrument-output_stopped",ref:{module:"digifab",entityType:"instrument",entityId:link.id},diff:{machine_id:input.machine_id,off:true}});
+  await platform().activity.transaction(orgId,db,async(_trx,log)=>{await log({orgId,userId,action:"instrument-output_stopped",ref:{module:"digifab",entityType:"instrument",entityId:link.id},diff:{machine_id:input.machine_id,off:true}});});
   return {off:true};
  }
  if(!input.record_kind||!input.record_id)throw new Error("Choose a record to keep this reading.");
@@ -95,8 +96,11 @@ export async function runBench(db:Kysely<DigifabDB>,orgId:string,raw:unknown,use
     const file=await platform().files.write(orgId,png,{filename:"scope-reading.png",mimeType:"image/png"});if(!file)throw new Error("Enable Files to keep scope screenshots.");
     screenshot_file_id=file.fileId;
    }
-   const saved=await db.insertInto("digifab_bench_readings").values({...value,report:report as typeof value.report,machine_id:input.machine_id,screenshot_file_id,capture_file_id}).returningAll().executeTakeFirstOrThrow();
-   await platform().activity.log({orgId,userId,action:"instrument-reading_created",ref:{module:"digifab",entityType:"instrument-reading",entityId:saved.id},diff:{record_kind:saved.record_kind,record_id:saved.record_id,report:saved.report}});
+   const saved = await platform().activity.transaction(orgId, db, async (trx, log) => {
+     const saved=await trx.insertInto("digifab_bench_readings").values({...value,report:report as typeof value.report,machine_id:input.machine_id,screenshot_file_id,capture_file_id}).returningAll().executeTakeFirstOrThrow();
+     await log({orgId,userId,action:"instrument-reading_created",ref:{module:"digifab",entityType:"instrument-reading",entityId:saved.id},diff:{record_kind:saved.record_kind,record_id:saved.record_id,report:saved.report}});
+     return saved;
+   });
    return saved;
   },
   link:async(id,kind,recordId)=>{await platform().pairings.create({orgId,sourceKind:kind,sourceId:recordId,targetKind:"digifab:instrument-reading",targetId:id,relationshipKind:"reading"});},

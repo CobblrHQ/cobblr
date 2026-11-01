@@ -17,7 +17,7 @@ import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import { linkOrigin } from "../platform/link-origin.js";
 import * as notifications from "../platform/notifications.js";
-import { createAccount } from "../platform/accounts.js";
+import { announceAccountCreated, createAccount } from "../platform/accounts.js";
 import { sendAuthEmail, hasAuthEmailSender } from "../platform/hosted-seams.js";
 import type { OrgRole } from "../db/schema.js";
 import { hashPassword } from "../auth/password.js";
@@ -812,46 +812,53 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
       return;
     }
 
-    // Atomically claim the invite before creating the account, so two
-    // redemptions cannot both succeed: a single-use invite is consumed, a join
-    // link counts one use within its cap.
-    if (invite.reusable) {
-      const claimed = await claimJoinUse(invite.id);
-      if (!claimed.ok) {
-        res.status(410).json({ error: { code: claimed.why, message: REFUSAL[claimed.why] } });
-        return;
-      }
-    } else {
-      const claimed = await meta
-        .updateTable("workspace_invites")
-        .set({ consumed_at: new Date() })
-        .where("id", "=", invite.id)
-        .where("consumed_at", "is", null)
-        .where("revoked_at", "is", null)
-        .returning("id")
-        .executeTakeFirst();
-      if (!claimed) {
-        res.status(410).json({ error: { code: "consumed", message: "This invite was just used." } });
-        return;
-      }
-    }
-
-    // Create the user (no own-org provisioning) + the membership.
+    // The claim, the account and the membership commit together. As three
+    // commits, one that died between them left an account with no workspace
+    // and a used invite, and its email answered "already has an account" on
+    // every try after (#9071). The claim still comes first inside, so two
+    // redemptions cannot both succeed: a single-use invite is consumed, a
+    // join link counts one use within its cap.
     const password_hash = await hashPassword(parsed.data.password);
-    const userId = await createAccount(meta, { email, password_hash, display_name: parsed.data.display_name.trim() }, { via: "invite" });
-    await meta
-      .insertInto("org_memberships")
-      .values({ user_id: userId, org_id: invite.org_id, role: invite.role })
-      .execute();
-    if (invite.reusable) {
-      await meta.insertInto("workspace_invite_uses").values({ invite_id: invite.id, user_id: userId, new_account: true }).execute();
-    } else {
-      await meta
-        .updateTable("workspace_invites")
-        .set({ consumed_by_user: userId })
-        .where("id", "=", invite.id)
-        .execute();
+    const display_name = parsed.data.display_name.trim();
+    let refused: { status: number; code: string; message: string } | null = null;
+    const userId = await meta.transaction().execute(async (trx) => {
+      if (invite.reusable) {
+        const claimed = await claimJoinUse(invite.id, trx);
+        if (!claimed.ok) {
+          refused = { status: 410, code: claimed.why, message: REFUSAL[claimed.why] };
+          return null;
+        }
+      } else {
+        const claimed = await trx
+          .updateTable("workspace_invites")
+          .set({ consumed_at: new Date() })
+          .where("id", "=", invite.id)
+          .where("consumed_at", "is", null)
+          .where("revoked_at", "is", null)
+          .returning("id")
+          .executeTakeFirst();
+        if (!claimed) {
+          refused = { status: 410, code: "consumed", message: "This invite was just used." };
+          return null;
+        }
+      }
+      // Create the user (no own-org provisioning) + the membership.
+      const id = await createAccount(trx, { email, password_hash, display_name }, { via: "invite" }, { announceLater: true });
+      inviteSignupDiesHereForTests();
+      await trx.insertInto("org_memberships").values({ user_id: id, org_id: invite.org_id, role: invite.role }).execute();
+      if (invite.reusable) {
+        await trx.insertInto("workspace_invite_uses").values({ invite_id: invite.id, user_id: id, new_account: true }).execute();
+      } else {
+        await trx.updateTable("workspace_invites").set({ consumed_by_user: id }).where("id", "=", invite.id).execute();
+      }
+      return id;
+    });
+    if (!userId) {
+      const r = refused as { status: number; code: string; message: string } | null;
+      res.status(r?.status ?? 410).json({ error: { code: r?.code ?? "consumed", message: r?.message ?? "This invite was just used." } });
+      return;
     }
+    announceAccountCreated({ email, displayName: display_name, door: { via: "invite" } });
     // Invited as someone already on the People list: that entry is now them,
     // so everything that was theirs stays theirs.
     if (invite.person_id) await linkPersonToUser(invite.org_id, invite.person_id, userId);
@@ -876,3 +883,15 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
 });
 
 void sql; // re-exported earlier; keep typecheck quiet
+
+/** Test-only: the next invite sign-ups die after their account is made and
+ *  before their membership, as a crash or a refused write would (#9071). */
+let inviteSignupFailures = 0;
+export function failInviteSignupForTests(times: number): void {
+  inviteSignupFailures = Math.max(0, times);
+}
+function inviteSignupDiesHereForTests(): void {
+  if (inviteSignupFailures <= 0) return;
+  inviteSignupFailures--;
+  throw new Error("the sign-up stopped after its account was made (a test's injected failure)");
+}

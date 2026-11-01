@@ -268,29 +268,32 @@ ordersRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const customerName = await customerNameFor(req, parsed.data.customer_id, parsed.data.customer_name);
-    const row = await db
-      .insertInto("sales_orders")
-      .values({
-        ...parsed.data,
-        // An order starts on the day it was made, in the person's own day (#8788).
-        order_date: parsed.data.order_date ?? (await platform().accounts.dayFor(sessionUser(req)?.id ?? null)),
-        customer_name: customerName,
-        instance: instanceOf(req),
-        order_number: parsed.data.order_number?.trim() || (await nextOrderNumber(db, instanceOf(req))),
-        status: parsed.data.status ?? "draft",
-        metadata: parsed.data.metadata ?? {},
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await orderHappened(db, ctx.org.id, row.id, { kind: "status", to_status: row.status, by_user: sessionUser(req)?.id ?? null });
-    await platform().events.emit("sales.order.created", { orgId: ctx.org.id, orderId: row.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "order_created",
-      ref: { module: "sales", entityType: "order", entityId: row.id },
-      diff: { name: row.order_number ?? row.customer_name ?? row.id, instance: instanceOf(req) },
+    const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .insertInto("sales_orders")
+        .values({
+          ...parsed.data,
+          // An order starts on the day it was made, in the person's own day (#8788).
+          order_date: parsed.data.order_date ?? (await platform().accounts.dayFor(sessionUser(req)?.id ?? null)),
+          customer_name: customerName,
+          instance: instanceOf(req),
+          order_number: parsed.data.order_number?.trim() || (await nextOrderNumber(trx, instanceOf(req))),
+          status: parsed.data.status ?? "draft",
+          metadata: parsed.data.metadata ?? {},
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await orderHappened(trx, ctx.org.id, row.id, { kind: "status", to_status: row.status, by_user: sessionUser(req)?.id ?? null }, [], log);
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "order_created",
+        ref: { module: "sales", entityType: "order", entityId: row.id },
+        diff: { name: row.order_number ?? row.customer_name ?? row.id, instance: instanceOf(req) },
+      });
+      return row;
     });
+    await platform().events.emit("sales.order.created", { orgId: ctx.org.id, orderId: row.id });
     res.status(201).json(row);
   }),
 );
@@ -386,25 +389,30 @@ ordersRouter.patch(
       const cn = await customerNameFor(req, parsed.data.customer_id, parsed.data.customer_name);
       if (cn !== undefined) patch.customer_name = cn;
     }
-    const row = await db
-      .updateTable("sales_orders")
-      .set(patch as never)
-      .where("id", "=", req.params.id!)
-      .where("instance", "=", instanceOf(req))
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    if (parsed.data.status && parsed.data.status !== before.status) {
-      await orderHappened(db, ctx.org.id, row.id, { kind: "status", from_status: before.status, to_status: parsed.data.status, by_user: sessionUser(req)?.id ?? null });
-    }
-    // The request as sent, on the record's history (#3625).
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "order_updated",
-      ref: { module: "sales", entityType: "order", entityId: String(req.params.id) },
-      diff: parsed.data as Record<string, unknown>,
-      before,
+    const afterCommit: Array<() => Promise<void>> = [];
+    const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .updateTable("sales_orders")
+        .set(patch as never)
+        .where("id", "=", req.params.id!)
+        .where("instance", "=", instanceOf(req))
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      if (parsed.data.status && parsed.data.status !== before.status) {
+        await orderHappened(trx, ctx.org.id, row.id, { kind: "status", from_status: before.status, to_status: parsed.data.status, by_user: sessionUser(req)?.id ?? null }, afterCommit, log);
+      }
+      // The request as sent, on the record's history (#3625).
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "order_updated",
+        ref: { module: "sales", entityType: "order", entityId: String(req.params.id) },
+        diff: parsed.data as Record<string, unknown>,
+        before,
+      });
+      return row;
     });
+    for (const publish of afterCommit) await publish();
     res.json(await db.selectFrom("sales_orders").selectAll().where("id", "=", row.id).executeTakeFirstOrThrow());
   }),
 );
@@ -416,25 +424,28 @@ ordersRouter.delete(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const gone = await db
-      .deleteFrom("sales_orders")
-      .where("id", "=", req.params.id!)
-      .where("instance", "=", instanceOf(req))
-      .returning(["id", "order_number", "customer_name", "status"])
-      .executeTakeFirst();
+    const gone = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const gone = await trx
+        .deleteFrom("sales_orders")
+        .where("id", "=", req.params.id!)
+        .where("instance", "=", instanceOf(req))
+        .returning(["id", "order_number", "customer_name", "status"])
+        .executeTakeFirst();
+      if (!gone) return gone;
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "order_deleted",
+        ref: { module: "sales", entityType: "order", entityId: gone.id },
+        diff: { name: gone.order_number ?? gone.customer_name ?? gone.id, customer: gone.customer_name, status: gone.status },
+      });
+      return gone;
+    });
     if (!gone) {
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
       return;
     }
-    // Its timeline goes with it, so the workspace log is where it is remembered.
     await platform().events.emit("sales.order.deleted", { orgId: ctx.org.id, orderId: gone.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "order_deleted",
-      ref: { module: "sales", entityType: "order", entityId: gone.id },
-      diff: { name: gone.order_number ?? gone.customer_name ?? gone.id, customer: gone.customer_name, status: gone.status },
-    });
     res.status(204).end();
   }),
 );

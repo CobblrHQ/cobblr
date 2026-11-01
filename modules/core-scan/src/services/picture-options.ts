@@ -32,7 +32,7 @@ import {
 } from "./ddg-images.js";
 import { mergeOptionPools, searchCommonsImages as librarySearch } from "./commons-images.js";
 import { webSearchEnabled } from "./barcode-lookup.js";
-import { replayingWeb } from "./web-replay.js";
+import { readOverlayCassette, replayingWeb } from "./web-replay.js";
 import { isStockPreviewResult } from "./stock-preview.js";
 
 export interface PictureOptionsAsk {
@@ -124,7 +124,24 @@ const REAL: PictureSources = { engine: queuedEngine(engineSearch), library: libr
 // web-search switch has nothing to protect there.
 const REPLAY: PictureSources = { engine: engineSearch, library: librarySearch };
 function liveSources(): PictureSources {
-  return replayingWeb() ? REPLAY : webSearchEnabled() ? REAL : NONE;
+  return overlaid(replayingWeb() ? REPLAY : webSearchEnabled() ? REAL : NONE);
+}
+
+/** A query the overlay recorded (web-replay.ts) is answered before the
+ *  queue and the web-search switch: a cassette sends nothing, so neither the
+ *  engine's rest after another walk's wall nor the breath between asks
+ *  stands in front of it. */
+export function overlaid(sources: PictureSources): PictureSources {
+  return {
+    engine: (query, limit) => {
+      const recorded = readOverlayCassette<DdgImageResult[]>("images", query);
+      return recorded ? Promise.resolve(recorded.slice(0, limit)) : sources.engine(query, limit);
+    },
+    library: (name, limit) => {
+      const recorded = readOverlayCassette<DdgImageResult[]>("library", name);
+      return recorded ? Promise.resolve(recorded.slice(0, limit)) : sources.library(name, limit);
+    },
+  };
 }
 
 export async function pictureOptions(ask: PictureOptionsAsk, sources: PictureSources = liveSources()): Promise<PictureOptions> {

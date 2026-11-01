@@ -90,25 +90,28 @@ metricsRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const row = await db
-      .insertInto("tracking_metrics")
-      .values({
-        name: parsed.data.name,
-        unit: parsed.data.unit ?? null,
-        goal_value: parsed.data.goal_value != null ? String(parsed.data.goal_value) : null,
-        goal_direction: parsed.data.goal_direction ?? "hit",
-        metadata: jsonb(parsed.data.metadata) as never,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    void platform().events.emit("tracking.metric.created", { orgId: ctx.org.id, metricId: row.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "metric_created",
-      ref: { module: "tracking", entityType: "metric", entityId: row.id },
-      diff: { name: row.name },
+    const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .insertInto("tracking_metrics")
+        .values({
+          name: parsed.data.name,
+          unit: parsed.data.unit ?? null,
+          goal_value: parsed.data.goal_value != null ? String(parsed.data.goal_value) : null,
+          goal_direction: parsed.data.goal_direction ?? "hit",
+          metadata: jsonb(parsed.data.metadata) as never,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "metric_created",
+        ref: { module: "tracking", entityType: "metric", entityId: row.id },
+        diff: { name: row.name },
+      });
+      return row;
     });
+    void platform().events.emit("tracking.metric.created", { orgId: ctx.org.id, metricId: row.id });
     res.status(201).json({ ...row, goal_value: num(row.goal_value), latest_value: null, measurement_count: 0, progress: null });
   }),
 );
@@ -157,18 +160,22 @@ metricsRouter.patch(
     if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
     // The row as it was: the log says what this edit changed (#4517).
     const before = await db.selectFrom("tracking_metrics").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
-    const row = await db.updateTable("tracking_metrics").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
-    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Metric not found." } });
-    // The request as sent, on the record's history: the one place a value
-    // a later write replaced can still be read back (#3625).
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "metric_updated",
-      ref: { module: "tracking", entityType: "metric", entityId: String(req.params.id) },
-      diff: parsed.data as Record<string, unknown>,
-      before,
+    const row = await platform().activity.transaction(tenantContext(req).org.id, db, async (trx, log) => {
+      const row = await trx.updateTable("tracking_metrics").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
+      // The request as sent, on the record's history: the one place a value
+      // a later write replaced can still be read back (#3625).
+      if (row) await log({
+        orgId: tenantContext(req).org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "metric_updated",
+        ref: { module: "tracking", entityType: "metric", entityId: String(req.params.id) },
+        diff: parsed.data as Record<string, unknown>,
+        before,
+      });
+      return row;
     });
+    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Metric not found." } });
+
     res.json({ ...row, goal_value: num(row.goal_value) });
   }),
 );
@@ -180,14 +187,16 @@ metricsRouter.delete(
     if (!requireRole(req, res, "owner", "admin")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    await db.deleteFrom("tracking_metrics").where("id", "=", req.params.id!).execute();
-    void platform().events.emit("tracking.metric.deleted", { orgId: ctx.org.id, metricId: req.params.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "metric_deleted",
-      ref: { module: "tracking", entityType: "metric", entityId: req.params.id! },
+    await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      await trx.deleteFrom("tracking_metrics").where("id", "=", req.params.id!).execute();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "metric_deleted",
+        ref: { module: "tracking", entityType: "metric", entityId: req.params.id! },
+      });
     });
+    void platform().events.emit("tracking.metric.deleted", { orgId: ctx.org.id, metricId: req.params.id });
     res.status(204).end();
   }),
 );

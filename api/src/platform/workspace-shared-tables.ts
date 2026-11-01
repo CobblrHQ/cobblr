@@ -98,6 +98,7 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   // is not in flight, and the same backup restored twice must not collide.
   activity_log: { travels: "backup", users: ["user_id"], drop: ["id", "api_token_id", "trace_id"] },
   activity_trace_marks: { travels: "never", why: "this server's note of where to look for a History line it has not sent yet; a restored workspace is marked again by its next change" },
+  record_move_intents: { travels: "never", why: "a move of records stopped between its two commits on this server, finished or dropped by the move recovery pass within minutes; a restored workspace has no move in flight" },
 
   // ── Carried by the Blueprint ──────────────────────────────────────────
   org_modules: { travels: "blueprint" },

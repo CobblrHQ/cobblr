@@ -49,7 +49,6 @@ export const partsRouter = Router({ mergeParams: true });
  *  See docs/design-decisions/serialized-rollup-and-stock-adjust.md. */
 const UNIT_OF = "unit-of";
 
-
 /** The unit the kind's per-unit consumption is measured in, from its own
  *  field defs; null when it declares none. One rule with the detail panel
  *  that mints an open unit (consumption-unit.ts). */
@@ -202,7 +201,6 @@ const PartUpdate = PartCreate.partial();
  *  Every key is a field name (same convention as the top-level hoisting on
  *  PATCH /:id), so there are no reserved words to collide with. */
 const MetadataMerge = z.record(z.unknown());
-
 
 const StockAdjust = z.object({
   delta: z.number(),
@@ -1071,18 +1069,28 @@ export async function mintUnit(
     const name = input.name?.trim() || (serial ? `${model.name} · ${serial}` : model.name);
 
     // check-then-insert: the only key is the spoolman link, which this insert never sets
-    const unit = await db
-      .insertInto("inventory_parts")
-      .values({
-        instance: model.instance,
-        name,
-        qty: "1",
-        unit: model.qtyUnit ?? "each",
-        serial_number: serial,
-        metadata: {},
-      })
-      .returning(["id", "name", "qty", "serial_number", "created_at"])
-      .executeTakeFirstOrThrow();
+    const unit = await platform().activity.transaction(orgId, db, async (trx, log) => {
+      const made = await trx
+        .insertInto("inventory_parts")
+        .values({
+          instance: model.instance,
+          name,
+          qty: "1",
+          unit: model.qtyUnit ?? "each",
+          serial_number: serial,
+          metadata: {},
+        })
+        .returning(["id", "name", "qty", "serial_number", "created_at"])
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: orgId,
+        userId: userId,
+        action: "unit_added",
+        ref: { module: "inventory", entityType: "part", entityId: model.id },
+        diff: { unit_id: made.id, serial },
+      });
+      return made;
+    });
 
     await platform().pairings.create({
       orgId: orgId,
@@ -1092,13 +1100,6 @@ export async function mintUnit(
       targetId: model.id,
       relationshipKind: UNIT_OF,
       createdBy: userId,
-    });
-    await platform().activity.log({
-      orgId: orgId,
-      userId: userId,
-      action: "unit_added",
-      ref: { module: "inventory", entityType: "part", entityId: model.id },
-      diff: { unit_id: unit.id, serial },
     });
     await platform().events.emit("inventory.part.created", { orgId: orgId, partId: unit.id });
 
@@ -1250,43 +1251,48 @@ partsRouter.post(
     if (!builtName) return void res.status(400).json({ error: { code: "invalid_body", message: "Say what it is called." } });
     parsed.data.name = builtName;
 
-    const inserted = await db
-      .insertInto("inventory_parts")
-      .values({
-        instance: instanceOf(req),
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        category_id: parsed.data.category_id ?? null,
-        qty: String(parsed.data.qty ?? 0),
-        // Creating something already described as "roughly 50" is the common
-        // path (a photo of a bin becomes an assortment), so the stamp is set
-        // here too rather than only on a later edit.
-        approximate_qty:
-          parsed.data.approximate_qty == null ? null : String(parsed.data.approximate_qty),
-        estimated_at: parsed.data.approximate_qty == null ? null : new Date(),
-        // The instance's qty_unit (a yarn instance tracks skeins) beats the
-        // generic "each" when the caller doesn't say — so API creates (scan
-        // confirm, CSV import) match what the New-<noun> modal would do.
-        unit: parsed.data.unit ?? instanceQtyUnit(req) ?? "each",
-        cost: parsed.data.cost != null ? String(parsed.data.cost) : null,
-        min_qty: parsed.data.min_qty != null ? String(parsed.data.min_qty) : null,
-        manufacturer: parsed.data.manufacturer ?? null,
-        supplier_url: parsed.data.supplier_url ?? null,
-        image_path: parsed.data.image_path ?? null,
-        notes: parsed.data.notes ?? null,
-        state: parsed.data.state ?? "active",
-        metadata: { ...parsed.data.metadata, ...(parsed.data.cost == null ? {} : { money_currencies: { ...((parsed.data.metadata?.money_currencies as Record<string, string>) || {}), cost: fieldCurrency(parsed.data.metadata, "cost", await platform().money.currency(ctx.org.id)) } }) },
-        serial_number: parsed.data.serial_number ?? null,
-        model_number: parsed.data.model_number ?? null,
-        assigned_to: parsed.data.assigned_to ?? null,
-        warranty_expires: parsed.data.warranty_expires ?? null,
-        lifetime_warranty: parsed.data.lifetime_warranty ?? false,
-        warranty_details: parsed.data.warranty_details ?? null,
-        insured: parsed.data.insured ?? false,
-        archived: parsed.data.archived ?? false,
-      })
-      .returning(["id", "name", "qty", "state", "metadata", "asset_id", "created_at"])
-      .executeTakeFirstOrThrow();
+    const currency = parsed.data.cost == null ? null : await platform().money.currency(ctx.org.id);
+    const inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const inserted = await trx
+        .insertInto("inventory_parts")
+        .values({
+          instance: instanceOf(req),
+          name: parsed.data.name,
+          description: parsed.data.description ?? null,
+          category_id: parsed.data.category_id ?? null,
+          qty: String(parsed.data.qty ?? 0),
+          // Creating something already described as "roughly 50" is the common
+          // path (a photo of a bin becomes an assortment), so the stamp is set
+          // here too rather than only on a later edit.
+          approximate_qty:
+            parsed.data.approximate_qty == null ? null : String(parsed.data.approximate_qty),
+          estimated_at: parsed.data.approximate_qty == null ? null : new Date(),
+          // The instance's qty_unit (a yarn instance tracks skeins) beats the
+          // generic "each" when the caller doesn't say — so API creates (scan
+          // confirm, CSV import) match what the New-<noun> modal would do.
+          unit: parsed.data.unit ?? instanceQtyUnit(req) ?? "each",
+          cost: parsed.data.cost != null ? String(parsed.data.cost) : null,
+          min_qty: parsed.data.min_qty != null ? String(parsed.data.min_qty) : null,
+          manufacturer: parsed.data.manufacturer ?? null,
+          supplier_url: parsed.data.supplier_url ?? null,
+          image_path: parsed.data.image_path ?? null,
+          notes: parsed.data.notes ?? null,
+          state: parsed.data.state ?? "active",
+          metadata: { ...parsed.data.metadata, ...(parsed.data.cost == null ? {} : { money_currencies: { ...((parsed.data.metadata?.money_currencies as Record<string, string>) || {}), cost: fieldCurrency(parsed.data.metadata, "cost", currency!) } }) },
+          serial_number: parsed.data.serial_number ?? null,
+          model_number: parsed.data.model_number ?? null,
+          assigned_to: parsed.data.assigned_to ?? null,
+          warranty_expires: parsed.data.warranty_expires ?? null,
+          lifetime_warranty: parsed.data.lifetime_warranty ?? false,
+          warranty_details: parsed.data.warranty_details ?? null,
+          insured: parsed.data.insured ?? false,
+          archived: parsed.data.archived ?? false,
+        })
+        .returning(["id", "name", "qty", "state", "metadata", "asset_id", "created_at"])
+        .executeTakeFirstOrThrow();
+      await logPartCreated(ctx.org.id, inserted.id, { name: inserted.name, qty: inserted.qty, instance: instanceOf(req) }, session.id, log);
+      return inserted;
+    });
 
     // Create-then-place: the location rides the placement seam
     // (placement-cutover-plan step 1); place() keeps the legacy column
@@ -1307,7 +1313,6 @@ partsRouter.post(
       }
     }
 
-    await logPartCreated(ctx.org.id, inserted.id, { name: inserted.name, qty: inserted.qty, instance: instanceOf(req) }, session.id);
     await platform().events.emit("inventory.part.created", {
       orgId: ctx.org.id,
       partId: inserted.id,
@@ -1445,31 +1450,35 @@ partsRouter.patch(
       Object.fromEntries(Object.entries(parsed.data).filter(([k]) => !smNames.includes(k))),
     );
 
-    const updated = await db
-      .updateTable("inventory_parts")
-      .set({
-        // Merge in Postgres, so a concurrent writer's key survives. There is no
-        // in-memory snapshot here to go stale.
-        metadata: platform().db.mergeJsonb("metadata", own) as never,
-        updated_at: new Date(),
-      })
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returning(["id", "name", "qty", "state", "updated_at"])
-      .executeTakeFirst();
+    const updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .updateTable("inventory_parts")
+        .set({
+          // Merge in Postgres, so a concurrent writer's key survives. There is no
+          // in-memory snapshot here to go stale.
+          metadata: platform().db.mergeJsonb("metadata", own) as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returning(["id", "name", "qty", "state", "updated_at"])
+        .executeTakeFirst();
+      if (row) {
+        await log({
+          orgId: ctx.org.id,
+          userId: session.id,
+          action: "part_updated",
+          ref: { module: "inventory", entityType: "part", entityId: row.id },
+          diff: { metadata: own },
+          before,
+        });
+      }
+      return row;
+    });
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
       return;
     }
-
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "part_updated",
-      ref: { module: "inventory", entityType: "part", entityId: updated.id },
-      diff: { metadata: own },
-      before,
-    });
     // Same event shape as PATCH /:id — a wire comparing {{event.before.x}} vs
     // {{event.after.x}} must fire for a custom-field edit too. The after-bag is
     // recomputed (the write is a SQL expression, not a value we hold).
@@ -1573,16 +1582,32 @@ partsRouter.patch(
     }
     patch.updated_at = new Date();
 
-    let write = db
-      .updateTable("inventory_parts")
-      .set(patch)
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req));
-    // A checkout can land after the read above; the UPDATE must see the same loan.
-    if (moving) write = write.where(sql<boolean>`coalesce(metadata -> ${LOAN_KEY}, 'null'::jsonb) = ${JSON.stringify(coerceMetadata(before.metadata)[LOAN_KEY] ?? null)}::jsonb`);
-    const updated = await write
-      .returning(["id", "name", "qty", "state", "updated_at"])
-      .executeTakeFirst();
+    const updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      let write = trx
+        .updateTable("inventory_parts")
+        .set(patch)
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req));
+      // A checkout can land after the read above; the UPDATE must see the same loan.
+      if (moving) write = write.where(sql<boolean>`coalesce(metadata -> ${LOAN_KEY}, 'null'::jsonb) = ${JSON.stringify(coerceMetadata(before.metadata)[LOAN_KEY] ?? null)}::jsonb`);
+      const row = await write
+        .returning(["id", "name", "qty", "state", "updated_at"])
+        .executeTakeFirst();
+      if (row) {
+        await log({
+          orgId: ctx.org.id,
+          userId: session.id,
+          action: "part_updated",
+          ref: { module: "inventory", entityType: "part", entityId: row.id },
+          // The custom fields this edit wrote ride along: they left parsed.data
+          // for the merge, and the history is the one place a value a later
+          // write replaced can be read back (#3625).
+          diff: hoistedMerge ? { ...parsed.data, metadata: hoistedMerge } : parsed.data,
+          before,
+        });
+      }
+      return row;
+    });
     if (!updated) {
       if (moving) return void res.status(409).json({ error: { code: "changed_since", message: "The item or its loan changed before the move was saved. Look at it again before moving it." } });
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
@@ -1592,17 +1617,6 @@ partsRouter.patch(
     // row of a card reaches the card and every place it is kept.
     await spreadIdentity(holdingsCtx(req), updated.id, patch);
 
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "part_updated",
-      ref: { module: "inventory", entityType: "part", entityId: updated.id },
-      // The custom fields this edit wrote ride along: they left parsed.data
-      // for the merge, and the history is the one place a value a later
-      // write replaced can be read back (#3625).
-      diff: hoistedMerge ? { ...parsed.data, metadata: hoistedMerge } : parsed.data,
-      before,
-    });
     // Flat before/after field bags (native columns + flattened metadata) so a
     // transition-aware wire can compare {{event.before.x}} vs {{event.after.x}}
     // and a server-side reactor (e.g. core-mobility) can recompute from the
@@ -1672,12 +1686,24 @@ partsRouter.delete(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
-    const deleted = await db
-      .deleteFrom("inventory_parts")
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returning(["id", "name"])
-      .executeTakeFirst();
+    const deleted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .deleteFrom("inventory_parts")
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returning(["id", "name"])
+        .executeTakeFirst();
+      if (row) {
+        await log({
+          orgId: ctx.org.id,
+          userId: session.id,
+          action: "part_deleted",
+          ref: { module: "inventory", entityType: "part", entityId: row.id },
+          diff: { name: row.name },
+        });
+      }
+      return row;
+    });
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
       return;
@@ -1687,13 +1713,6 @@ partsRouter.delete(
     // once the row is gone: a delete that fails keeps every link (#7905).
     await releaseForDelete(holdingsCtx(req), id);
 
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "part_deleted",
-      ref: { module: "inventory", entityType: "part", entityId: deleted.id },
-      diff: { name: deleted.name },
-    });
     await platform().events.emit("inventory.part.deleted", {
       orgId: ctx.org.id,
       partId: deleted.id,
@@ -1760,6 +1779,16 @@ partsRouter.post(
       userId: session.id,
       sourceKind: parsed.data.source_kind ?? null,
       sourceId: parsed.data.source_id ?? null,
+      history: async (trx, log) => {
+        const updated = await trx.selectFrom("inventory_parts").select(["id", "qty"]).where("id", "=", id).executeTakeFirstOrThrow();
+        await log({
+          orgId: ctx.org.id,
+          userId: session.id,
+          action: "stock_adjusted",
+          ref: { module: "inventory", entityType: "part", entityId: updated.id },
+          diff: { delta, reason: parsed.data.reason ?? null, new_qty: updated.qty },
+        });
+      },
     });
     if (applied.ok !== true) {
       res.status(409).json({ error: { code: "nothing_on_hand", message: String(applied.error ?? "nothing to take") } });
@@ -1775,14 +1804,6 @@ partsRouter.post(
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
     const newQty = Number(updated.qty);
-
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "stock_adjusted",
-      ref: { module: "inventory", entityType: "part", entityId: updated.id },
-      diff: { delta, reason: parsed.data.reason ?? null, new_qty: updated.qty },
-    });
 
     // Deliberately counting copies IS stock signal — a stock-adjust on a lean
     // catalog item ("I have another one") latches the instance like any other

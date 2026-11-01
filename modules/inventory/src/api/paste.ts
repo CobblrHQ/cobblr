@@ -17,7 +17,7 @@ export function registerPasteActions() {
     const part = await platform().entities.lookup(ctx.orgId, "inventory:part", p.partId, { userId: ctx.userId ?? undefined });
     const stock = part?.fields.stock as { shape?: string; unit?: string } | undefined;
     if (!part || part.retired || stock?.shape !== "liquid" || stock.unit !== "ml") throw new ActionRefusal("Configure this jar as liquid stock measured in ml before tracking its paste.");
-    await db.transaction().execute(async trx => {
+    await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
       const locked = await trx.selectFrom("inventory_parts").select(["id", "archived", "state"]).where("id", "=", p.partId).forUpdate().executeTakeFirst();
       if (!locked || locked.archived || locked.state !== "active") throw new ActionRefusal("Choose an active paste jar.");
       const stored = await trx.selectFrom("inventory_paste_storage").selectAll().where("part_id", "=", p.partId).executeTakeFirst();
@@ -28,8 +28,9 @@ export function registerPasteActions() {
       try { state = p.operation === "configure" ? beginPasteClock(PasteLimits.parse(p.limits), new Date()) : changePasteStorage(stored!.state, p.operation, new Date()); }
       catch (e) { throw new ActionRefusal(e instanceof Error ? e.message : "Check the handling limits."); }
       await trx.insertInto("inventory_paste_storage").values({ part_id: p.partId, state, revision: p.revision + 1 }).onConflict(oc => oc.column("part_id").doUpdateSet({ state, revision: p.revision + 1, updated_at: new Date() })).execute();
+      await log({ orgId: ctx.orgId, userId: ctx.userId, action: "part_storage_changed", ref: { module: "inventory", entityType: "part", entityId: p.partId }, diff: { operation: p.operation, storage: "paste" } });
     });
-    await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: "part_storage_changed", ref: { module: "inventory", entityType: "part", entityId: p.partId }, diff: { operation: p.operation, storage: "paste" } });
+
     return { ok: true, changed: true, data: await pasteView(db, p.partId) };
   });
   platform().actions.registerHandler("inventory.paste-readiness", async ctx => {

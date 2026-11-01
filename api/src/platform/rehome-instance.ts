@@ -22,7 +22,7 @@ import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { bumpWorkspaceShape } from "./workspace-shape.js";
 import { enableModuleForOrg } from "../modules/enable.js";
-import { rekeyInstanceLook } from "./heal-stray-instance-look-keys.js";
+import { rekeyInstanceLook } from "./instance-look.js";
 
 export interface RehomeResult {
   moved: number;

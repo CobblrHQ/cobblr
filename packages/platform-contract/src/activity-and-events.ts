@@ -1,3 +1,4 @@
+import type { Kysely, Transaction } from "kysely";
 import type { Disposition } from "@cobblr/platform-contract/disposition";
 import type { EntityRef } from "@cobblr/platform-contract/placement";
 
@@ -114,6 +115,14 @@ export interface HistoryWriter {
 export interface PlatformActivity {
   registerHistoryWriter(kind: string, writer: HistoryWriter): void;
   log(p: ActivityLogParams): Promise<void>;
+  /** A change and its History line, committed together (#9035): `work`
+   *  writes with `trx` and logs with `log`. The line is kept in the
+   *  workspace's database inside the same transaction and reaches History
+   *  right after it commits, so a process dying between the change and its
+   *  line can no longer lose the line. `db` is the workspace's database, never
+   *  a transaction. A module logs a change this way, not with a bare `log`
+   *  (lint:capabilities, activity:a-change-and-its-history-line-commit-together). */
+  transaction<DB, T>(orgId: string, db: Kysely<DB>, work: (trx: Transaction<DB>, log: (p: ActivityLogParams) => Promise<void>) => Promise<T>): Promise<T>;
   /** The rows of one bulk write (an import), one INSERT per chunk: each
    *  record's History gets its line, and the feeds show only the write's own
    *  summary entry, which the caller logs as usual (#5963). */

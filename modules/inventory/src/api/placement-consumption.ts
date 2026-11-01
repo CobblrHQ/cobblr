@@ -20,7 +20,7 @@ export function registerPlacementConsumption() {
     const lines = [...p.lines].sort((a, b) => a.partId.localeCompare(b.partId));
     if (new Set(lines.map(l => l.partId)).size !== lines.length) throw new ActionRefusal("Give each stock record once, with its total placements.");
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<InventoryDB>;
-    const outcome = await db.transaction().execute(async trx => {
+    const outcome = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
       await sql`select pg_advisory_xact_lock(hashtextextended(${`placements:${p.sourceId}`}, 0))`.execute(trx);
       const previous = await trx.selectFrom("inventory_consumption").select(["part_id", "delta", "reason"])
         .where("source_kind", "=", "inventory:placements").where("source_id", "=", p.sourceId).orderBy("part_id").execute();
@@ -42,10 +42,12 @@ export function registerPlacementConsumption() {
         await recordConsumption(trx, { partId: part.id, delta: -take, reason: `${line.placements} placements; ${attrition}% attrition`, sourceKind: "inventory:placements", sourceId: p.sourceId, byUser: ctx.userId ?? null });
         consumed.push({ partId: part.id, consumed: take, newQty: Number(part.qty) - take, minQty: part.min_qty == null ? null : Number(part.min_qty) });
       }
+      for (const line of consumed) {
+        await log({ orgId: ctx.orgId, userId: ctx.userId ?? null, action: "stock_consumed", ref: { module: "inventory", entityType: "part", entityId: line.partId }, diff: { delta: -line.consumed, source: p.sourceId } });
+      }
       return { already_consumed: false, lines: consumed };
     });
     if (!outcome.already_consumed) for (const line of outcome.lines) {
-      await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId ?? null, action: "stock_consumed", ref: { module: "inventory", entityType: "part", entityId: line.partId }, diff: { delta: -line.consumed, source: p.sourceId } });
       await stockMoved(db, ctx.orgId, { partId: line.partId, delta: -line.consumed, newQty: line.newQty, minQty: line.minQty, reason: "Placements completed", ledger: false });
     }
     return { ok: true, changed: !outcome.already_consumed, data: outcome };

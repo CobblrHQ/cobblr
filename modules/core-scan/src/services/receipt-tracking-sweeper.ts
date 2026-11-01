@@ -19,6 +19,7 @@
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { arrivedEverywhere, parcelAudience } from "@cobblr/platform-contract";
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 
 const TICK_MS = 60 * 60 * 1000; // hourly; the capability's cadence is what makes it sparse
 export const RECEIPT_TRACKING_PASS = "core-scan.receipt-tracking-sweep";
@@ -26,12 +27,7 @@ export const RECEIPT_TRACKING_PASS = "core-scan.receipt-tracking-sweep";
 export function startReceiptTrackingSweeper(): void {
   // The walk is the kernel's (platform().sweeps, #3036): this registers the
   // per-workspace visit and its cadence and owns no timer.
-  platform().sweeps.register({
-    name: RECEIPT_TRACKING_PASS,
-    everyMs: TICK_MS,
-    module: "core-scan",
-    visit: ({ orgId, db, now }) => visitWorkspace(orgId, db as Kysely<unknown>, now, {}),
-  });
+  platform().sweeps.register(receiptTrackingPass());
   console.log(`[core-scan] receipt tracking sweeper registered — every ${TICK_MS / 60_000} min`);
 
   // A bridge push means the carrier already answered: re-check that number NOW,
@@ -51,6 +47,54 @@ export function startReceiptTrackingSweeper(): void {
       });
     });
   });
+}
+
+/** The pass, narrowed to the workspaces with a parcel to follow (#9048). */
+export function receiptTrackingPass(read?: Parameters<typeof narrowSweep>[2]) {
+  return narrowSweep({
+    name: RECEIPT_TRACKING_PASS,
+    everyMs: TICK_MS,
+    module: "core-scan",
+    visit: ({ orgId, db, now }) => visitWorkspace(orgId, db as Kysely<unknown>, now, {}),
+  }, hasParcelToFollow, read);
+}
+
+/** A parcel visitWorkspace follows now or will once its day comes: the same
+ *  three reasons, with "its date has come" widened to "it names a date".
+ *  The day arriving writes nothing, so a receipt due next week keeps its
+ *  workspace a candidate today. */
+export async function hasParcelToFollow({ db }: { db: unknown }): Promise<boolean> {
+  const tdb = db as Kysely<unknown>;
+  const q = sql`
+      select 1
+        from core_scan_batches b
+        left join core_scan_inbox_items i on i.scan_batch_id = b.id
+       where b.shipment_confirmed_at is null
+       group by b.id
+      having (
+               count(i.id) filter (where i.status in ('pending','enriching')) > 0
+               and (
+                 nullif(btrim(coalesce(b.tracking_number, '')), '') is not null
+                 or coalesce(max(i.suggested_metadata->>'expected_arrival'), b.expected_arrival::text) is not null
+               )
+             )
+             or (
+               nullif(btrim(coalesce(b.tracking_number, '')), '') is not null
+               and coalesce(b.shipment_state, '') <> 'delivered'
+             )
+             or (
+               b.read_state = 'awaiting'
+               or (b.shipment_state is not null and count(i.id) filter (where i.status in ('pending','enriching')) > 0)
+             )
+       limit 1
+    `.compile(tdb);
+  try {
+    return (await tdb.executeQuery(q)).rows.length > 0;
+  } catch (err) {
+    // As in visitWorkspace: core-scan's migrations have not reached it yet.
+    if ((err as Error).message.includes("does not exist")) return false;
+    throw err;
+  }
 }
 
 interface TrackedRow {

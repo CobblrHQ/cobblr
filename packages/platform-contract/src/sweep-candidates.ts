@@ -3,6 +3,11 @@ import { platform } from "@cobblr/platform-contract/platform-runtime";
 import type { TenantSweepPass, TenantSweepVisit } from "./sweeps.js";
 
 export const EMPTY_RECHECK_MS = 60 * 60_000;
+/** The safety refresh is at least this many of the pass's own rounds: at a
+ *  fixed hour, an hourly pass re-discovered every empty workspace each round
+ *  and narrowing it saved nothing (#9048). A write still wakes one at once. */
+export const EMPTY_RECHECK_ROUNDS = 6;
+export const emptyRecheckMs = (everyMs: number) => Math.max(EMPTY_RECHECK_MS, EMPTY_RECHECK_ROUNDS * everyMs);
 type Fingerprints = Map<string, string>;
 
 /** PostgreSQL keeps these counters across database connections, including
@@ -28,14 +33,15 @@ export async function workspaceWriteFingerprints(orgIds: string[]): Promise<Fing
 /** Remember only an empty visit. Work that can finish later (a pending
  * delivery, a connected device, a future escalation) must return true even
  * when this round cannot advance it. Unknown workspaces get a discovery
- * visit under the scheduler's normal pool budget. The hourly safety check
- * bounds a missed invalidation; a named run always gets its requested visit. */
+ * visit under the scheduler's normal pool budget. The safety check, an hour
+ * or six of the pass's rounds if longer, bounds a missed invalidation; a named run always gets its requested visit. */
 export function narrowSweep(
   pass: Omit<TenantSweepPass, "candidates" | "everyWorkspace">,
   hasWork: (ctx: TenantSweepVisit) => Promise<boolean>,
   read: (orgIds: string[]) => Promise<Fingerprints> = workspaceWriteFingerprints,
 ): TenantSweepPass {
   const empty = new Map<string, { fingerprint: string; at: number }>();
+  const recheckMs = emptyRecheckMs(pass.everyMs);
   let before = new Map<string, string>();
   return {
     ...pass,
@@ -51,7 +57,7 @@ export function narrowSweep(
       const now = Date.now();
       return orgIds.filter(id => {
         const seen = empty.get(id);
-        return !seen || !before.has(id) || seen.fingerprint !== before.get(id) || now - seen.at >= EMPTY_RECHECK_MS;
+        return !seen || !before.has(id) || seen.fingerprint !== before.get(id) || now - seen.at >= recheckMs;
       });
     },
     visit: async ctx => {

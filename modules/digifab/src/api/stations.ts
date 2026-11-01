@@ -48,8 +48,11 @@ stationsRouter.post("/", asyncHandler(async (req, res) => {
   if (family && !(await platform().parts.isOn(orgId, "digifab", family.part))) return void res.status(409).json({ error: { code: "part_not_enabled", module: "digifab", part: family.part, message: "This kind of machine is turned off in this workspace." } });
   if (!device || (!await driver?.jobReviewRequired?.() && !family)) return void res.status(409).json({ error: { code: "not_station_machine", message: "Choose a connected machine that starts at a station." } });
   const token = randomBytes(32).toString("base64url");
-  const row = await db.insertInto("digifab_stations").values({ connection_id: parsed.data.connection_id, remote_device_id: device.id, label: device.name, token_hash: stationTokenHash(token), revoked_at: null }).returning(["id", "label"]).executeTakeFirstOrThrow();
-  await platform().activity.log({ orgId, userId: sessionUser(req)?.id ?? null, action: "station_created", ref: { module: "digifab", entityType: "station", entityId: row.id }, diff: { label: row.label } });
+  const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx.insertInto("digifab_stations").values({ connection_id: parsed.data.connection_id, remote_device_id: device.id, label: device.name, token_hash: stationTokenHash(token), revoked_at: null }).returning(["id", "label"]).executeTakeFirstOrThrow();
+    await log({ orgId, userId: sessionUser(req)?.id ?? null, action: "station_created", ref: { module: "digifab", entityType: "station", entityId: row.id }, diff: { label: row.label } });
+    return row;
+  });
   res.status(201).json({ ...row, token });
 }));
 
@@ -69,8 +72,10 @@ export async function revokeStation(db: ReturnType<typeof tenantDb>, orgId: stri
   if (!hits.length) return { error: `No station called "${said}" can start jobs now.` };
   if (hits.length > 1) return { error: `More than one station is called "${said}". Say which by its id.` };
   const station = hits[0]!;
-  await db.updateTable("digifab_stations").set({ revoked_at: new Date() }).where("id", "=", station.id).execute();
-  await platform().activity.log({ orgId, userId, action: "station_revoked", ref: { module: "digifab", entityType: "station", entityId: station.id } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.updateTable("digifab_stations").set({ revoked_at: new Date() }).where("id", "=", station.id).execute();
+    await log({ orgId, userId, action: "station_revoked", ref: { module: "digifab", entityType: "station", entityId: station.id } });
+  });
   return { id: station.id, label: station.label ?? "the station" };
 }
 
@@ -184,6 +189,7 @@ stationsRouter.put("/sheets/material", asyncHandler(async (req, res) => {
   const saved = await platform().entities.mergeMetadata(orgId, "inventory:part", parsed.data.part_id, fields);
   if (!saved) return void res.status(409).json({ error: { code: "not_saved", message: "This sheet's details could not be saved." } });
   const [module, entityType] = sheet.kind.split(":");
+  // capability-except activity:a-change-and-its-history-line-commit-together: sheet material is written by entities.mergeMetadata on its own connection; station creation and revocation use activity.transaction (#9035)
   await platform().activity.log({ orgId, userId: sessionUser(req)?.id ?? null, action: "sheet_material_updated", ref: { module: module!, entityType: entityType!, entityId: parsed.data.part_id }, before: { laser_sheet: (sheet.fields.metadata as Record<string, unknown> | null)?.laser_sheet }, diff: { laser_sheet: parsed.data.laser_sheet } });
   res.json({ ok: true });
 }));

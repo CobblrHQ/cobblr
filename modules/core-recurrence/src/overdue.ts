@@ -21,6 +21,7 @@
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { arrivedEverywhere, daysUntil, platform, sourceIdKey } from "@cobblr/platform-contract";
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 
 export const OVERDUE_PASS = "core-recurrence.overdue";
 export const OVERDUE_EVENT = "core-recurrence.overdue";
@@ -53,12 +54,26 @@ interface SignalsDB {
 }
 
 export function startOverdueSweeper(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: OVERDUE_PASS,
     everyMs: TICK_MS,
     module: "core-recurrence",
     visit: ({ orgId, db }) => visitWorkspace(orgId, db),
-  });
+  }, hasOverdueWork));
+}
+
+/** The last day there is: asked as "today", the overdue query lists every
+ *  record with any deadline, not only those already due. */
+const EVERY_DEADLINE = "9999-12-31";
+
+/** Whether a workspace has anything with a deadline: a task's due date, or
+ *  any date field declared `due`, from every registered source, not done.
+ *  A deadline still in the future counts: time passing writes nothing, so a
+ *  workspace with a task due next week must stay a candidate until it is due
+ *  (#9048). A source that cannot be read throws, so the workspace is visited,
+ *  never remembered as empty. */
+export async function hasOverdueWork({ orgId }: { orgId: string }): Promise<boolean> {
+  return (await platform().calendar.overdue(orgId, EVERY_DEADLINE)).length > 0;
 }
 
 /** Exported for the route that runs one sweep now (tests, ops). */

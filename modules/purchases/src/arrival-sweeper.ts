@@ -1,3 +1,5 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
+import type { PurchasesDB } from "./db.js";
 // The arrival question — "did it turn up?", asked once, on the day it was due.
 //
 // An order with an ETA is a promise about a date. When the date passes and
@@ -45,12 +47,12 @@ export function startArrivalSweeper(): void {
   // The walk is the kernel's (platform().sweeps, #3036): this registers the
   // per-workspace visit and its cadence and owns no timer, so the pass shares
   // one walk and one connection budget with every other pass.
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: ARRIVAL_PASS,
     everyMs: TICK_MS,
     module: "purchases",
     visit: ({ orgId, db, now }) => visitWorkspace(orgId, db, now, {}),
-  });
+  }, hasArrivalWork));
   console.log(`[purchases] arrival sweeper registered — every ${TICK_MS / 60_000} min`);
 
   // A bridge push means the carrier already answered: re-check that number
@@ -762,4 +764,17 @@ async function visitShipments(
     asked += 1;
   }
   return { due: askable.length, asked };
+}
+
+export async function hasArrivalWork({ db }: { db: unknown }): Promise<boolean> {
+  const tdb = db as Kysely<PurchasesDB>;
+  return !!await tdb.selectFrom("purchases_orders").select("id")
+    .where("arrived_at", "is", null).where("status", "not in", ["arrived", "cancelled"])
+    .where(eb => eb.or([
+      eb("expected_arrival", "is not", null),
+      sql<boolean>`nullif(btrim(coalesce(tracking_number, '')), '') is not null`,
+      eb("status", "=", "in-transit"),
+      eb.exists(eb.selectFrom("purchases_order_shipments").select("id")
+        .whereRef("order_id", "=", "purchases_orders.id").where("received_at", "is", null)),
+    ])).limit(1).executeTakeFirst();
 }

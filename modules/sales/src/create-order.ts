@@ -27,7 +27,7 @@ export async function createOrder(db: Kysely<SalesDB>, orgId: string, userId: st
   if (!parsed.success) return { ok: false as const, error: `Cannot create order: ${parsed.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ")}` };
   const a = parsed.data;
   const afterCommit: Array<() => Promise<void>> = [];
-  const result = await db.transaction().execute(async (trx) => {
+  const result = await platform().activity.transaction(orgId, db, async (trx, log) => {
     // Serialize creates in an instance, including customer reuse and generated numbers.
     await sql`select pg_advisory_xact_lock(hashtextextended(${`sales:create:${a.instance}`}, 0))`.execute(trx);
     if (a.source) {
@@ -45,21 +45,22 @@ export async function createOrder(db: Kysely<SalesDB>, orgId: string, userId: st
     if (!customerId && a.customer && (a.customer.name || a.customer.email)) {
       const c = await trx.insertInto("sales_customers").values({ instance: a.instance, name: a.customer.name || a.customer.email!, email: a.customer.email ?? null, phone: a.customer.phone ?? null, address: a.customer.address ?? null, notes: null, metadata: {} }).returningAll().executeTakeFirstOrThrow();
       customerId = c.id; customerName = c.name;
+      await log({ orgId, userId, action: "customer_created", ref: { module: "sales", entityType: "customer", entityId: c.id }, diff: { name: c.name } });
       afterCommit.push(async () => {
         await platform().events.emit("sales.customer.created", { orgId, customerId: c.id, userId });
-        await platform().activity.log({ orgId, userId, action: "customer_created", ref: { module: "sales", entityType: "customer", entityId: c.id }, diff: { name: c.name } });
       });
     }
-    const order = await trx.insertInto("sales_orders").values({ instance: a.instance, customer_id: customerId, customer_name: customerName,
+    const order = await trx.insertInto("sales_orders").values({
+      instance: a.instance, customer_id: customerId, customer_name: customerName,
       order_number: a.order_number || await nextOrderNumber(trx, a.instance), status: a.status, order_date: a.order_date ?? await platform().accounts.dayFor(userId), due_date: a.due_date ?? null,
       shipping_address: a.shipping_address ?? null, notes: a.notes ?? null, metadata: a.metadata ?? {},
       source_name: a.source?.name ?? null, source_ref: a.source?.ref ?? null, source_url: a.source?.url ?? null,
     } as never).returningAll().executeTakeFirstOrThrow();
-    await orderHappened(trx, orgId, order.id, { kind: "status", to_status: order.status, by_user: userId }, afterCommit);
-    for (const line of a.items) await addLine(trx, orgId, userId, order.id, line, afterCommit);
+    await orderHappened(trx, orgId, order.id, { kind: "status", to_status: order.status, by_user: userId }, afterCommit, log);
+    for (const line of a.items) await addLine(trx, orgId, userId, order.id, line, afterCommit, log);
+    await log({ orgId, userId, action: "order_created", ref: { module: "sales", entityType: "order", entityId: order.id }, diff: { name: customerName ?? order.order_number, source: a.source ?? null } });
     afterCommit.push(async () => {
       await platform().events.emit("sales.order.created", { orgId, orderId: order.id });
-      await platform().activity.log({ orgId, userId, action: "order_created", ref: { module: "sales", entityType: "order", entityId: order.id }, diff: { name: customerName ?? order.order_number, source: a.source ?? null } });
     });
     return { ok: true as const, orderId: order.id, customerId, duplicate: false };
   });

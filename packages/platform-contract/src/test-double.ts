@@ -44,5 +44,19 @@ export function platformDouble<T extends object>(parts: T): T & Platform {
       return found.filter((e) => e !== null);
     };
   }
+  // A test that stands in log gets the change-with-its-line from it: a route
+  // that moved onto activity.transaction (#9035) logs through the test's own
+  // log, after the change, as the kernel does once it commits. A fake
+  // database with no transactions runs the change on itself.
+  const activity = out.activity as Record<string, unknown> | undefined;
+  if (activity && typeof activity.log === "function" && !("transaction" in activity)) {
+    activity.transaction = async (_orgId: string, db: { transaction?: () => { execute: (fn: (trx: unknown) => Promise<unknown>) => Promise<unknown> } }, work: (trx: unknown, log: (p: unknown) => Promise<void>) => Promise<unknown>) => {
+      const later: unknown[] = [];
+      const run = (trx: unknown) => work(trx, async (p) => void later.push(p));
+      const result = typeof db?.transaction === "function" ? await db.transaction().execute(run) : await run(db);
+      for (const p of later) await (activity.log as (p: unknown) => Promise<void>)(p);
+      return result;
+    };
+  }
   return parts as T & Platform;
 }

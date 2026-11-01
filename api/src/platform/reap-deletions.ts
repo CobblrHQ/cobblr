@@ -65,6 +65,10 @@ export function dueForDeletion(orgs: DeletionCandidate[], nowMs: number): Deleti
 
 export interface DeletionReapDeps {
   listCandidates?: () => Promise<DeletionCandidate[]>;
+  /** Workspaces whose delete began and did not finish (`orgs.dropping_at`). */
+  listDropping?: () => Promise<Array<{ id: string; slug: string }>>;
+  /** Whether the workspace's database is still there. */
+  databaseExists?: (orgId: string) => Promise<boolean>;
   /** The final backup; throws unless it landed. */
   exportOrg?: (orgId: string) => Promise<unknown>;
   deleteOrg?: (orgId: string) => Promise<void>;
@@ -75,6 +79,8 @@ export interface DeletionReapDeps {
 export interface DeletionReapResult {
   due: number;
   deleted: string[];
+  /** Deletes that had begun and died part way, finished this sweep. */
+  finished: string[];
   /** Due, but kept this sweep because the final backup did not land. */
   kept: string[];
   /** Set when the cap refused the whole sweep. */
@@ -91,14 +97,40 @@ async function defaultCandidates(): Promise<DeletionCandidate[]> {
     .execute();
 }
 
+/** How old a begun delete's stamp is before the reaper takes it for one that
+ *  died: a delete running now takes seconds, and two at once would race. */
+export const DROPPING_STALE_MS = 10 * 60_000;
+
+async function defaultDropping(): Promise<Array<{ id: string; slug: string }>> {
+  const { meta } = await import("../db/meta.js");
+  return meta
+    .selectFrom("orgs")
+    .select(["id", "slug"])
+    .where("dropping_at", "is not", null)
+    .where("dropping_at", "<", new Date(Date.now() - DROPPING_STALE_MS))
+    .execute();
+}
+
+async function defaultDatabaseExists(orgId: string): Promise<boolean> {
+  const { meta } = await import("../db/meta.js");
+  const { sql } = await import("kysely");
+  const row = await meta.selectFrom("orgs").select("db_name").where("id", "=", orgId).executeTakeFirst();
+  if (!row?.db_name) return false;
+  const { rows } = await sql<{ there: boolean }>`select exists (select 1 from pg_database where datname = ${row.db_name}) as there`.execute(meta);
+  return !!rows[0]?.there;
+}
+
 export async function reapRequestedDeletions(deps: DeletionReapDeps = {}): Promise<DeletionReapResult> {
   const now = deps.now ?? Date.now();
   const max = deps.max ?? deletionReapMax();
   const due = dueForDeletion(await (deps.listCandidates ?? defaultCandidates)(), now);
-  if (max > 0 && due.length > max) {
-    const refused = `${countOf(due.length, "workspace")} are due at once, over the cap of ${max}; nothing was deleted. Check the clock and the deletion_due_at stamps, then raise COBBLR_WORKSPACE_DELETE_REAP_MAX for one sweep if they are right.`;
+  const dropping = await (deps.listDropping ?? defaultDropping)();
+  if (max > 0 && (due.length > max || dropping.length > max)) {
+    const refused = due.length > max
+      ? `${countOf(due.length, "workspace")} are due at once, over the cap of ${max}; nothing was deleted. Check the clock and the deletion_due_at stamps, then raise COBBLR_WORKSPACE_DELETE_REAP_MAX for one sweep if they are right.`
+      : `${countOf(dropping.length, "workspace")} have a delete that began and did not finish, over the cap of ${max}; nothing was deleted. Check orgs.dropping_at, then raise COBBLR_WORKSPACE_DELETE_REAP_MAX for one sweep if they are right.`;
     console.error(`[reap-deletions] ${refused}`);
-    return { due: due.length, deleted: [], kept: [], refused };
+    return { due: due.length, deleted: [], finished: [], kept: [], refused };
   }
   const drop =
     deps.deleteOrg ??
@@ -113,8 +145,33 @@ export async function reapRequestedDeletions(deps: DeletionReapDeps = {}): Promi
       return takeFinalExport(orgId);
     });
   const deleted: string[] = [];
+  const finished: string[] = [];
   const kept: string[] = [];
+  // A delete that began is finished. Its database already gone, there is
+  // nothing to back up, and asking a backup of it could only fail and keep a
+  // workspace nobody can open, every sweep, for good (#9071). Still there,
+  // the delete died before the drop: the workspace's data goes only with the
+  // same final backup every deletion takes, and is kept when that fails.
+  const exists = deps.databaseExists ?? defaultDatabaseExists;
+  for (const o of dropping) {
+    try {
+      if (await exists(o.id)) await exportOrg(o.id);
+    } catch (err) {
+      kept.push(o.id);
+      console.error(`[reap-deletions] workspace ${o.slug} (${o.id}) kept: its delete began before its database went, and its final backup did not land (${(err as Error).message})`);
+      continue;
+    }
+    try {
+      await drop(o.id);
+      finished.push(o.id);
+      console.log(`[reap-deletions] finished deleting workspace ${o.slug} (${o.id}): its delete had begun and stopped part way`);
+    } catch (err) {
+      console.error(`[reap-deletions] workspace ${o.slug} (${o.id}) began deleting and still could not finish: ${(err as Error).message}`);
+    }
+  }
+  const finishing = new Set(dropping.map((o) => o.id));
   for (const o of due) {
+    if (finishing.has(o.id)) continue;
     try {
       await exportOrg(o.id);
     } catch (err) {
@@ -132,7 +189,7 @@ export async function reapRequestedDeletions(deps: DeletionReapDeps = {}): Promi
       console.error(`[reap-deletions] workspace ${o.slug} (${o.id}) not deleted: ${(err as Error).message}`);
     }
   }
-  return { due: due.length, deleted, kept };
+  return { due: due.length, deleted, finished, kept };
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;

@@ -18,25 +18,29 @@ export async function recordCompletedCopy(orgId: string, jobId: string): Promise
   if (!ref || !file || !filename) return;
 
   const db = (await platform().tenants.getDb(orgId)) as Db;
+  const recordId = job.attach_to.id;
+  const connectionId = job.connection_id;
   // Kept in the requester's Vault (#5871): its own column, never the shared
   // file "Open the copy" opens.
   const vault = typeof (job.attach_to as { vault_user?: unknown }).vault_user === "string";
-  const copied = await db
-    .updateTable("core_documents_linked")
-    .set(vault ? { copied_at: new Date(), copied_filename: filename, copied_vault_file_id: file.file_id } : { copied_at: new Date(), copied_filename: filename, copied_file_id: file.file_id })
-    .where("record_id", "=", job.attach_to.id)
-    .where("connection_id", "=", job.connection_id)
-    .where("ref", "=", ref)
-    .where("copied_at", "is", null)
-    .returning(["record_kind", "record_id", "copy_requested_by"])
-    .executeTakeFirst();
-  if (!copied) return;
-  await platform().activity.log({
-    orgId,
-    userId: copied.copy_requested_by,
-    action: "library_item_copied",
-    ref: activityRef({ kind: copied.record_kind, id: copied.record_id }),
-    diff: { item: filename, ...(vault ? { kept: "in the Vault" } : {}) },
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const copied = await trx
+      .updateTable("core_documents_linked")
+      .set(vault ? { copied_at: new Date(), copied_filename: filename, copied_vault_file_id: file.file_id } : { copied_at: new Date(), copied_filename: filename, copied_file_id: file.file_id })
+      .where("record_id", "=", recordId)
+      .where("connection_id", "=", connectionId)
+      .where("ref", "=", ref)
+      .where("copied_at", "is", null)
+      .returning(["record_kind", "record_id", "copy_requested_by"])
+      .executeTakeFirst();
+    if (!copied) return;
+    await log({
+      orgId,
+      userId: copied.copy_requested_by,
+      action: "library_item_copied",
+      ref: activityRef({ kind: copied.record_kind, id: copied.record_id }),
+      diff: { item: filename, ...(vault ? { kept: "in the Vault" } : {}) },
+    });
   });
 }
 

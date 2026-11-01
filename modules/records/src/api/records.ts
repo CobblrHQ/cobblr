@@ -85,15 +85,26 @@ recordsRouter.post(
     // Create-then-place: location rides the placement seam
     // (placement-cutover-plan step 1); place() mirrors the legacy column.
     const { location_id: createLocationId, ...createRest } = parsed.data;
-    const inserted = await db
-      .insertInto("records_records")
-      .values({
-        ...createRest,
-        instance: instanceOf(req),
-        metadata: parsed.data.metadata ?? {},
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const inserted = await trx
+        .insertInto("records_records")
+        .values({
+          ...createRest,
+          instance: instanceOf(req),
+          metadata: parsed.data.metadata ?? {},
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req).id,
+        action: "record_created",
+        ref: { module: "records", entityType: "record", entityId: inserted.id },
+        diff: { name: parsed.data.name },
+      });
+      return inserted;
+    });
+
     if (createLocationId) {
       try {
         await platform().placement.place({
@@ -107,13 +118,6 @@ recordsRouter.post(
         (inserted as { location_id?: string | null }).location_id = createLocationId;
       }
     }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req).id,
-      action: "record_created",
-      ref: { module: "records", entityType: "record", entityId: inserted.id },
-      diff: { name: parsed.data.name },
-    });
     platform().events.emit("records.record.added", {
       orgId: ctx.org.id,
       recordId: inserted.id,
@@ -163,19 +167,31 @@ recordsRouter.patch(
     // parsed.data stays intact so the activity diff and the change-event bags
     // still carry the transition.
     const { location_id: patchLocationId, ...patchRest } = parsed.data;
-    const updated = await db
-      .updateTable("records_records")
-      // The custom fields MERGE into the live row: a partial edit never
-      // replaces the bag (withMetadataMerged, #3625).
-      .set(withMetadataMerged({ ...patchRest, updated_at: new Date() } as Record<string, unknown>, smNames) as never)
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returningAll()
-      .executeTakeFirst();
+    const updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const updated = await trx
+        .updateTable("records_records")
+        // The custom fields MERGE into the live row: a partial edit never
+        // replaces the bag (withMetadataMerged, #3625).
+        .set(withMetadataMerged({ ...patchRest, updated_at: new Date() } as Record<string, unknown>, smNames) as never)
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returningAll()
+        .executeTakeFirst();
+      if (updated) await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req).id,
+        action: "record_updated",
+        ref: { module: "records", entityType: "record", entityId: id },
+        diff: parsed.data,
+        before,
+      });
+      return updated;
+    });
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "record not found" } });
       return;
     }
+
     if (patchLocationId !== undefined) {
       try {
         if (patchLocationId) {
@@ -195,14 +211,6 @@ recordsRouter.patch(
       }
       (updated as { location_id?: string | null }).location_id = patchLocationId ?? null;
     }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req).id,
-      action: "record_updated",
-      ref: { module: "records", entityType: "record", entityId: id },
-      diff: parsed.data,
-      before,
-    });
     // Flat before/after bags (native columns + flattened metadata) so a
     // transition wire can compare {{event.before.x}} vs {{event.after.x}}.
     // AWAITED: a reactor writes back to this record and the client re-reads
@@ -234,22 +242,26 @@ recordsRouter.delete(
     }
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const deleted = await db
-      .deleteFrom("records_records")
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returning("id")
-      .executeTakeFirst();
+    const deleted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const deleted = await trx
+        .deleteFrom("records_records")
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returning("id")
+        .executeTakeFirst();
+      if (deleted) await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req).id,
+        action: "record_deleted",
+        ref: { module: "records", entityType: "record", entityId: id },
+      });
+      return deleted;
+    });
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "record not found" } });
       return;
     }
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req).id,
-      action: "record_deleted",
-      ref: { module: "records", entityType: "record", entityId: id },
-    });
+
     platform().events.emit("records.record.deleted", {
       orgId: ctx.org.id,
       recordId: id,

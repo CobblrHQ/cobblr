@@ -18,14 +18,14 @@ async function finishDraw(db: Kysely<SalesDB>, orgId: string, userId: string | n
   }) as { ok?: boolean; delta?: number } | null;
   const moved = res?.ok ? Math.abs(Number(res.delta ?? 0)) : 0;
   const afterCommit: Array<() => Promise<void>> = [];
-  await db.transaction().execute(async trx => {
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
     await trx.updateTable("sales_order_items")
       .set({ qty_fulfilled: String(Number(draw.qty_before) + moved), updated_at: new Date() })
       .where("id", "=", draw.line_id).where("order_id", "=", draw.order_id).execute();
     await trx.updateTable("sales_stock_draws").set({ completed: true }).where("id", "=", draw.id).execute();
     if (moved > 0) await orderHappened(trx, orgId, draw.order_id, {
       kind: "stock", detail: { taken: [{ part_id: draw.part_id, qty: moved }] }, by_user: userId,
-    }, afterCommit);
+    }, afterCommit, log);
   });
   for (const publish of afterCommit) await publish();
   return moved;

@@ -132,12 +132,6 @@
     "reason": "DELIBERATE cross-module data migration: rehome-instance moves an instance's rows from assets_assets to records_records (the field-model Phase-2 data move). A migration between two named modules is definitionally cross-module and kernel-owned — same class as the baselined migrate-bookshelf-to-instance / migrate-location-to-placement boot passes. Explicit super-admin/test-support operation, not a runtime seam."
   },
   {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/platform/retire-receipt-failure-placeholders.ts",
-    "token": "core-scan",
-    "reason": "INTENTIONAL (historical data migration, not kernel logic): a one-shot boot pass that moves a failed receipt's placeholder row (written by core-scan before 2026-09-13) into the session's read state, on every workspace that has one. It cannot go through a module API because the rows are exactly the ones no live code path writes any more; it names core-scan only to SCOPE itself - a workspace without core-scan opens no tenant pool. Retires with the file: see its DONE WHEN header (rowsRetired=0 on prod + staging + dev)."
-  },
-  {
     "rule": "D-module-names-module",
     "file": "modules/purchases/src/api/line-subject.ts",
     "token": "inventory:part",

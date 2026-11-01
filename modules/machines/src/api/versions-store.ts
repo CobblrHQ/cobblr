@@ -73,6 +73,7 @@ export async function applyReportedVersions(orgId: string, machineId: string, r:
       diff[`${f}_version`] = set[`${f}_version`];
       prior[`${f}_version`] = before[`${f}_version`];
     }
+    // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
     await platform().activity.log({ orgId, userId: null, action: "versions_reported", ref: { module: "machines", entityType: "machine", entityId: machineId }, diff, before: prior });
   }
   return { changed };

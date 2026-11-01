@@ -85,13 +85,13 @@ export async function setupCell(db: Kysely<DigifabDB>, orgId: string, userId: st
     try { await (await cellDriver(db, orgId, setup.connection_id)).state(); }
     catch { throw new ArmRefusal("Choose the cell on your bridge. That connection did not answer as a cell."); }
   }
-  await db.transaction().execute(async (trx) => {
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
     await sql`select pg_advisory_xact_lock(hashtext(${`digifab-cell-setup:${machineId}`}))`.execute(trx);
     await trx.insertInto("digifab_cells").values({ machine_id: machineId, connection_id: setup.connection_id, device_id: setup.device_id }).onConflict((oc) => oc.column("machine_id").doUpdateSet({ connection_id: setup.connection_id, device_id: setup.device_id, updated_at: new Date() })).execute();
     await trx.deleteFrom("digifab_cell_members").where("cell_id", "=", machineId).execute();
     if (members.length) await trx.insertInto("digifab_cell_members").values(members).execute();
+    await log({ orgId, userId, action: "cell_set_up", ref: machineRef(machineId), diff: { connection_id: setup.connection_id, members: members.map((m) => ({ role: m.role, kind: m.kind, machine_id: m.machine_id })) } });
   });
-  await platform().activity.log({ orgId, userId, action: "cell_set_up", ref: machineRef(machineId), diff: { connection_id: setup.connection_id, members: members.map((m) => ({ role: m.role, kind: m.kind, machine_id: m.machine_id })) } });
   return { ok: true };
 }
 
@@ -110,8 +110,10 @@ export async function saveDefinition(db: Kysely<DigifabDB>, orgId: string, userI
     if (!program) throw new ArmRefusal(`${step.program.name}${step.program.revision ? ` revision ${step.program.revision}` : ""} is not recorded on ${step.role}. Read its programs again or add it.`);
     if (program.missing_since) throw new ArmRefusal(`${step.role}'s controller no longer lists ${step.program.name}.`);
   }
-  await db.updateTable("digifab_cells").set({ definition: JSON.stringify(definition), updated_at: new Date() }).where("machine_id", "=", machineId).execute();
-  await platform().activity.log({ orgId, userId, action: "cell_job_defined", ref: machineRef(machineId), diff: { before: cell.definition, after: definition } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.updateTable("digifab_cells").set({ definition: JSON.stringify(definition), updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+    await log({ orgId, userId, action: "cell_job_defined", ref: machineRef(machineId), diff: { before: cell.definition, after: definition } });
+  });
   return { ok: true, definition };
 }
 
@@ -121,8 +123,10 @@ export async function setOperators(db: Kysely<DigifabDB>, orgId: string, userId:
   const { operators } = OperatorsSchema.parse(value);
   const cell = await requireCell(db, machineId);
   for (const id of operators) if (!await platform().auth.userHasRole({ orgId, userId: id, minRole: "member" })) throw new ArmRefusal("Choose people in this workspace as the cell's operators.");
-  await db.updateTable("digifab_cells").set({ operators: JSON.stringify([...new Set(operators)]), updated_at: new Date() }).where("machine_id", "=", machineId).execute();
-  await platform().activity.log({ orgId, userId, action: "cell_operators_set", ref: machineRef(machineId), diff: { before: cell.operators, after: operators } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.updateTable("digifab_cells").set({ operators: JSON.stringify([...new Set(operators)]), updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+    await log({ orgId, userId, action: "cell_operators_set", ref: machineRef(machineId), diff: { before: cell.operators, after: operators } });
+  });
   return { ok: true };
 }
 
@@ -131,8 +135,10 @@ export async function setOutput(db: Kysely<DigifabDB>, orgId: string, userId: st
   const { output_part_id } = OutputSchema.parse(value);
   const cell = await requireCell(db, machineId);
   if (output_part_id && !(await platform().entities.lookup(orgId, "inventory:part", output_part_id))) throw new ArmRefusal("Choose a part in your inventory for the cell's output.");
-  await db.updateTable("digifab_cells").set({ output_part_id, updated_at: new Date() }).where("machine_id", "=", machineId).execute();
-  await platform().activity.log({ orgId, userId, action: "cell_output_set", ref: machineRef(machineId), diff: { before: cell.output_part_id, after: output_part_id } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.updateTable("digifab_cells").set({ output_part_id, updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+    await log({ orgId, userId, action: "cell_output_set", ref: machineRef(machineId), diff: { before: cell.output_part_id, after: output_part_id } });
+  });
   return { ok: true };
 }
 

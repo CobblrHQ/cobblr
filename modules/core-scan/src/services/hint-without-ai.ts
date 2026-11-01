@@ -12,6 +12,7 @@
 import { sql } from "kysely";
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import type { IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import type { CoreScanDB } from "../db.js";
 
@@ -134,7 +135,12 @@ export async function applyHintWithoutAi(
  *  a passing reason queues itself again (applyHintWithoutAi); twelve tries
  *  and it stops, the card keeping its last honest sentence. */
 export function registerAiRerunSweep(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(aiRerunPass());
+}
+
+/** The pass, narrowed to the workspaces with a re-run queued (#9048). */
+export function aiRerunPass(read?: Parameters<typeof narrowSweep>[2]) {
+  return narrowSweep({
     name: "core-scan.ai-rerun-when-back",
     everyMs: RERUN_EVERY_MS,
     module: "core-scan",
@@ -171,5 +177,19 @@ export function registerAiRerunSweep(): void {
       }
       return { backlog: due.length === 3 };
     },
-  });
+  }, hasQueuedRerun, read);
+}
+
+/** A queued re-run is work whenever it comes due: one queued for later
+ *  writes nothing when its time comes, so it keeps the workspace a
+ *  candidate now. */
+export async function hasQueuedRerun({ db }: { db: unknown }): Promise<boolean> {
+  return !!(await (db as Kysely<CoreScanDB>)
+    .selectFrom("core_scan_inbox_items")
+    .select("id")
+    .where("status", "=", "pending")
+    .where("image_file_id", "is not", null)
+    .where(sql<boolean>`suggested_metadata ? 'ai_rerun_queued'`)
+    .limit(1)
+    .executeTakeFirst());
 }

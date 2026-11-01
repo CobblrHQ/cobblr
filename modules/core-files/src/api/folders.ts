@@ -71,6 +71,7 @@ foldersRouter.post(
         .values({ name: parsed.data.name, parent_id: parent })
         .returning(["id", "parent_id", "name", "created_at"])
         .executeTakeFirstOrThrow();
+      // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
       await platform().activity.log({
         orgId: tenantContext(req).org.id,
         userId: sessionUser(req)?.id ?? null,

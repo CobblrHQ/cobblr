@@ -8,7 +8,7 @@ import { withOrderLock } from "./order-lock.js";
 import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import type { Kysely } from "kysely";
 import type { SalesDB } from "./db.js";
-import { orderHappened } from "./history.js";
+import { orderHappened, type HistoryLog } from "./history.js";
 import { refreshHold, releaseLineHold } from "./holds.js";
 
 type Db = Kysely<SalesDB>;
@@ -28,13 +28,13 @@ const said = (l: { description: string | null; qty: unknown; unit_price: unknown
   part_id: l.part_id,
 });
 
-export async function addLine(db: Db, orgId: string, userId: string | null, orderId: string, v: LineValues & { qty: number }, afterCommit?: Array<() => Promise<void>>) {
+export async function addLine(db: Db, orgId: string, userId: string | null, orderId: string, v: LineValues & { qty: number }, afterCommit?: Array<() => Promise<void>>, log?: HistoryLog) {
   const row = await db
     .insertInto("sales_order_items")
     .values({ ...v, order_id: orderId, metadata: v.metadata ?? {} } as never)
     .returningAll()
     .executeTakeFirstOrThrow();
-  await orderHappened(db, orgId, orderId, { kind: "line", detail: { change: "added", line_id: row.id, ...said(row) }, by_user: userId }, afterCommit);
+  await orderHappened(db, orgId, orderId, { kind: "line", detail: { change: "added", line_id: row.id, ...said(row) }, by_user: userId }, afterCommit, log);
   if (!afterCommit) await refreshHold(db, orgId, userId, orderId);
   return row;
 }

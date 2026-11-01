@@ -43,29 +43,32 @@ export function registerLineHandlers(): void {
       .executeTakeFirst();
     if (!exists) return { ok: false, error: "that order no longer exists" };
 
-    const row = await db
-      .insertInto("purchases_order_items")
-      .values({
-        order_id: order.id,
-        part_id: null,
-        description: description || null,
-        qty,
-        unit_cost: unitCost,
-        metadata: {},
-      } as never)
-      .returning(["id", "qty", "description"])
-      .executeTakeFirstOrThrow();
+    const row = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+      const row = await trx
+        .insertInto("purchases_order_items")
+        .values({
+          order_id: order.id,
+          part_id: null,
+          description: description || null,
+          qty,
+          unit_cost: unitCost,
+          metadata: {},
+        } as never)
+        .returning(["id", "qty", "description"])
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.orgId,
+        userId: ctx.userId,
+        action: "order_item_added",
+        ref: { module: "purchases", entityType: "order_item", entityId: row.id },
+        diff: { qty, description: description || null, part_id: partId },
+      });
+      return row;
+    });
     if (subject) await claimLine({ db, orgId: ctx.orgId, userId: ctx.userId ?? null, orderId: order.id, itemId: row.id, subject });
     // Added to an order that already arrived: it arrived with it.
     await receiveIfArrived(db, ctx.orgId, order.id, typeof args.add_to_stock === "boolean" ? args.add_to_stock : undefined);
 
-    await platform().activity.log({
-      orgId: ctx.orgId,
-      userId: ctx.userId,
-      action: "order_item_added",
-      ref: { module: "purchases", entityType: "order_item", entityId: row.id },
-      diff: { qty, description: description || null, part_id: partId },
-    });
     return { ok: true, result: { line_id: row.id, qty: row.qty, description: row.description } };
   });
 }

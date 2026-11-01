@@ -7,7 +7,6 @@ import { Router } from "express";
 import { checkoutTestOrg, poolStatus } from "../db/test-org-pool.js";
 import { workspaceShape } from "../db/workspace-shape.js";
 import { clearPassFailures, passFailures } from "../platform/pass-failures.js";
-import { retireReceiptFailurePlaceholders } from "../platform/retire-receipt-failure-placeholders.js";
 import { healBundleViewFields } from "../platform/heal-bundle-view-fields.js";
 import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
@@ -140,17 +139,6 @@ const onlyOrg = (req: { body?: unknown }): { onlyOrgId?: string } => {
   return org_id ? { onlyOrgId: org_id } : {};
 };
 
-// Same reason, for the pass that moves a failed receipt's placeholder row into
-// the session's read state (#2898). Scoped to one org so a test proves the
-// pass on the placeholder it seeded and touches nobody else's workspace.
-testSupportRouter.post("/test-support/run-migration/receipt-placeholders", async (req, res, next) => {
-  try {
-    res.json(await retireReceiptFailurePlaceholders(onlyOrg(req)));
-  } catch (err) {
-    next(err);
-  }
-});
-
 // Same reason, for the boot pass that gives every scan fallback table its
 // category axis and relabels the axis on a table that keeps its own categories
 // (#3148): the words a form shows are decided by the module registry, which
@@ -211,10 +199,11 @@ testSupportRouter.post("/test-support/run-sweep", async (req, res, next) => {
 // a test shows none is lost (activity-trace.ts). Body: { slug, fault:
 // "refuse" (the server's database refuses its lines until cleared) | "die"
 // (the next change through a record's writer loses its line as a process
-// dying right after the change would, once) | null (clear) }.
+// dying right after the change would, once) | null (clear), action?,
+// entity_id? (the one line a die is for) }.
 testSupportRouter.post("/test-support/activity-trace-fault", async (req, res, next) => {
   try {
-    const { slug, fault } = (req.body ?? {}) as { slug?: string; fault?: string | null };
+    const { slug, fault, action, entity_id } = (req.body ?? {}) as { slug?: string; fault?: string | null; action?: string; entity_id?: string };
     if (!slug || !(fault === null || fault === "refuse" || fault === "die")) {
       res.status(400).json({ error: { code: "bad_body", message: "slug + fault (refuse|die|null) required" } });
       return;
@@ -224,7 +213,7 @@ testSupportRouter.post("/test-support/activity-trace-fault", async (req, res, ne
       res.status(404).json({ error: { code: "not_found", message: "no such workspace" } });
       return;
     }
-    setTraceFaultForTests(o.id, fault);
+    setTraceFaultForTests(o.id, fault, { ...(action ? { action } : {}), ...(entity_id ? { entityId: entity_id } : {}) });
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -386,6 +375,52 @@ testSupportRouter.post("/test-support/mirror-apply-hold", async (req, res, next)
 // The next `times` edits a share space queues fail inside their write, after
 // the edit is queued (#7125). Body: { slug, times }; GET ?slug= reads what is
 // left to fail.
+// The next share accepts by one person die after the owner's claim and
+// before their own side is written (#9071). Body: { user_id, times }.
+testSupportRouter.post("/test-support/share-accept-fails", async (req, res, next) => {
+  try {
+    const { times, user_id } = (req.body ?? {}) as { times?: number; user_id?: string };
+    if (typeof times !== "number" || typeof user_id !== "string") {
+      res.status(400).json({ error: { code: "bad_body", message: "times and user_id required" } });
+      return;
+    }
+    const { failShareAcceptForTests } = await import("../platform/share-links.js");
+    failShareAcceptForTests(user_id, times);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+// The next record moves die between their two commits (#9071). Body: { times }.
+testSupportRouter.post("/test-support/move-fails", async (req, res, next) => {
+  try {
+    const { times } = (req.body ?? {}) as { times?: number };
+    if (typeof times !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "times required" } });
+      return;
+    }
+    const { failMoveBetweenCommitsForTests } = await import("../platform/move-records.js");
+    failMoveBetweenCommitsForTests(times);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+// The next invite sign-ups die after their account is made (#9071). Body: { times }.
+testSupportRouter.post("/test-support/invite-signup-fails", async (req, res, next) => {
+  try {
+    const { times } = (req.body ?? {}) as { times?: number };
+    if (typeof times !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "times required" } });
+      return;
+    }
+    const { failInviteSignupForTests } = await import("./members.js");
+    failInviteSignupForTests(times);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
 // The next runs of one hand-over step fail (#7133): the retry must finish it.
 testSupportRouter.post("/test-support/hand-over-fails", async (req, res, next) => {
   try {

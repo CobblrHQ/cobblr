@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "knowledge",
-  version: "0.1.9",
+  version: "0.1.10",
   maturity: "beta",
   displayName: "Knowledge Base",
   description:

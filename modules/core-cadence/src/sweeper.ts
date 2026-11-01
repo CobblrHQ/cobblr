@@ -17,6 +17,7 @@
 //     "running low on milk" every hour until milk is bought trains people to
 //     ignore the list. core_cadence_signals remembers when we last said it.
 
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { Kysely } from "kysely";
 import { platform, sourceIdKey } from "@cobblr/platform-contract";
 import { cadenceState, reorderSuggested, buyLessSuggested, type CadenceEvent } from "./model.js";
@@ -30,12 +31,12 @@ export function startCadenceSweeper(): void {
   // The walk is the kernel's (platform().sweeps, #3036): this registers the
   // per-workspace visit and its cadence and owns no timer, so the pass shares
   // one walk and one connection budget with every other pass.
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: CADENCE_PASS,
     everyMs: TICK_MS,
     module: "core-cadence",
     visit: ({ orgId, db }) => visitWorkspace(orgId, db),
-  });
+  }, hasCadenceWork));
   console.log(`[core-cadence] sweeper registered — every ${TICK_MS / 60_000} min`);
 }
 
@@ -277,4 +278,10 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     }
   }
   return { scanned, emitted };
+}
+
+
+export async function hasCadenceWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<SweepDB>).selectFrom("core_cadence_events").select("entity_id")
+    .limit(1).executeTakeFirst();
 }

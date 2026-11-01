@@ -31,13 +31,14 @@ export function registerAssemblyPasteActions() {
   if (latest?.assembly?.paste) return { ok: true, changed: false, data: await assemblyOrderView(ctx, p.order_id) };
   const handling = await invoke<{ revision: number }>(ctx, "inventory:paste-readiness", { partId: intent.part_id });
   await invoke(ctx, "inventory:use-ready-paste", { partId: intent.part_id, amount_ml: intent.amount_ml, sourceId: intent.source, lot: intent.lot_code, revision: handling.revision });
-  const changed = await db.transaction().execute(async trx => {
+  const changed = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
    const row = await trx.selectFrom("builds_planned").selectAll().where("id", "=", p.order_id).forUpdate().executeTakeFirst();
    if (!row?.assembly) throw new ActionRefusal("Reload the work order to recover its paste application.");
    if (row.assembly.paste) return false;
-   await trx.updateTable("builds_planned").set({ assembly: { ...row.assembly, state: "pasted", paste: intent }, updated_at: new Date() }).where("id", "=", row.id).execute(); return true;
+   await trx.updateTable("builds_planned").set({ assembly: { ...row.assembly, state: "pasted", paste: intent }, updated_at: new Date() }).where("id", "=", row.id).execute();
+   await log({ orgId: ctx.orgId, userId: ctx.userId, action: "updated", ref: { module: "builds", entityType: "work-order", entityId: p.order_id }, diff: { paste_lot: intent.lot_code, amount_ml: intent.amount_ml } });
+   return true;
   });
-  if (changed) await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: "updated", ref: { module: "builds", entityType: "work-order", entityId: p.order_id }, diff: { paste_lot: intent.lot_code, amount_ml: intent.amount_ml } });
   return { ok: true, changed, data: await assemblyOrderView(ctx, p.order_id) };
  });
 }

@@ -83,6 +83,12 @@ const KNOWN = new Set([
 // label the b550 carries. A deliberate exception says why on the runs-on line: `# b550-ok: <why>`.
 const B550_LABELS = new Set(["ci-test", "bake-b550", "ci-walk", "ci-long", "nightly"]);
 
+// UBUNTU-LATEST HAS NO DOCKER (2026-11-01, server-setup org-light-a6): the org's short ubuntu-latest jobs got a runner
+// on the A6 that the admission gate never pauses, so it is charged only while a job runs, and its jobs get no docker
+// socket: a build or a container one started through the host's docker would sit outside every cap the gate books.
+// A job that runs docker asks for a label whose runner is charged for it (light, docker-build).
+const USES_DOCKER = /\bdocker(?:\s+compose|-compose|\s+(?:build|buildx|run|pull|login|exec|create|start|load))\b/;
+
 // A SCHEDULED RUN NEVER TAKES A FAST LANE'S RUNNER (#6226, 2026-10-25): at 07:15Z ci-impact's shard test-4 took z87's one
 // slot on `ci-test` while a critical fix's fast-lane jobs waited behind it. z87's runner carries the fast lanes and the
 // pull requests' labels, so a scheduled workflow asks for `nightly` instead, except where it must prove those lanes.
@@ -210,6 +216,10 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     if (B550_LABELS.has(label) && !/# b550-ok: \S/.test(line)) {
       const what = publishesIn(jobBody(src.split("\n"), i));
       if (what) errors.push(`.forgejo/workflows/${f}:${i + 1} runs on "${label}", which the test-only b550 carries (bad RAM), and the job publishes (${what}): a flipped bit would ship. Run it on an A6-only label (ci-e2e for the test image), or say why on the line: # b550-ok: <why>.`);
+    }
+    if (label === "ubuntu-latest") {
+      const what = USES_DOCKER.exec(jobBody(src.split("\n"), i))?.[0];
+      if (what) errors.push(`.forgejo/workflows/${f}:${i + 1} runs on "ubuntu-latest" and the job runs docker (${what}): that label's never-paused A6 runner gives its jobs no docker socket, since a build or container started there sits outside every cap. Use \`runs-on: light\` (or docker-build for an image build).`);
     }
     const inLane = RELEASE_LANE_WORKFLOWS.includes(f);
     if (label === "release" && !inLane) {

@@ -366,6 +366,7 @@ export async function addHolding(
   if (input.qty > 0) {
     await recordConsumption(c.db, { partId: inserted.id, delta: input.qty, reason: "counted in a new place", sourceKind: c.kind, sourceId: card.id });
   }
+  // capability-except activity:a-change-and-its-history-line-commit-together: holding splits and combines write through platform pairings and placement, and moveLots commits withBatches separately; their summary cannot commit with those services (#9035)
   await platform().activity.log({
     orgId: c.orgId,
     userId: c.userId,

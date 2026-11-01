@@ -151,25 +151,27 @@ export function registerActionHandlers(): void {
 
     // The custom fields as they were: the log says what this set changed (#4517).
     const before = await db.selectFrom("assets_assets").select(["metadata"]).where("id", "=", found.id).executeTakeFirst();
-    await db
-      .updateTable("assets_assets")
-      .set({
-        // Overlay only THIS action's keys, DB-side, against the live row — an
-        // asset's metadata is multi-writer (user PATCH, integrations sync, scan
-        // confirm), and a full-replace from a read snapshot dropped their keys.
-        metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(updates)}::jsonb` as never,
-        updated_at: new Date(),
-      })
-      .where("id", "=", found.id)
-      .execute();
+    await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+      await trx
+        .updateTable("assets_assets")
+        .set({
+          // Overlay only THIS action's keys, DB-side, against the live row — an
+          // asset's metadata is multi-writer (user PATCH, integrations sync, scan
+          // confirm), and a full-replace from a read snapshot dropped their keys.
+          metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(updates)}::jsonb` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", found.id)
+        .execute();
 
-    await platform().activity.log({
-      orgId: ctx.orgId,
-      userId: ctx.userId ?? null,
-      action: "asset_fields_updated",
-      ref: { module: "assets", entityType: "asset", entityId: found.id },
-      diff: { via: ctx.event?.name ? "wire" : "asked", event: ctx.event?.name ?? null, updates, metadata: updates },
-      before,
+      await log({
+        orgId: ctx.orgId,
+        userId: ctx.userId ?? null,
+        action: "asset_fields_updated",
+        ref: { module: "assets", entityType: "asset", entityId: found.id },
+        diff: { via: ctx.event?.name ? "wire" : "asked", event: ctx.event?.name ?? null, updates, metadata: updates },
+        before,
+      });
     });
 
     return {

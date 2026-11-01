@@ -24,6 +24,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { storedDestinationOf } from "@cobblr/platform-contract/scan-triage";
 import { assembleMergedMenu, heuristicMatch, perceiveRow, type MatchCandidate, type ScanMenuEntry } from "./matchmaker.js";
 import { applyReceiptFacts } from "./receipt-candidate-facts.js";
@@ -50,7 +51,13 @@ export const REROUTE_PASS = "core-scan.reroute-keyword-rows";
 /** The walk is the kernel's (platform().sweeps, #3036): this registers the
  *  per-workspace visit and its cadence. */
 export function startRerouteSweeper(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(reroutePass());
+  console.log(`[core-scan] keyword re-route sweeper registered — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
+}
+
+/** The pass, narrowed to the workspaces with work (#9048). */
+export function reroutePass(read?: Parameters<typeof narrowSweep>[2]) {
+  return narrowSweep({
     name: REROUTE_PASS,
     everyMs: TICK_MS,
     drainMs: DRAIN_MS,
@@ -59,8 +66,26 @@ export function startRerouteSweeper(): void {
       const done = await rerouteWorkspace(orgId);
       return { visited: done.visited, rerouted: done.rerouted, backlog: done.visited >= REROUTE_PER_TICK };
     },
-  });
-  console.log(`[core-scan] keyword re-route sweeper registered — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
+  }, hasUnjudgedKeywordRow, read);
+}
+
+/** A row the old rule routed and nobody has judged since: unjudgedPage's
+ *  filter. Rows made after the rule never qualify, so a workspace without
+ *  one now never gains one. */
+export async function hasUnjudgedKeywordRow({ db }: { db: unknown }): Promise<boolean> {
+  const tdb = db as Kysely<unknown>;
+  const { rows } = await tdb.executeQuery(sql`
+      select 1 from core_scan_inbox_items
+      where status = 'pending'
+        and created_at < ${REROUTE_RULE.since}::timestamptz
+        and target_entity_id is null
+        and (suggested_metadata->'reroute') is null
+        and (suggested_metadata->>'matched_at') is not null
+        and (suggested_metadata->>'matched_at')::timestamptz < ${REROUTE_RULE.since}::timestamptz
+        and (suggested_candidates->0->>'heuristic') = 'true'
+      limit 1
+    `.compile(tdb));
+  return rows.length > 0;
 }
 
 export interface RerouteRow {

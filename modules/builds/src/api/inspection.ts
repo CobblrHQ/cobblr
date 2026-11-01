@@ -37,7 +37,7 @@ export async function assemblyRecall(orgId: string, code: string) {
  return { code, items: rows.map(row => ({ order_id: row.id, build_id: row.build_id, run_id: row.run_id, finished: row.assembly?.finished, trace: row.assembly?.trace })) };
 }
 export function registerInspectionActions() {
- platform().actions.registerHandler("builds.update-inspection-metadata", async ctx => { await operator(ctx); const p = z.object({ inspection_id: z.string().uuid(), metadata: z.record(z.unknown()) }).parse(ctx.args), db = await database(ctx.orgId); const row = await db.updateTable("builds_inspections").set({ metadata: sql<Record<string, unknown>>`metadata || ${JSON.stringify(p.metadata)}::jsonb` }).where("id", "=", p.inspection_id).returning("id").executeTakeFirst(); if (!row) throw new ActionRefusal("Choose an inspection from this workspace."); await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: "updated", ref: { module: "builds", entityType: "inspection", entityId: row.id }, diff: { metadata: p.metadata } }); return { ok: true, changed: true }; });
+ platform().actions.registerHandler("builds.update-inspection-metadata", async ctx => { await operator(ctx); const p = z.object({ inspection_id: z.string().uuid(), metadata: z.record(z.unknown()) }).parse(ctx.args), db = await database(ctx.orgId); await platform().activity.transaction(ctx.orgId, db, async (trx, log) => { const row = await trx.updateTable("builds_inspections").set({ metadata: sql<Record<string, unknown>>`metadata || ${JSON.stringify(p.metadata)}::jsonb` }).where("id", "=", p.inspection_id).returning("id").executeTakeFirst(); if (!row) throw new ActionRefusal("Choose an inspection from this workspace."); await log({ orgId: ctx.orgId, userId: ctx.userId, action: "updated", ref: { module: "builds", entityType: "inspection", entityId: row.id }, diff: { metadata: p.metadata } }); return row; }); return { ok: true, changed: true }; });
  platform().actions.registerHandler("builds.inspection-resources", async ctx => { const p = Order.extend({ ordinal: z.number().int().positive().optional() }).parse(ctx.args); return { ok: true, data: await inspectionResources(ctx.orgId, p.order_id, ctx.userId, p.ordinal) }; });
  platform().actions.registerHandler("builds.inspection", async ctx => ({ ok: true, data: await inspectionView(ctx.orgId, z.object({ inspection_id: z.string().uuid() }).parse(ctx.args).inspection_id) }));
  platform().actions.registerHandler("builds.assembly-recall", async ctx => ({ ok: true, data: await assemblyRecall(ctx.orgId, z.object({ code: z.string().trim().min(1).max(160) }).parse(ctx.args).code) }));
@@ -52,7 +52,7 @@ export function registerInspectionActions() {
   const files = await platform().files.describe(ctx.orgId, [p.front_file_id, p.back_file_id]);
   if (files?.length !== 2 || files.some(file => !["image/jpeg", "image/png", "image/webp"].includes(file.mimeType))) throw new ActionRefusal("Keep front and back image files from this workspace.");
   let inspectionId: string;
-  try { inspectionId = await db.transaction().execute(async trx => {
+  try { inspectionId = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
    const row = await trx.selectFrom("builds_planned").selectAll().where("id", "=", p.order_id).forUpdate().executeTakeFirst();
    if (!row?.assembly || row.assembly.state !== "reflowed" || row.assembly.finish_intent) throw new ActionRefusal("Inspect a reflowed batch before finishing it. Finished evidence cannot be replaced.");
    const station = await authorize(ctx, row.assembly.inspection_machine, p.station_token);
@@ -65,10 +65,10 @@ export function registerInspectionActions() {
    const values = { status: p.status, front_file_id: p.front_file_id, back_file_id: p.back_file_id, serial_code: p.serial_code || null, defects: sql<string>`${JSON.stringify([...new Set(p.defects)])}::jsonb`, notes: p.notes, inspected_by: ctx.userId, station_id: station.id, inspected_at: new Date() };
    // check-then-insert: the parent work order is locked for every inspection write; competing serial keys are refused by the 23505 handler.
    const saved = old ? await trx.updateTable("builds_inspections").set({ ...values, revision: old.revision + 1, history: sql<string>`${JSON.stringify([...old.history, { status: old.status, front_file_id: old.front_file_id, back_file_id: old.back_file_id, defects: old.defects, notes: old.notes, serial_code: old.serial_code, inspected_by: old.inspected_by, inspected_at: old.inspected_at, revision: old.revision }])}::jsonb` }).where("id", "=", old.id).returning("id").executeTakeFirstOrThrow() : await trx.insertInto("builds_inspections").values({ ...values, order_id: row.id, ordinal: p.ordinal }).returning("id").executeTakeFirstOrThrow();
+   await log({ orgId: ctx.orgId, userId: ctx.userId, action: p.revision === 0 ? "inspection_created" : "updated", ref: { module: "builds", entityType: "inspection", entityId: saved.id }, diff: { status: p.status, ordinal: p.ordinal } });
    return saved.id;
   }); } catch (e) { if ((e as { code?: string }).code === "23505") throw new ActionRefusal("That serial already identifies another board in this workspace."); throw e; }
   for (const [role, fileId] of [["front", p.front_file_id], ["back", p.back_file_id]]) await platform().files.attach(ctx.orgId, { fileId: fileId!, source_module: "builds", source_type: "inspection", source_id: inspectionId, role: `${role}-v${p.revision + 1}` });
-  await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: p.revision === 0 ? "inspection_created" : "updated", ref: { module: "builds", entityType: "inspection", entityId: inspectionId }, diff: { status: p.status, ordinal: p.ordinal } });
   return { ok: true, changed: true, data: await inspectionView(ctx.orgId, inspectionId) };
  });
  platform().actions.registerHandler("builds.finish-assembly", async ctx => {
@@ -91,7 +91,7 @@ export function registerInspectionActions() {
    return next;
   });
   await invoke(ctx, "inventory:finish-assembly-stock", { ...intent, source_kind: "builds:work-order" });
-  const changed = await db.transaction().execute(async trx => {
+  const changed = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
    const row = await trx.selectFrom("builds_planned").selectAll().where("id", "=", p.order_id).forUpdate().executeTakeFirstOrThrow(), a = row.assembly!;
    if (a.finished) return false;
    await trx.insertInto("builds_runs").values({ id: intent.run_id, build_id: row.build_id, qty_built: String(intent.accepted), consumed: { assembly_order_id: row.id, trace: a.trace }, built_by: ctx.userId }).execute();
@@ -104,11 +104,11 @@ export function registerInspectionActions() {
    if (intent.accepted > boards.length) outputs.push({ run_id: intent.run_id, part_id: intent.output_id, serial_code: null, quantity: String(intent.accepted - boards.length) });
    if (outputs.length) await trx.insertInto("builds_run_outputs").values(outputs).execute();
    await trx.updateTable("builds_planned").set({ status: "done", assembly: { ...a, state: "tested", finished: { run_id: intent.run_id, output_kind: intent.output_kind, output_id: intent.output_id, accepted: intent.accepted, rejected: intent.rejected, by: ctx.userId, at: new Date().toISOString() } }, updated_at: new Date() }).where("id", "=", row.id).execute();
+   await log({ orgId: ctx.orgId, userId: ctx.userId, action: "build_completed", ref: { module: "builds", entityType: "build", entityId: row.build_id }, diff: { accepted: intent.accepted, rejected: intent.rejected, order_id: p.order_id, run_id: intent.run_id } });
    return true;
   });
   if (changed) {
    const order = await assemblyOrder(db, p.order_id);
-   await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: "build_completed", ref: { module: "builds", entityType: "build", entityId: order.build_id }, diff: { accepted: intent.accepted, rejected: intent.rejected, order_id: p.order_id, run_id: intent.run_id } });
    await platform().events.emit("builds.planned.completed", { orgId: ctx.orgId, plannedId: p.order_id, buildId: order.build_id });
    await platform().events.emit("builds.build.completed", { orgId: ctx.orgId, buildId: order.build_id, qtyBuilt: intent.accepted, viaWire: false });
   }

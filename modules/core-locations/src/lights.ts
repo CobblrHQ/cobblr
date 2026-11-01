@@ -76,9 +76,11 @@ export async function savePlaceLight(orgId: string, id: string, raw: unknown, us
   if (mapping) await requireLightConnection(orgId, mapping.connection_id, mapping.driver);
   const db = await dbFor(orgId);
   const before = await db.selectFrom("core_locations_locations").select("metadata").where("id", "=", id).executeTakeFirst();
-  const row = await db.updateTable("core_locations_locations").set({ metadata: platform().db.mergeJsonb("metadata", { light: mapping }) as never, updated_at: new Date() }).where("id", "=", id).returning("id").executeTakeFirst();
-  if (!row) throw new LightSetupError("That place is no longer here.");
-  await platform().activity.log({ orgId, userId, action: "location_light_updated", ref: { module: "core-locations", entityType: "location", entityId: id }, diff: { light: mapping }, before: { light: before?.metadata.light ?? null } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx.updateTable("core_locations_locations").set({ metadata: platform().db.mergeJsonb("metadata", { light: mapping }) as never, updated_at: new Date() }).where("id", "=", id).returning("id").executeTakeFirst();
+    if (!row) throw new LightSetupError("That place is no longer here.");
+    await log({ orgId, userId, action: "location_light_updated", ref: { module: "core-locations", entityType: "location", entityId: id }, diff: { light: mapping }, before: { light: before?.metadata.light ?? null } });
+  });
   await platform().events.emit("core-locations.location.updated", { orgId, locationId: id });
 }
 
@@ -95,10 +97,10 @@ export async function saveGridLights(orgId: string, parent: string, raw: unknown
   let mapped;
   try { mapped = mapLightGrid(children, config); }
   catch (e) { throw new LightSetupError(e instanceof Error ? e.message : "These bins could not be mapped."); }
-  await db.transaction().execute(async trx => {
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
     for (const [id, light] of mapped) await trx.updateTable("core_locations_locations").set({ metadata: platform().db.mergeJsonb("metadata", { light }) as never, updated_at: new Date() }).where("id", "=", id).execute();
+    await log({ orgId, userId, action: "location_grid_lights_updated", ref: { module: "core-locations", entityType: "location", entityId: parent }, diff: { grid: config, bins: [...mapped.keys()] }, before: { lights: children.map(c => ({ id: c.id, light: c.metadata.light ?? null })) } });
   });
-  await platform().activity.log({ orgId, userId, action: "location_grid_lights_updated", ref: { module: "core-locations", entityType: "location", entityId: parent }, diff: { grid: config, bins: [...mapped.keys()] }, before: { lights: children.map(c => ({ id: c.id, light: c.metadata.light ?? null })) } });
   for (const id of mapped.keys()) await platform().events.emit("core-locations.location.updated", { orgId, locationId: id });
   return mapped.size;
 }

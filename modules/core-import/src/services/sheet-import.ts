@@ -654,32 +654,29 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
         else if (done % PROGRESS_EVERY === 0) await db.updateTable("core_import_runs").set({ progress_done: done, heartbeat_at: new Date() }).where("id", "=", runId).execute();
       }
     }
-    await db
-      .updateTable("core_import_runs")
-      .set({
-        status: "done",
-        progress_done: done,
-        finished_at: new Date(),
-        heartbeat_at: null,
-        resume: null,
-        // jsonb-replace-ok: a run's summary and work have one writer, this job
-        summary: sql`${JSON.stringify({ sheets: summaries })}::jsonb`,
-        work: sql`'{}'::jsonb`, // jsonb-replace-ok: the run is finished, its plan is no longer needed
-      } as never)
-      .where("id", "=", runId)
-      .execute();
-    // One line in the workspace's activity for the whole run: where it lands,
-    // and the door back to the run (its undo) from the activity feed.
-    await platform()
-      .activity.log({
+    await platform().activity.transaction(orgId, db, async (trx, log) => {
+      await trx
+        .updateTable("core_import_runs")
+        .set({
+          status: "done",
+          progress_done: done,
+          finished_at: new Date(),
+          heartbeat_at: null,
+          resume: null,
+          // jsonb-replace-ok: a run's summary and work have one writer, this job
+          summary: sql`${JSON.stringify({ sheets: summaries })}::jsonb`,
+          work: sql`'{}'::jsonb`, // jsonb-replace-ok: the run is finished, its plan is no longer needed
+        } as never)
+        .where("id", "=", runId)
+        .execute();
+      await log({
         orgId,
         userId: run.created_by_user_id,
         action: "sheet_imported",
         ref: { module: "core-import", entityType: "import_run", entityId: runId },
         diff: { title: run.filename ?? "a spreadsheet", filename: run.filename, sheets: summaries.map((x) => ({ sheet: x.sheet, label: x.label, created: x.created, updated: x.updated, failed: x.failed })) },
-      })
-      // import-swallow-ok: the activity line is a courtesy; the run's own row is the record of what happened
-      .catch(() => undefined);
+      });
+    });
   } catch (err) {
     await db
       .updateTable("core_import_runs")
@@ -986,25 +983,24 @@ export async function undoRun(orgId: string, db: ImportDb, lb: Loopback, runId: 
   }
 
   const report: UndoReport = { undone, held, status: held.length ? "partly-undone" : "undone" };
-  await platform()
-    .activity.log({
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx
+      .updateTable("core_import_runs")
+      .set({
+        status: report.status,
+        ...(report.status === "undone" ? { undone_at: new Date() } : {}),
+        undo_report: sql`${JSON.stringify(report)}::jsonb`, // jsonb-replace-ok: the latest undo's report replaces the last
+      } as never)
+      .where("id", "=", runId)
+      .execute();
+    await log({
       orgId,
       userId: null,
       action: report.status === "undone" ? "sheet_import_undone" : "sheet_import_partly_undone",
       ref: { module: "core-import", entityType: "import_run", entityId: runId },
-      diff: { title: (await db.selectFrom("core_import_runs").select("filename").where("id", "=", runId).executeTakeFirst())?.filename ?? "a spreadsheet", undone: report.undone, held: report.held.length },
-    })
-    // import-swallow-ok: the activity line is a courtesy; the run's own row is the record of what happened
-    .catch(() => undefined);
-  await db
-    .updateTable("core_import_runs")
-    .set({
-      status: report.status,
-      ...(report.status === "undone" ? { undone_at: new Date() } : {}),
-      undo_report: sql`${JSON.stringify(report)}::jsonb`, // jsonb-replace-ok: the latest undo's report replaces the last
-    } as never)
-    .where("id", "=", runId)
-    .execute();
+      diff: { title: (await trx.selectFrom("core_import_runs").select("filename").where("id", "=", runId).executeTakeFirst())?.filename ?? "a spreadsheet", undone: report.undone, held: report.held.length },
+    });
+  });
   return report;
 }
 

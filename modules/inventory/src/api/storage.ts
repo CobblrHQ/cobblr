@@ -96,7 +96,7 @@ export function registerStorageActions() {
     const id = ctx.entity?.id ?? parsed.data.partId;
     if (!id) throw new ActionRefusal("Choose the stock to change.");
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<InventoryDB>;
-    const changed = await db.transaction().execute(async trx => {
+    const changed = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
       const part = await trx.selectFrom("inventory_parts").select(["id", "archived", "state", "instance"]).where("id", "=", id).forUpdate().executeTakeFirst();
       if (!part || part.archived || part.state !== "active") throw new ActionRefusal("Choose active stock.");
       const stored = await trx.selectFrom("inventory_stock_storage").selectAll().where("part_id", "=", id).executeTakeFirst();
@@ -117,9 +117,9 @@ export function registerStorageActions() {
       } catch (e) { throw new ActionRefusal(e instanceof Error ? e.message : "Give the bake duration, temperature and manufacturer instruction."); }
       await trx.insertInto("inventory_stock_storage").values({ part_id: id, state, revision: revision + 1 })
         .onConflict(oc => oc.column("part_id").doUpdateSet({ state, revision: revision + 1, updated_at: now })).execute();
+      await log({ orgId: ctx.orgId, userId: ctx.userId ?? null, action: "part_storage_changed", ref: { module: "inventory", entityType: "part", entityId: id }, diff: { operation: parsed.data.operation } });
       return { revision: revision + 1, state };
     });
-    await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId ?? null, action: "part_storage_changed", ref: { module: "inventory", entityType: "part", entityId: id }, diff: { operation: parsed.data.operation } });
     return { ok: true, changed: true, data: changed };
   });
 }

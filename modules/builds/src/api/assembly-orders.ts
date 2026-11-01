@@ -55,7 +55,7 @@ export function registerAssemblyOrderActions() {
     const p = Create.parse(ctx.args);
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<BuildsDB>;
     await revision(db, p.build_id);
-    const saved = await db.transaction().execute(async trx => {
+    const saved = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
       await sql`select pg_advisory_xact_lock(hashtextextended(${`assembly-order:${p.request_key}`}, 0))`.execute(trx);
       const old = await trx.selectFrom("builds_planned").selectAll().where(sql<boolean>`assembly->>'request_key' = ${p.request_key}`).executeTakeFirst();
       if (old) {
@@ -63,9 +63,9 @@ export function registerAssemblyOrderActions() {
         return { row: old, created: false };
       }
       const row = await trx.insertInto("builds_planned").values({ build_id: p.build_id, qty: String(p.boards), due_date: null, notes: p.notes ?? null, resource_label: null, source_kind: null, source_id: null, assembly: { request_key: p.request_key, state: "draft" } }).returningAll().executeTakeFirstOrThrow();
+      await log({ orgId: ctx.orgId, userId: ctx.userId, action: "work-order_created", ref: { module: "builds", entityType: "work-order", entityId: row.id }, diff: { qty: p.boards } });
       return { row, created: true };
     });
-    if (saved.created) await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: "work-order_created", ref: { module: "builds", entityType: "work-order", entityId: saved.row.id }, diff: { qty: p.boards } });
     if (saved.created) await platform().events.emit("builds.planned.created", { orgId: ctx.orgId, plannedId: saved.row.id, buildId: p.build_id });
     return { ok: true, changed: saved.created, data: { order_id: saved.row.id } };
   });

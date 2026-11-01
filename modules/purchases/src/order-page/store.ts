@@ -1,3 +1,4 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 // An order's own page at its store: kept sealed, attached to its order, read
 // on its schedule, and each read turned into the order's parcels (#5461).
 //
@@ -170,6 +171,7 @@ export async function applyRead(db: Kysely<PurchasesDB>, orgId: string, userId: 
     });
     if (!out) continue;
     if (out.created) {
+      // capability-except activity:a-change-and-its-history-line-commit-together: recordShipment calls unreceiveOrderLines, which drains its own receipt transactions and tells inventory about stock before recording the parcel (#9035)
       await platform().activity.log({
         orgId,
         userId,
@@ -438,10 +440,16 @@ export function registerOrderPageReads(): void {
       platform().health.notePassFailure(ORDER_PAGE_PASS, p.orgId, new Error(`file ${p.fileId}: ${(err as Error).name}`));
     }
   });
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: ORDER_PAGE_PASS,
     everyMs: 30 * 60 * 1000,
     module: "purchases",
     visit: async ({ orgId, db, now }) => readDue(orgId, db as Kysely<PurchasesDB>, now),
-  });
+  }, hasOrderPageWork));
+}
+
+export async function hasOrderPageWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<PurchasesDB>).selectFrom("purchases_order_pages").select("id")
+    .where(eb => eb.or([eb("order_id", "is", null), eb("next_read_at", "is not", null)]))
+    .limit(1).executeTakeFirst();
 }

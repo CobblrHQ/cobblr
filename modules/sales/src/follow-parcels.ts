@@ -1,3 +1,4 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 // "Follow parcels I send": where each shipped order's parcel is, until it is
 // delivered.
 //
@@ -69,13 +70,15 @@ async function writeFollowSetting(db: Kysely<SalesDB>, next: FollowSetting): Pro
 /** Turn following on (as `userId`) or off. Turning it on clears a pause. */
 export async function setFollowing(db: Kysely<SalesDB>, orgId: string, userId: string | null, on: boolean): Promise<FollowSetting> {
   const next: FollowSetting = on ? { on: true, by: userId, paused_until: null, paused_reason: null } : { ...OFF };
-  await writeFollowSetting(db, next);
-  await platform().activity.log({
-    orgId,
-    userId,
-    action: on ? "parcel_following_on" : "parcel_following_off",
-    ref: { module: "sales", entityType: "settings", entityId: SETTING },
-    diff: { on },
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await writeFollowSetting(trx, next);
+    await log({
+      orgId,
+      userId,
+      action: on ? "parcel_following_on" : "parcel_following_off",
+      ref: { module: "sales", entityType: "settings", entityId: SETTING },
+      diff: { on },
+    });
   });
   return next;
 }
@@ -161,18 +164,24 @@ export async function followRound(
     const state = res?.followed ? (res.status?.state ?? null) : o.shipment_state;
     const landed = state === "delivered" && !o.delivered_at;
     const deliveredAt = landed ? new Date(res?.status?.deliveredAt ?? now) : o.delivered_at;
-    await db
-      .updateTable("sales_orders")
-      .set({ shipment_state: state, shipment_checked_at: now, shipment_next_poll_at: nextAt, delivered_at: deliveredAt, updated_at: new Date() })
-      .where("id", "=", o.id)
-      .execute();
+    const afterCommit: Array<() => Promise<void>> = [];
+    await platform().activity.transaction(orgId, db, async (trx, log) => {
+      await trx
+        .updateTable("sales_orders")
+        .set({ shipment_state: state, shipment_checked_at: now, shipment_next_poll_at: nextAt, delivered_at: deliveredAt, updated_at: new Date() })
+        .where("id", "=", o.id)
+        .execute();
+      if (landed) {
+        delivered++;
+        await orderHappened(trx, orgId, o.id, {
+          kind: "delivered",
+          detail: { tracking_number: o.tracking_number, carrier: res?.status?.carrier ?? null, at: deliveredAt?.toISOString() ?? null },
+          by_user: null,
+        }, afterCommit, log);
+      }
+    });
+    for (const publish of afterCommit) await publish();
     if (landed) {
-      delivered++;
-      await orderHappened(db, orgId, o.id, {
-        kind: "delivered",
-        detail: { tracking_number: o.tracking_number, carrier: res?.status?.carrier ?? null, at: deliveredAt?.toISOString() ?? null },
-        by_user: null,
-      });
       await platform().events.emit("sales.order.delivered", { orgId, orderId: o.id, deliveredAt: deliveredAt?.toISOString() ?? null });
     }
     await closeDeliveredOrder(db, orgId, o.id);
@@ -184,7 +193,7 @@ export async function followRound(
 
 /** The hourly visit, on the kernel's sweep (one walk, one connection budget). */
 export function registerFollowSweep(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: FOLLOW_PASS,
     everyMs: HOUR_MS,
     module: "sales",
@@ -196,5 +205,18 @@ export function registerFollowSweep(): void {
         if (!(err as Error).message.includes("does not exist")) throw err;
       }
     },
-  });
+  }, hasFollowWork));
+}
+
+export async function hasFollowWork({ db, now }: { db: unknown; now: Date }): Promise<boolean> {
+  return !!await (db as Kysely<SalesDB>).selectFrom("sales_orders").select("id")
+    .where("status", "in", ["shipped", "closed"])
+    .where("tracking_number", "is not", null).where("tracking_number", "!=", "")
+    .where(eb => eb.or([
+      eb("delivered_at", "is", null),
+      eb("delivered_at", ">", new Date(now.getTime() - WATCH_DAYS_AFTER_DELIVERY * 24 * HOUR_MS)),
+    ]))
+    .where(eb => eb.exists(eb.selectFrom("sales_settings").select("key")
+      .where("key", "=", SETTING).where(sql<boolean>`value->>'on' = 'true'`)))
+    .limit(1).executeTakeFirst();
 }

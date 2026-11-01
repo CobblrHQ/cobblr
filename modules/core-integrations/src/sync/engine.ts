@@ -790,6 +790,7 @@ async function logSyncWrite(
 ): Promise<void> {
   const [module, entityType] = type.targetKind.split(":");
   try {
+    // capability-except activity:a-change-and-its-history-line-commit-together: the record is written through its writer, whose line is durable (#9034); this is the sync's attribution line after it
     await platform().activity.log({
       orgId: ref.orgId,
       userId: null,

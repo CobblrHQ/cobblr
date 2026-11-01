@@ -30,8 +30,10 @@ async function connected(db: Kysely<DigifabDB>, machineId: string) {
 }
 
 async function record(db: Kysely<DigifabDB>, orgId: string, cellId: string, operation: "start" | "resume" | "stop", jobId: string | null, actor: CellActor, ok: boolean, detail: string) {
-  await db.insertInto("digifab_cell_commands").values({ cell_id: cellId, operation, job_id: jobId, user_id: actor.userId, via: actor.via, ok, detail }).execute();
-  await platform().activity.log({ orgId, userId: actor.userId, action: "cell_command", ref: machineRef(cellId), diff: { operation, job: jobId, via: actor.via, ok, ...(detail ? { detail } : {}) } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.insertInto("digifab_cell_commands").values({ cell_id: cellId, operation, job_id: jobId, user_id: actor.userId, via: actor.via, ok, detail }).execute();
+    await log({ orgId, userId: actor.userId, action: "cell_command", ref: machineRef(cellId), diff: { operation, job: jobId, via: actor.via, ok, ...(detail ? { detail } : {}) } });
+  });
 }
 
 /** Whether this person runs this cell: an owner or admin, or one of its
@@ -148,9 +150,12 @@ export async function endCellJobByPerson(db: Kysely<DigifabDB>, orgId: string, j
   let state: CellState | null = null;
   try { state = await (await cellDriver(db, orgId, cell.connection_id)).state(); } catch { state = null; }
   if (state?.job_id === job.id && (state.status === "running" || state.status === "paused")) throw new ArmRefusal("The cell is still running this job. Stop it instead.");
-  const saved = await db.updateTable("digifab_cell_jobs").set({ status: "ended", outcome: input.outcome, ended_at: new Date(), detail: input.note }).where("id", "=", jobId).where("status", "<>", "ended").returningAll().executeTakeFirst();
-  if (!saved) throw new ArmRefusal("This job already ended.");
-  await platform().activity.log({ orgId, userId, action: "cell_job_ended", ref: machineRef(job.cell_id), diff: { job: jobId, outcome: input.outcome, note: input.note } });
+  const saved = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const saved = await trx.updateTable("digifab_cell_jobs").set({ status: "ended", outcome: input.outcome, ended_at: new Date(), detail: input.note }).where("id", "=", jobId).where("status", "<>", "ended").returningAll().executeTakeFirst();
+    if (!saved) throw new ArmRefusal("This job already ended.");
+    await log({ orgId, userId, action: "cell_job_ended", ref: machineRef(job.cell_id), diff: { job: jobId, outcome: input.outcome, note: input.note } });
+    return saved;
+  });
   return saved;
 }
 

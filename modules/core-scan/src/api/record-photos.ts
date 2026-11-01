@@ -5,7 +5,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer, tenantContext, tenantDb } from "../db.js";
-import { kyselyStore, nudge, oneRowPerRecord, putPictureOn, readAutoApply, readSuggestOn, recordHasNoPicture, searchAgain, writeAutoApply, writeSuggestOn } from "../services/record-photos.js";
+import { kyselyStore, nudge, oneRowPerRecord, putPictureOn, readAutoApply, readSuggestOn, recordHasNoPicture, searchAgain, wakeRecordPhotos, writeAutoApply, writeSuggestOn } from "../services/record-photos.js";
 import { fetchImage, imagePathForFile, setEntityImageFile, storeFetchedImage } from "../services/entity-image.js";
 import { heldColumns, heldPicture } from "../services/held-picture.js";
 
@@ -111,6 +111,9 @@ recordPhotosRouter.get(
     const t = Target.safeParse(req.params);
     if (!t.success) return badBody(res, t.error);
     const pic = await heldPicture(tenantDb(req), t.data.kind, t.data.id, async (url) => (await fetchImage(url)).image);
+    // A picture fetched again is held again, and its lifetime needs the
+    // sweep, which may have let this workspace rest (#9013).
+    if (pic) wakeRecordPhotos(tenantContext(req).org.id);
     if (!pic) {
       res.status(404).json({ error: { code: "no_picture", message: "This suggestion holds no picture now." } });
       return;

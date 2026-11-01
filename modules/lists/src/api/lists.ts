@@ -68,23 +68,26 @@ listsRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const row = await db
-      .insertInto("lists_lists")
-      .values({
-        title: parsed.data.title,
-        description: parsed.data.description ?? null,
-        metadata: jsonb(parsed.data.metadata) as never,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    void platform().events.emit("lists.list.created", { orgId: ctx.org.id, listId: row.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "list_created",
-      ref: { module: "lists", entityType: "list", entityId: row.id },
-      diff: { name: row.title },
+    const row = await platform().activity.transaction(tenantContext(req).org.id, db, async (trx, log) => {
+      const row = await trx
+        .insertInto("lists_lists")
+        .values({
+          title: parsed.data.title,
+          description: parsed.data.description ?? null,
+          metadata: jsonb(parsed.data.metadata) as never,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "list_created",
+        ref: { module: "lists", entityType: "list", entityId: row.id },
+        diff: { name: row.title },
+      });
+      return row;
     });
+    void platform().events.emit("lists.list.created", { orgId: ctx.org.id, listId: row.id });
     res.status(201).json(row);
   }),
 );
@@ -214,18 +217,22 @@ listsRouter.patch(
     if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
     // The row as it was: the log says what this edit changed (#4517).
     const before = await db.selectFrom("lists_lists").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
-    const row = await db.updateTable("lists_lists").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
-    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "List not found." } });
-    // The request as sent, on the record's history: the one place a value
-    // a later write replaced can still be read back (#3625).
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "list_updated",
-      ref: { module: "lists", entityType: "list", entityId: String(req.params.id) },
-      diff: parsed.data as Record<string, unknown>,
-      before,
+    const row = await platform().activity.transaction(tenantContext(req).org.id, db, async (trx, log) => {
+      const row = await trx.updateTable("lists_lists").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
+      // The request as sent, on the record's history: the one place a value
+      // a later write replaced can still be read back (#3625).
+      if (row) await log({
+        orgId: tenantContext(req).org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "list_updated",
+        ref: { module: "lists", entityType: "list", entityId: String(req.params.id) },
+        diff: parsed.data as Record<string, unknown>,
+        before,
+      });
+      return row;
     });
+    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "List not found." } });
+
     res.json(row);
   }),
 );
@@ -237,14 +244,16 @@ listsRouter.delete(
     if (!requireRole(req, res, "owner", "admin")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    await db.deleteFrom("lists_lists").where("id", "=", req.params.id!).execute();
-    void platform().events.emit("lists.list.deleted", { orgId: ctx.org.id, listId: req.params.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "list_deleted",
-      ref: { module: "lists", entityType: "list", entityId: req.params.id! },
+    await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      await trx.deleteFrom("lists_lists").where("id", "=", req.params.id!).execute();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "list_deleted",
+        ref: { module: "lists", entityType: "list", entityId: req.params.id! },
+      });
     });
+    void platform().events.emit("lists.list.deleted", { orgId: ctx.org.id, listId: req.params.id });
     res.status(204).end();
   }),
 );
@@ -302,25 +311,28 @@ listsRouter.post(
     // the list must exist (and scopes to this tenant DB)
     const list = await db.selectFrom("lists_lists").select("id").where("id", "=", parsed.data.list_id).executeTakeFirst();
     if (!list) return void res.status(404).json({ error: { code: "not_found", message: "List not found." } });
-    const row = await db
-      .insertInto("lists_items")
-      .values({
-        list_id: parsed.data.list_id,
-        title: parsed.data.title,
-        note: parsed.data.note ?? null,
-        qty: parsed.data.qty ?? null,
-        metadata: jsonb(parsed.data.metadata) as never,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    void platform().events.emit("lists.item.added", { orgId: ctx.org.id, listId: row.list_id, itemId: row.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "item_created",
-      ref: { module: "lists", entityType: "item", entityId: row.id },
-      diff: { name: row.title, list_id: row.list_id },
+    const row = await platform().activity.transaction(tenantContext(req).org.id, db, async (trx, log) => {
+      const row = await trx
+        .insertInto("lists_items")
+        .values({
+          list_id: parsed.data.list_id,
+          title: parsed.data.title,
+          note: parsed.data.note ?? null,
+          qty: parsed.data.qty ?? null,
+          metadata: jsonb(parsed.data.metadata) as never,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "item_created",
+        ref: { module: "lists", entityType: "item", entityId: row.id },
+        diff: { name: row.title, list_id: row.list_id },
+      });
+      return row;
     });
+    void platform().events.emit("lists.item.added", { orgId: ctx.org.id, listId: row.list_id, itemId: row.id });
     res.status(201).json(row);
   }),
 );
@@ -395,28 +407,40 @@ listsRouter.patch(
       patch.claimed_by_name = parsed.data.claimed ? (who?.display_name || who?.email || null) : null;
       patch.claimed_at = parsed.data.claimed ? new Date() : null;
     }
-    let update = db.updateTable("lists_items").set(patch).where("id", "=", req.params.id!);
-    if (changingClaim) {
-      // The ownership check must see the row when it is written, not the earlier read.
-      update = update.where("checked", "=", false);
-      update = parsed.data.claimed
-        ? update.where(eb => eb.or([eb("claimed_by", "is", null), eb("claimed_by", "=", who!.id)]))
-        : update.where("claimed_by", "=", who!.id);
-    }
-    let row = await update.returningAll().executeTakeFirst();
-    // Never mind on a line nobody holds is already what was asked: it answers
-    // as done and changes nothing, so a stale screen or a retry is not an
-    // error. Only another shopper's claim refuses (#8803).
-    let claimNoop = false;
-    if (!row && changingClaim && parsed.data.claimed === false) {
-      const now = await db.selectFrom("lists_items").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
-      if (now && !now.claimed_by) {
-        claimNoop = true;
-        const others = Object.keys(parsed.data).filter(k => k !== "claimed");
-        row = others.length ? await db.updateTable("lists_items").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst() : now;
-        if (!others.length) return void res.json({ ...now, claimed_by_me: false });
+    const { row, claimNoop, unchanged } = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      let update = trx.updateTable("lists_items").set(patch).where("id", "=", req.params.id!);
+      if (changingClaim) {
+        // The ownership check must see the row when it is written, not the earlier read.
+        update = update.where("checked", "=", false);
+        update = parsed.data.claimed
+          ? update.where(eb => eb.or([eb("claimed_by", "is", null), eb("claimed_by", "=", who!.id)]))
+          : update.where("claimed_by", "=", who!.id);
       }
-    }
+      let row = await update.returningAll().executeTakeFirst();
+      // Never mind on a line nobody holds is already what was asked: it answers
+      // as done and changes nothing, so a stale screen or a retry is not an
+      // error. Only another shopper's claim refuses (#8803).
+      let claimNoop = false;
+      if (!row && changingClaim && parsed.data.claimed === false) {
+        const now = await trx.selectFrom("lists_items").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
+        if (now && !now.claimed_by) {
+          claimNoop = true;
+          const others = Object.keys(parsed.data).filter(k => k !== "claimed");
+          row = others.length ? await trx.updateTable("lists_items").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst() : now;
+          if (!others.length) return { row: now, claimNoop, unchanged: true };
+        }
+      }
+      if (row) await log({
+        orgId: tenantContext(req).org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "list_item_updated",
+        ref: { module: "lists", entityType: "item", entityId: String(req.params.id) },
+        diff: parsed.data as Record<string, unknown>,
+        before,
+      });
+      return { row, claimNoop, unchanged: false };
+    });
+    if (unchanged && row) return void res.json({ ...row, claimed_by_me: false });
     if (!row) {
       if (changingClaim) return void res.status(409).json({ error: { code: "claim_conflict", message: "This item's claim has changed. Refresh the list before trying again." } });
       return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
@@ -508,14 +532,7 @@ listsRouter.patch(
     }
     // The request as sent, on the record's history: the one place a value
     // a later write replaced can still be read back (#3625).
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "list_item_updated",
-      ref: { module: "lists", entityType: "item", entityId: String(req.params.id) },
-      diff: parsed.data as Record<string, unknown>,
-      before,
-    });
+
     const alreadyBoughtBy = parsed.data.checked === true && before.checked && keptBuyer?.id && keptBuyer.id !== who?.id ? (keptBuyer.name ?? "someone") : undefined;
     res.json({ ...row, claimed_by_me: !!row.claimed_by && row.claimed_by === sessionUser(req)?.id, ...(alreadyBoughtBy ? { already_bought_by: alreadyBoughtBy } : {}) });
   }),
@@ -528,15 +545,20 @@ listsRouter.delete(
     if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const row = await db.deleteFrom("lists_items").where("id", "=", req.params.id!).returning(["id", "list_id"]).executeTakeFirst();
+    const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx.deleteFrom("lists_items").where("id", "=", req.params.id!).returning(["id", "list_id"]).executeTakeFirst();
+      if (row) {
+        await log({
+          orgId: ctx.org.id,
+          userId: sessionUser(req)?.id ?? null,
+          action: "item_deleted",
+          ref: { module: "lists", entityType: "item", entityId: row.id },
+        });
+      }
+      return row;
+    });
     if (row) {
       void platform().events.emit("lists.item.removed", { orgId: ctx.org.id, listId: row.list_id, itemId: row.id });
-      await platform().activity.log({
-        orgId: ctx.org.id,
-        userId: sessionUser(req)?.id ?? null,
-        action: "item_deleted",
-        ref: { module: "lists", entityType: "item", entityId: row.id },
-      });
     }
     res.status(204).end();
   }),

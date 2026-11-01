@@ -28,6 +28,17 @@ let until = 0;
 let generation = 0;
 let held: { prefix: string; except: string; done: Promise<void> } | null = null;
 
+/** The walk's arrivesAtOnce asks when each read was asked and when the
+ *  snapshot was (e2e/arrives-at-once.mjs). A read asked before the snapshot
+ *  is the shell's (the label basket mounts before the lazy dashboard does),
+ *  even when its request reaches the network a moment after the snapshot's.
+ *  Only kept when the walk has set the list up; nothing is kept otherwise. */
+type AskNote = { read: string } | { snapshot: string };
+function noteAsk(note: AskNote): void {
+  const log = (globalThis as { __cobblrReadAsks?: unknown }).__cobblrReadAsks;
+  if (Array.isArray(log) && log.length < 2_000) log.push({ ...note, at: typeof performance === "undefined" ? Date.now() : performance.now() });
+}
+
 /** "/orgs/…" for a request's path, with or without the "/api/v1" base. */
 function pathOf(input: string): string {
   const at = input.indexOf("/api/v1/");
@@ -78,6 +89,7 @@ export function releasePrimedReads(): void {
 export function holdPrimedReads(slug: string, done: Promise<unknown>): void {
   const mine = { prefix: `/orgs/${slug}/`, except: `/orgs/${slug}/dashboard`, done: done.then(() => undefined, () => undefined) };
   held = mine;
+  noteAsk({ snapshot: mine.except });
   void mine.done.then(() => {
     if (held === mine) held = null;
   });
@@ -112,6 +124,7 @@ export async function primedRead(method: string, input: string): Promise<Snapsho
     }
     return null;
   }
+  noteAsk({ read: path });
   const h = held;
   if (h && path.startsWith(h.prefix) && path.split("?")[0] !== h.except) await h.done;
   return lookup(path, Date.now());

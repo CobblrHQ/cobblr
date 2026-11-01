@@ -22,6 +22,7 @@
 // BORN WITH: the sweep's onEnable (backfillRecords), so a workspace enabled
 // with records has them queued at once.
 
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { sql, type Kysely } from "kysely";
 import { platform, SYSTEM_VIEWER } from "@cobblr/platform-contract";
 import { ENTITY_SAVED_EVENT, type EntitySavedEvent } from "@cobblr/platform-contract/entity-saved";
@@ -469,7 +470,7 @@ export function registerDocumentsInbound(): void {
 
 /** The kernel's walk. Registered once at boot. */
 export function registerMatchSweep(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: MATCH_PASS,
     everyMs: IDLE_MS,
     drainMs: ROUND_MS,
@@ -481,5 +482,14 @@ export function registerMatchSweep(): void {
     onEnable: async ({ orgId, db }) => {
       if ((await holdersOf(orgId)).length && (await backfillRecords(orgId, db as Db))) nudge(orgId);
     },
-  });
+  }, hasMatchingWork));
+}
+
+
+export async function hasMatchingWork({ db }: { db: unknown }): Promise<boolean> {
+  const { rows } = await sql<{ work: boolean }>`
+    select exists (select 1 from core_documents_connections limit 1)
+      or exists (select 1 from core_documents_records limit 1) as work
+  `.execute(db as Db);
+  return rows[0]!.work;
 }

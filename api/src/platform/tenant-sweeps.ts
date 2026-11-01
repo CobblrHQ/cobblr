@@ -40,6 +40,7 @@ import type {
   TenantSweepVisitResult,
 } from "@cobblr/platform-contract";
 import { Gate } from "../db/sweep-gate.js";
+import { isConnectionRefusal, isPoolAcquireTimeout } from "../db/connection-budget.js";
 import { notePassFailure } from "./pass-failures.js";
 
 /** Workspaces open at once across every pass. Default 4: four pools of at
@@ -50,8 +51,12 @@ export const SWEEP_CONCURRENCY = Math.max(1, Number(process.env.COBBLR_SWEEP_CON
 /** How often the scheduler looks for due passes. A pass's own cadence is
  *  never finer than this. */
 export const SWEEP_TICK_MS = Number(process.env.COBBLR_SWEEP_TICK_MS) || 10_000;
-/** A pass more frequent than this narrows to the workspaces with work, or says why it cannot. */
-export const NARROW_BELOW_MS = 10 * 60_000;
+/** A pass this frequent or more narrows to the workspaces with work, or says
+ *  why it cannot. An hour: at 5,000 workspaces a pass that opens every one
+ *  each round is 5,000 logins an hour, about 1.4 a second from that pass
+ *  alone, and a pass exactly at the old ten-minute bound slipped past it and
+ *  failed 700 times with "too many clients" during a roll (#9046). */
+export const NARROW_AT_OR_BELOW_MS = 60 * 60_000;
 
 /** How a pass's last round went: what /healthz says about it. */
 export interface SweepLastRound {
@@ -142,8 +147,8 @@ export function setSweepRandomForTests(fn: () => number): void {
 export function registerTenantSweep(pass: TenantSweepPass): void {
   if (!/^[a-z0-9-]+\.[a-z0-9-]+$/.test(pass.name)) throw new Error(`tenant sweep: name must be <module>.<pass>, got "${pass.name}"`);
   if (!(pass.everyMs > 0)) throw new Error(`tenant sweep ${pass.name}: everyMs must be > 0`);
-  if (pass.everyMs < NARROW_BELOW_MS && !pass.candidates && !pass.everyWorkspace?.trim())
-    throw new Error(`tenant sweep ${pass.name}: runs every ${Math.round(pass.everyMs / 1000)} s with no candidates, so every round opens every workspace in scope. Declare candidates (the workspaces with work, from meta), or say why in everyWorkspace (#9013).`);
+  if (pass.everyMs <= NARROW_AT_OR_BELOW_MS && !pass.candidates && !pass.everyWorkspace?.trim())
+    throw new Error(`tenant sweep ${pass.name}: runs every ${Math.round(pass.everyMs / 1000)} s with no candidates, so every round opens every workspace in scope. Declare candidates (narrowSweep, or the workspaces with work from meta), or say why in everyWorkspace (#9013, #9046).`);
   const existing = registry.get(pass.name);
   registry.set(pass.name, { pass, nextDue: existing?.nextDue ?? (started ? firstDue(pass, Date.now()) : null), running: false, last: existing?.last ?? null });
 }
@@ -302,9 +307,10 @@ export interface WalkDeps {
 
 async function realDeps(): Promise<WalkDeps> {
   const { openLockSession } = await import("./exclusive.js");
-  // Every lock the walk takes, its passes' and each workspace visit's, on one
-  // connection: a connection per lock held about forty for the whole walk.
-  const locks = await openLockSession("tenant-sweeps");
+  // Every lock the walk takes, its passes' and each workspace visit's, on the
+  // api's one lock connection: a connection per lock held about forty for the
+  // whole walk, and one per walk, every sweeps.run its own, was ninety (#6928).
+  const locks = await openLockSession();
   const { meta } = await import("../db/meta.js");
   const { getTenantDb, releaseSweepPool } = await import("../db/tenant.js");
   const { appliedBudget } = await import("../db/connection-budget.js");
@@ -413,6 +419,16 @@ export async function walkWith(
         try {
           chosen = await s.pass.candidates(inScope, { named: opts.orgIds !== undefined });
         } catch (err) {
+          // A server with no connection to give is not an answer about the
+          // workspaces: visiting every one in scope then was the most work
+          // asked of it exactly when it could do the least (staging, 11-01).
+          if (isConnectionRefusal(err) || isPoolAcquireTimeout(err) || (err as Error).name === "LockConnectionResting") {
+            s.result.failed++;
+            s.result.backlog = true;
+            noteFailure(s.pass.name, s.result, "*", `candidates: ${(err as Error).message}`);
+            console.warn(`[tenant-sweeps] ${s.pass.name}: candidates refused a connection, this pass waits for the next round:`, (err as Error).message);
+            continue;
+          }
           console.warn(`[tenant-sweeps] ${s.pass.name}: candidates failed, visiting every workspace in scope:`, (err as Error).message);
         }
       }

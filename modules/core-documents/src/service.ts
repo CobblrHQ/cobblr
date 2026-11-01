@@ -131,29 +131,33 @@ export async function linkItem(
     });
     const d = got.item;
     title = d.title;
-    await db
-      .insertInto("core_documents_linked")
-      .values({
-        record_kind: record.kind,
-        record_id: record.id,
-        connection_id: connectionId,
-        ref,
-        title: d.title,
-        created: d.created ?? null,
-        tags: JSON.stringify(d.tags ?? []),
-        open_url: d.open_url ?? null,
-        has_thumb: d.has_thumb === true,
-        item_type: d.type,
-        item_type_label: d.type_label,
-        subtitle: d.subtitle ?? null,
-        open_label: d.open_label ?? null,
-        system_label: system.label,
-        library_provider: system.provider,
-        library_address: system.address ?? null,
-        linked_by: userId,
-      })
-      .onConflict((oc) => oc.columns(["record_id", "connection_id", "ref"]).doNothing())
-      .execute();
+    await platform().activity.transaction(orgId, db, async (trx, log) => {
+      await trx
+        .insertInto("core_documents_linked")
+        .values({
+          record_kind: record.kind,
+          record_id: record.id,
+          connection_id: connectionId,
+          ref,
+          title: d.title,
+          created: d.created ?? null,
+          tags: JSON.stringify(d.tags ?? []),
+          open_url: d.open_url ?? null,
+          has_thumb: d.has_thumb === true,
+          item_type: d.type,
+          item_type_label: d.type_label,
+          subtitle: d.subtitle ?? null,
+          open_label: d.open_label ?? null,
+          system_label: system.label,
+          library_provider: system.provider,
+          library_address: system.address ?? null,
+          linked_by: userId,
+        })
+        .onConflict((oc) => oc.columns(["record_id", "connection_id", "ref"]).doNothing())
+        .execute();
+      await trx.deleteFrom("core_documents_suggestions").where("record_id", "=", record.id).where("connection_id", "=", connectionId).where("ref", "=", ref).execute();
+      await log({ orgId, userId, action: "library_item_linked", ref: activityRef(record), diff: { item: d.title, type: d.type, system: system.label } });
+    });
     const presentation = libraryPairingPresentation(d);
     await platform().pairings.create({
       orgId,
@@ -166,12 +170,10 @@ export async function linkItem(
       notes: `${d.title} (in ${system.label})`,
       ...(presentation ? { presentation } : {}),
     });
-    await platform()
-      .activity.log({ orgId, userId, action: "library_item_linked", ref: activityRef(record), diff: { item: d.title, type: d.type, system: system.label } })
-      .catch(() => undefined);
+
   }
   // A suggestion that is now a link is no longer a suggestion, for anyone.
-  await db.deleteFrom("core_documents_suggestions").where("record_id", "=", record.id).where("connection_id", "=", connectionId).where("ref", "=", ref).execute();
+  if (existing) await db.deleteFrom("core_documents_suggestions").where("record_id", "=", record.id).where("connection_id", "=", connectionId).where("ref", "=", ref).execute();
 
   let job: ServiceJobRef | null = null;
   if (opts.writeBack) {
@@ -194,13 +196,17 @@ export async function linkItem(
 
 /** Take a link away. Removing one that is not there is nothing, not an error. */
 export async function unlinkItem(orgId: string, db: Db, userId: string | null, record: { kind: string; id: string }, connectionId: string, ref: string): Promise<{ removed: boolean; title: string | null }> {
-  const row = await db
-    .deleteFrom("core_documents_linked")
-    .where("record_id", "=", record.id)
-    .where("connection_id", "=", connectionId)
-    .where("ref", "=", ref)
-    .returning(["title"])
-    .executeTakeFirst();
+  const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx
+      .deleteFrom("core_documents_linked")
+      .where("record_id", "=", record.id)
+      .where("connection_id", "=", connectionId)
+      .where("ref", "=", ref)
+      .returning(["title"])
+      .executeTakeFirst();
+    if (row) await log({ orgId, userId, action: "library_item_unlinked", ref: activityRef(record), diff: { item: row.title } });
+    return row;
+  });
   await platform().pairings.remove({
     orgId,
     sourceKind: record.kind,
@@ -209,11 +215,7 @@ export async function unlinkItem(orgId: string, db: Db, userId: string | null, r
     targetId: libraryTargetId(connectionId, ref),
     relationshipKind: LIBRARY_LINK_REL,
   });
-  if (row) {
-    await platform()
-      .activity.log({ orgId, userId, action: "library_item_unlinked", ref: activityRef(record), diff: { item: row.title } })
-      .catch(() => undefined);
-  }
+
   return { removed: !!row, title: row?.title ?? null };
 }
 

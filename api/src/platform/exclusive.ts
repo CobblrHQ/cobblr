@@ -40,8 +40,8 @@ export { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
  * a caller that reports what it did to a person must not read a skip as
  * "nothing to do" (lint:exclusive-answer-read).
  *
- * The lock lives on a connection of its OWN, opened for the tick and closed
- * after it, never a client borrowed from the meta pool. A session lock has to
+ * The lock lives on the api's one lock connection (holdShared below), never
+ * a client borrowed from the meta pool. A session lock has to
  * stay on one connection for as long as the work runs, and the work of a
  * sweep is minutes of fetches and tenant rounds; borrowed from the pool, that
  * was one request's worth of capacity spent for the whole sweep, and a sweep
@@ -61,86 +61,200 @@ export async function runExclusive(name: string, work: () => Promise<void>): Pro
   return { ran: true };
 }
 
-/** The lock as a HANDLE: taken now on its own connection, released by the
- *  caller. For a holder that runs several jobs' work interleaved (the tenant
- *  sweeps walk the workspaces once for every pass that is due, and must hold
- *  every one of those passes' locks for the length of the walk). Null when
- *  another process holds it. Release closes the connection either way. */
+/** The lock as a HANDLE: taken now, released by the caller. For a holder that
+ *  runs several jobs' work interleaved (the tenant sweeps walk the workspaces
+ *  once for every pass that is due, and must hold every one of those passes'
+ *  locks for the length of the walk). Null when another process, or another
+ *  caller in this one, holds it. */
 export async function tryHoldExclusive(name: string): Promise<{ release: () => Promise<void> } | null> {
-  // The db modules are imported HERE, not at module load. Any file that adopts
-  // this seam would otherwise gain an eager database import, and a unit test
-  // that imports such a file in isolation dies on connection setup before it
-  // reaches its subject — which is exactly what happened to
-  // db-upgrade-status-quiet the moment this seam was added to that file.
-  const { env } = await import("../env.js");
-  const { createClient } = await import("../db/client-error-guard.js");
-  const key = lockKeyFor(name).toString();
-  const client: Client = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${name}`);
-  await client.connect();
-  let locked = false;
-  try {
-    const got = await client.query<{ locked: boolean }>("select pg_try_advisory_lock($1) as locked", [key]);
-    locked = got.rows[0]?.locked ?? false;
-  } catch (err) {
-    await client.end().catch(() => {});
-    throw err;
-  }
-  if (!locked) {
-    await client.end().catch(() => {});
-    return null;
-  }
-  return {
-    release: async () => {
-      try {
-        await client.query("select pg_advisory_unlock($1)", [key]);
-      } finally {
-        await client.end().catch(() => {});
-      }
-    },
-  };
+  return holdShared(name);
 }
 
-/** Many locks held on ONE connection, for a holder that takes several at once
- *  and holds them a while: the tenant-sweep walk takes a lock per due pass and
- *  one per workspace it visits. Opening a connection for each held about forty
- *  of a 100-connection server for a whole walk, outside every pool budget, and
- *  staging's lists failed with "too many clients" while it ran (#6928). An
- *  advisory lock belongs to its session, so one session holds them all, and
- *  close() lets go of whatever is still held. */
+/** Many locks taken by one holder and let go together: the tenant-sweep walk
+ *  takes a lock per due pass and one per workspace it visits, and close()
+ *  lets go of whatever it still holds. */
 export interface LockSession {
   tryHold: (name: string) => Promise<{ release: () => Promise<void> } | null>;
   close: () => Promise<void>;
 }
 
-export async function openLockSession(label = "walk"): Promise<LockSession> {
-  const { env } = await import("../env.js");
-  const { createClient } = await import("../db/client-error-guard.js");
-  let client: Client | null = null;
-  const connect = async (): Promise<Client> => {
-    if (client) return client;
-    const c = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${label}`);
-    await c.connect();
-    client = c;
-    return c;
-  };
+export async function openLockSession(): Promise<LockSession> {
+  const mine = new Set<{ release: () => Promise<void> }>();
   return {
     tryHold: async (name) => {
-      const key = lockKeyFor(name).toString();
-      const c = await connect();
-      const got = await c.query<{ locked: boolean }>("select pg_try_advisory_lock($1) as locked", [key]);
-      if (!got.rows[0]?.locked) return null;
-      return {
+      const held = await holdShared(name);
+      if (!held) return null;
+      const handle = {
         release: async () => {
-          await c.query("select pg_advisory_unlock($1)", [key]);
+          mine.delete(handle);
+          await held.release();
         },
       };
+      mine.add(handle);
+      return handle;
     },
     close: async () => {
-      const c = client;
-      client = null;
-      await c?.end().catch(() => {});
+      await Promise.all([...mine].map((h) => h.release().catch(() => {})));
     },
   };
+}
+
+// Every try-lock this api takes is on ONE connection. A connection per lock,
+// or per walk, was nobody's plan: each sweeps.run and sweeps.soon opened its
+// own and waited on it up to a minute, every runExclusive dialled one, and
+// on a catch-up roll the new api held 87 to 101 of them still logging in,
+// beside a plan of 46 (staging, 2026-11-01, 7,246 refusals). A session's
+// advisory locks are re-entrant within it, so who holds what in THIS process
+// is kept here; Postgres keeps the other processes out.
+type LockLink = { client: Pick<Client, "query" | "end">; alive: boolean; lose: () => void };
+let link: Promise<LockLink> | null = null;
+let linkIdle: ReturnType<typeof setTimeout> | null = null;
+const heldHere = new Set<string>();
+/** After the server refuses the lock connection, no lock dials again until
+ *  this wait is out, doubling while it keeps refusing: a refusal answered by
+ *  another login at once is how a full server stays full. */
+export const LOCK_REFUSED_WAIT_MS = { first: 1_000, cap: 30_000 };
+const LOCK_CONNECT_TIMEOUT_MS = 10_000;
+/** The longest a lock statement may take, counted from when it is asked, so
+ *  one queued behind it is bounded too. Every try-lock in the api shares the
+ *  connection, so a statement stuck on it would stall every sweep and job:
+ *  past this it is abandoned and the connection replaced. A try-lock never
+ *  waits on another holder; a slow one is a busy server or a dead socket. */
+export const LOCK_QUERY_TIMEOUT_MS = 5_000;
+
+export class LockQueryTimeout extends Error {
+  constructor() {
+    super(`a lock statement took longer than ${LOCK_QUERY_TIMEOUT_MS / 1000}s; the lock connection is replaced`);
+    this.name = "LockQueryTimeout";
+  }
+}
+let refusedWait = 0;
+let refusedUntil = 0;
+
+export class LockConnectionResting extends Error {
+  constructor(ms: number) {
+    super(`the lock connection was refused; no lock is tried for another ${Math.ceil(ms / 1000)}s`);
+    this.name = "LockConnectionResting";
+  }
+}
+
+async function lockLink(): Promise<LockLink> {
+  if (link) return link;
+  const rest = refusedUntil - Date.now();
+  if (rest > 0) throw new LockConnectionResting(rest);
+  const { env } = await import("../env.js");
+  const { createClient } = await import("../db/client-error-guard.js");
+  if (link) return link;
+  const opening: Promise<LockLink> = (async () => {
+    const client: Client = createClient({ connectionString: env.DATABASE_URL, connectionTimeoutMillis: LOCK_CONNECT_TIMEOUT_MS, statement_timeout: LOCK_QUERY_TIMEOUT_MS }, "advisory-lock");
+    // A lost connection lost its locks with it: the next lock opens another,
+    // and a release on the dead one has nothing to let go of.
+    const lost = () => {
+      l.alive = false;
+      if (link === opening) link = null;
+    };
+    const l: LockLink = { client, alive: true, lose: lost };
+    if (typeof (client as { once?: unknown }).once === "function") {
+      client.once("error", lost);
+      client.once("end", lost);
+    }
+    await client.connect();
+    return l;
+  })();
+  link = opening;
+  try {
+    const l = await opening;
+    refusedWait = 0;
+    return l;
+  } catch (err) {
+    if (link === opening) link = null;
+    refusedWait = Math.min(LOCK_REFUSED_WAIT_MS.cap, refusedWait ? refusedWait * 2 : LOCK_REFUSED_WAIT_MS.first);
+    refusedUntil = Date.now() + refusedWait;
+    throw err;
+  }
+}
+
+/** One statement on the shared connection, within LOCK_QUERY_TIMEOUT_MS of
+ *  being asked. Past it the connection is ended, not waited on: its locks go
+ *  with it, which is what a dead socket would have done anyway, and every
+ *  other caller moves to a fresh one instead of queueing behind the stuck one. */
+async function ask<R>(l: LockLink, text: string, key: string): Promise<{ rows: R[] }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      l.lose();
+      void Promise.resolve(l.client.end()).catch(() => {});
+      reject(new LockQueryTimeout());
+    }, LOCK_QUERY_TIMEOUT_MS);
+    (timer as { unref?: () => void }).unref?.();
+  });
+  try {
+    return (await Promise.race([l.client.query(text, [key]), late])) as { rows: R[] };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function holdShared(name: string): Promise<{ release: () => Promise<void> } | null> {
+  // Claimed before the first await, so two callers here cannot both pass.
+  if (heldHere.has(name)) return null;
+  heldHere.add(name);
+  if (linkIdle) {
+    clearTimeout(linkIdle);
+    linkIdle = null;
+  }
+  const key = lockKeyFor(name).toString();
+  let l: LockLink;
+  let locked = false;
+  try {
+    l = await lockLink();
+    const got = await ask<{ locked: boolean }>(l, "select pg_try_advisory_lock($1) as locked", key);
+    locked = got.rows[0]?.locked ?? false;
+  } catch (err) {
+    forget(name);
+    throw err;
+  }
+  if (!locked) {
+    forget(name);
+    return null;
+  }
+  let released = false;
+  return {
+    release: async () => {
+      if (released) return;
+      released = true;
+      try {
+        if (l.alive) await ask(l, "select pg_advisory_unlock($1)", key);
+      } finally {
+        forget(name);
+      }
+    },
+  };
+}
+
+/** Lets go of a name here, and of the connection once nothing is held on it
+ *  for a while: a quiet api keeps no lock connection open. */
+function forget(name: string): void {
+  heldHere.delete(name);
+  if (heldHere.size || linkIdle || !link) return;
+  linkIdle = setTimeout(() => {
+    linkIdle = null;
+    if (heldHere.size || !link) return;
+    const closing = link;
+    link = null;
+    void closing.then((l) => l.client.end()).catch(() => {});
+  }, IDLE_RELEASE_MS);
+  (linkIdle as { unref?: () => void }).unref?.();
+}
+
+/** Tests: forget the shared connection, its wait and what it holds. */
+export function resetLockLinkForTests(): void {
+  if (linkIdle) clearTimeout(linkIdle);
+  linkIdle = null;
+  link = null;
+  heldHere.clear();
+  refusedWait = 0;
+  refusedUntil = 0;
 }
 
 /**
@@ -233,6 +347,6 @@ const LOCK_POOL_SIZE = 8;
 /** Fresh connections a serialised run may open when the warm ones are all busy. */
 const LOCK_FALLBACKS = 4;
 /** What this api can hold on cobblr_meta for locks, outside the meta pool:
- *  the warm pool, its fresh overflow and the sweep walk's one session. The
- *  connection budget counts it. */
+ *  the warm pool, its fresh overflow and the one connection every try-lock
+ *  shares. The connection budget counts it. */
 export const LOCK_CONNECTIONS = LOCK_POOL_SIZE + LOCK_FALLBACKS + 1;

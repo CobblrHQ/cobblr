@@ -258,28 +258,31 @@ locationsRouter.post(
       }
     }
 
-    const inserted = await db
-      .insertInto("core_locations_locations")
-      .values({
-        name: parsed.data.name,
-        short_name: parsed.data.short_name ?? null,
-        parent_id: parsed.data.parent_id ?? null,
-        depth,
-        kind: parsed.data.kind ?? "area",
-        metadata: parsed.data.metadata ?? {},
-        description: parsed.data.description ?? null,
-        notes: parsed.data.notes ?? null,
-        image_path: parsed.data.image_path ?? null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const inserted = await trx
+        .insertInto("core_locations_locations")
+        .values({
+          name: parsed.data.name,
+          short_name: parsed.data.short_name ?? null,
+          parent_id: parsed.data.parent_id ?? null,
+          depth,
+          kind: parsed.data.kind ?? "area",
+          metadata: parsed.data.metadata ?? {},
+          description: parsed.data.description ?? null,
+          notes: parsed.data.notes ?? null,
+          image_path: parsed.data.image_path ?? null,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
 
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "location_created",
-      ref: { module: "core-locations", entityType: "location", entityId: inserted.id },
-      diff: { name: inserted.name, parent_id: inserted.parent_id, depth: inserted.depth },
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "location_created",
+        ref: { module: "core-locations", entityType: "location", entityId: inserted.id },
+        diff: { name: inserted.name, parent_id: inserted.parent_id, depth: inserted.depth },
+      });
+      return inserted;
     });
     void platform().events.emit("core-locations.location.created", {
       orgId: ctx.org.id,
@@ -364,21 +367,33 @@ locationsRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "location not found" } });
       return;
     }
-    if (parsed.data.parent_id !== undefined) {
-      try {
-        await movePlace(db, id, parsed.data.parent_id);
-      } catch (e) {
-        if (!(e instanceof PlaceMoveRefused)) throw e;
-        res.status(400).json({ error: { code: e.code, message: e.message } });
-        return;
-      }
+    let updated;
+    try {
+      updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+        if (parsed.data.parent_id !== undefined) await movePlace(trx, id, parsed.data.parent_id);
+        const updated = await trx
+          .updateTable("core_locations_locations")
+          .set(patch)
+          .where("id", "=", id)
+          .returningAll()
+          .executeTakeFirst();
+        if (updated) {
+          await log({
+            orgId: tenantContext(req).org.id,
+            userId: sessionUser(req)?.id ?? null,
+            action: "location_updated",
+            ref: { module: "core-locations", entityType: "location", entityId: String(req.params.id) },
+            diff: parsed.data as Record<string, unknown>,
+            before,
+          });
+        }
+        return updated;
+      });
+    } catch (e) {
+      if (!(e instanceof PlaceMoveRefused)) throw e;
+      res.status(400).json({ error: { code: e.code, message: e.message } });
+      return;
     }
-    const updated = await db
-      .updateTable("core_locations_locations")
-      .set(patch)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "location not found" } });
       return;
@@ -386,16 +401,6 @@ locationsRouter.patch(
     void platform().events.emit("core-locations.location.updated", {
       orgId: ctx.org.id,
       locationId: id,
-    });
-    // The request as sent, on the record's history: the one place a value
-    // a later write replaced can still be read back (#3625).
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "location_updated",
-      ref: { module: "core-locations", entityType: "location", entityId: String(req.params.id) },
-      diff: parsed.data as Record<string, unknown>,
-      before,
     });
     res.json(updated);
   }),

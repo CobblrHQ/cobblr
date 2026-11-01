@@ -475,7 +475,7 @@ importRouter.post(
     }));
 
     const CHUNK = 500;
-    const inserted = await db.transaction().execute(async (trx) => {
+    const inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
       const made = new Map<string, string>();
       for (const name of new_categories) {
         const row = await trx
@@ -499,12 +499,19 @@ importRouter.post(
           .execute();
         ids.push(...rows.map((r) => r.id));
       }
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "parts_imported",
+        ref: { module: "inventory", entityType: "part", entityId: ids[0] ?? "" },
+        diff: { count: ids.length, source: "csv_import" },
+      });
       return ids;
     });
 
     // Each record's own History says it was made by this import (#5963):
     // one part_created per row, written in one INSERT per chunk and marked
-    // as an import's row, so the feeds show only the summary line below.
+    // as an import's row, so the feeds show only the summary line.
     // Per-row part.created events stay dropped: nothing subscribes to them,
     // and search indexes via the generated search_blob column, not an event.
     await platform().activity.logMany({
@@ -516,18 +523,6 @@ importRouter.post(
         diff: { name: valueRows[i]?.name ?? null, qty: valueRows[i]?.qty ?? null, instance, source: "csv_import" },
       })),
     });
-    // And ONE summary entry for the import itself, the feeds' line.
-    try {
-      await platform().activity.log({
-        orgId: ctx.org.id,
-        userId: session.id,
-        action: "parts_imported",
-        ref: { module: "inventory", entityType: "part", entityId: inserted[0] ?? "" },
-        diff: { count: inserted.length, source: "csv_import" },
-      });
-    } catch (err) {
-      console.error("[import] activity log failure:", err);
-    }
 
     res.json({ ...answer, committed: inserted.length, ids: inserted });
   }),

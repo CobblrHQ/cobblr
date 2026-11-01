@@ -79,67 +79,74 @@ export function registerListActionHandlers(): void {
       }
       listId = last.list_id;
     }
-    if (!listId) {
-      const wantTitle = (args.listTitle ?? "Shopping list").trim();
-      const existing = await db
-        .selectFrom("lists_lists")
+    const itemTitle = title;
+    const outcome = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+      let selectedListId = listId;
+      if (!selectedListId) {
+        const wantTitle = (args.listTitle ?? "Shopping list").trim();
+        const existing = await trx
+          .selectFrom("lists_lists")
+          .select("id")
+          .where(sql<boolean>`lower(title) = lower(${wantTitle})`)
+          .executeTakeFirst();
+        selectedListId = existing?.id ?? (await trx.insertInto("lists_lists").values({ title: wantTitle }).returning("id").executeTakeFirstOrThrow()).id;
+      }
+
+      // 3. Dedupe: skip if an OPEN item with the same title already exists.
+      const dup = await trx
+        .selectFrom("lists_items")
         .select("id")
-        .where(sql<boolean>`lower(title) = lower(${wantTitle})`)
+        .where("list_id", "=", selectedListId)
+        .where("checked", "=", false)
+        .where(sql<boolean>`lower(title) = lower(${itemTitle})`)
         .executeTakeFirst();
-      listId = existing?.id ?? (await db.insertInto("lists_lists").values({ title: wantTitle }).returning("id").executeTakeFirstOrThrow()).id;
-    }
+      // The list by its name, for the sentence the person reads after Do it.
+      const listName = (await trx.selectFrom("lists_lists").select("title").where("id", "=", selectedListId).executeTakeFirst())?.title ?? "the list";
+      // Nothing changed, so it DECLINED (action-result.ts), with the reason in
+      // the person's words: the card says milk is already there, not "Done".
+      if (dup) return { ok: false, skipped: true, error: `"${itemTitle}" is already on ${listName}`, itemId: dup.id };
 
-    // 3. Dedupe: skip if an OPEN item with the same title already exists.
-    const dup = await db
-      .selectFrom("lists_items")
-      .select("id")
-      .where("list_id", "=", listId)
-      .where("checked", "=", false)
-      .where(sql<boolean>`lower(title) = lower(${title})`)
-      .executeTakeFirst();
-    // The list by its name, for the sentence the person reads after Do it.
-    const listName = (await db.selectFrom("lists_lists").select("title").where("id", "=", listId).executeTakeFirst())?.title ?? "the list";
-    // Nothing changed, so it DECLINED (action-result.ts), with the reason in
-    // the person's words: the card says milk is already there, not "Done".
-    if (dup) return { ok: false, skipped: true, error: `"${title}" is already on ${listName}`, itemId: dup.id };
-
-    // Carry a back-pointer to the entity that spawned this line (the
-    // inventory part that ran low / is expiring). Generic — `source_ref` can
-    // point at any kind — so lists never learns what inventory is. It's
-    // what lets checking the item off close the loop back to stock (see the
-    // food-cluster `item.checked → inventory:adjust-stock` wire).
-    // `auto`: a wire put it here, so the wire's reason can lapse (the count is
-    // back above its minimum) and take it off again; a line a person added
-    // stays until a person removes it.
-    const metadata =
-      ctx.entity
-        ? {
-            source_ref: { kind: ctx.entity.kind, id: ctx.entity.id },
-            ...(args.restocks === true ? { restocks: true } : {}),
-            ...(ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked" ? { auto: true } : {}),
-          }
-        : {};
-    const row = await db
-      .insertInto("lists_items")
-      .values({ list_id: listId, title, qty: args.qty ?? null, note: args.note ?? null, metadata: sql`${JSON.stringify(metadata)}::jsonb` as never })
-      .returning(["id", "list_id", "title"])
-      .executeTakeFirstOrThrow();
-    if (ctx.entity) {
-      await db
-        .insertInto("lists_source_last_list")
-        .values({ source_kind: ctx.entity.kind, source_id: ctx.entity.id, list_id: listId })
-        .onConflict((oc) => oc.columns(["source_kind", "source_id"]).doUpdateSet({ list_id: listId!, updated_at: new Date() }))
-        .execute();
-    }
-    void platform().events.emit("lists.item.added", { orgId: ctx.orgId, listId: row.list_id, itemId: row.id, viaWire: Boolean(ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked") });
-    await platform().activity.log({
-      orgId: ctx.orgId,
-      userId: ctx.userId ?? null,
-      action: "item_created",
-      ref: { module: "lists", entityType: "item", entityId: row.id },
-      diff: { name: row.title, list_id: row.list_id },
+      // Carry a back-pointer to the entity that spawned this line (the
+      // inventory part that ran low / is expiring). Generic — `source_ref` can
+      // point at any kind — so lists never learns what inventory is. It's
+      // what lets checking the item off close the loop back to stock (see the
+      // food-cluster `item.checked → inventory:adjust-stock` wire).
+      // `auto`: a wire put it here, so the wire's reason can lapse (the count is
+      // back above its minimum) and take it off again; a line a person added
+      // stays until a person removes it.
+      const metadata =
+        ctx.entity
+          ? {
+              source_ref: { kind: ctx.entity.kind, id: ctx.entity.id },
+              ...(args.restocks === true ? { restocks: true } : {}),
+              ...(ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked" ? { auto: true } : {}),
+            }
+          : {};
+      const row = await trx
+        .insertInto("lists_items")
+        .values({ list_id: selectedListId, title: itemTitle, qty: args.qty ?? null, note: args.note ?? null, metadata: sql`${JSON.stringify(metadata)}::jsonb` as never })
+        .returning(["id", "list_id", "title"])
+        .executeTakeFirstOrThrow();
+      if (ctx.entity) {
+        await trx
+          .insertInto("lists_source_last_list")
+          .values({ source_kind: ctx.entity.kind, source_id: ctx.entity.id, list_id: selectedListId })
+          .onConflict((oc) => oc.columns(["source_kind", "source_id"]).doUpdateSet({ list_id: selectedListId!, updated_at: new Date() }))
+          .execute();
+      }
+      await log({
+        orgId: ctx.orgId,
+        userId: ctx.userId ?? null,
+        action: "item_created",
+        ref: { module: "lists", entityType: "item", entityId: row.id },
+        diff: { name: row.title, list_id: row.list_id },
+      });
+      return { ok: true, added: true, itemId: row.id, listId: selectedListId, summary: `"${row.title}" added to ${listName}` };
     });
-    return { ok: true, added: true, itemId: row.id, listId, summary: `"${row.title}" added to ${listName}` };
+    if ("added" in outcome && outcome.added) {
+    void platform().events.emit("lists.item.added", { orgId: ctx.orgId, listId: outcome.listId, itemId: outcome.itemId, viaWire: Boolean(ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked") });
+    }
+    return outcome;
   });
 
   // A module takes back a line it added (a pattern's shortfall that is no

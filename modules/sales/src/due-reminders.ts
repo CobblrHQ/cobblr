@@ -1,3 +1,4 @@
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 // An order's due date reminds the shop (#6671): the day before it is wanted
 // ("due tomorrow") and once it has passed undelivered ("late"), each once per
 // due date. A job shop's orders are its due dates; a date nobody is told about
@@ -88,7 +89,7 @@ export async function remindDue(db: Kysely<SalesDB>, orgId: string, now: Date): 
 
 /** The hourly visit, on the kernel's sweep (one walk, one connection budget). */
 export function registerDueSweep(): void {
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: DUE_PASS,
     everyMs: HOUR_MS,
     module: "sales",
@@ -101,5 +102,11 @@ export function registerDueSweep(): void {
         return { reminded: 0 };
       }
     },
-  });
+  }, hasDueWork));
+}
+
+export async function hasDueWork({ db }: { db: unknown }): Promise<boolean> {
+  return !!await (db as Kysely<SalesDB>).selectFrom("sales_orders").select("id")
+    .where("status", "in", ["confirmed", "fulfilled"]).where("due_date", "is not", null)
+    .limit(1).executeTakeFirst();
 }

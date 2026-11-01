@@ -346,6 +346,7 @@ filesRouter.post(
       res.status(r.code === "not_found" ? 404 : 413).json({ error: { code: r.code, message: r.message } });
       return;
     }
+    // capability-except activity:a-change-and-its-history-line-commit-together: not yet moved onto platform().activity.transaction (#9035): a crash between its write and its line still loses the line
     await platform().activity.log({
       orgId: ctx.org.id,
       userId: sessionUser(req)?.id ?? null,

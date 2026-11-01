@@ -23,9 +23,11 @@ export async function readDeliveryCloseSetting(db: Kysely<SalesDB>): Promise<boo
 
 export async function setDeliveryCloseSetting(db: Kysely<SalesDB>, orgId: string, userId: string | null, on: boolean): Promise<void> {
   const value = JSON.stringify({ on });
-  await db.insertInto("sales_settings").values({ key: SETTING, value })
-    .onConflict((oc) => oc.column("key").doUpdateSet({ value, updated_at: new Date() })).execute();
-  await platform().activity.log({ orgId, userId, action: "delivery_close_setting_changed", ref: { module: "sales", entityType: "settings", entityId: SETTING }, diff: { on } });
+  await platform().activity.transaction(orgId, db, async (trx, log) => {
+    await trx.insertInto("sales_settings").values({ key: SETTING, value })
+      .onConflict((oc) => oc.column("key").doUpdateSet({ value, updated_at: new Date() })).execute();
+    await log({ orgId, userId, action: "delivery_close_setting_changed", ref: { module: "sales", entityType: "settings", entityId: SETTING }, diff: { on } });
+  });
 }
 
 export function deliveryCanClose(
@@ -39,7 +41,7 @@ export function deliveryCanClose(
 export async function closeDeliveredOrder(db: Kysely<SalesDB>, orgId: string, orderId: string): Promise<boolean> {
   if (!(await readDeliveryCloseSetting(db))) return false;
   const afterCommit: Array<() => Promise<void>> = [];
-  const closed = await db.transaction().execute(async (trx) => {
+  const closed = await platform().activity.transaction(orgId, db, async (trx, log) => {
     const order = await trx.selectFrom("sales_orders").selectAll().where("id", "=", orderId).forUpdate().executeTakeFirst();
     if (!order) return null;
     const lines = await trx.selectFrom("sales_order_items").select(["part_id", "qty", "qty_fulfilled"]).where("order_id", "=", orderId).execute();
@@ -50,7 +52,7 @@ export async function closeDeliveredOrder(db: Kysely<SalesDB>, orgId: string, or
       .where(sql<boolean>`not exists (select 1 from sales_order_items where order_id = ${orderId} and part_id is not null and qty_fulfilled < qty)`)
       .returningAll().executeTakeFirst();
     if (!row) return null;
-    await orderHappened(trx, orgId, orderId, { kind: "status", from_status: "shipped", to_status: "closed", detail: { automatic: "delivery" }, by_user: null }, afterCommit);
+    await orderHappened(trx, orgId, orderId, { kind: "status", from_status: "shipped", to_status: "closed", detail: { automatic: "delivery" }, by_user: null }, afterCommit, log);
     return row;
   });
   if (!closed) return false;
@@ -69,10 +71,16 @@ export async function closeDeliveredOrder(db: Kysely<SalesDB>, orgId: string, or
 }
 
 export async function undoDeliveryClose(db: Kysely<SalesDB>, orgId: string, userId: string | null, orderId: string): Promise<boolean> {
-  const row = await db.updateTable("sales_orders").set({ status: "shipped", auto_closed_at: null, auto_close_undone: true, updated_at: new Date() })
-    .where("id", "=", orderId).where("status", "=", "closed").where("auto_closed_at", "is not", null).returningAll().executeTakeFirst();
+  const afterCommit: Array<() => Promise<void>> = [];
+  const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx.updateTable("sales_orders").set({ status: "shipped", auto_closed_at: null, auto_close_undone: true, updated_at: new Date() })
+      .where("id", "=", orderId).where("status", "=", "closed").where("auto_closed_at", "is not", null).returningAll().executeTakeFirst();
+    if (!row) return row;
+    await orderHappened(trx, orgId, orderId, { kind: "status", from_status: "closed", to_status: "shipped", detail: { automatic_close_undone: true }, by_user: userId }, afterCommit, log);
+    return row;
+  });
   if (!row) return false;
-  await orderHappened(db, orgId, orderId, { kind: "status", from_status: "closed", to_status: "shipped", detail: { automatic_close_undone: true }, by_user: userId });
+  for (const publish of afterCommit) await publish();
   return true;
 }
 

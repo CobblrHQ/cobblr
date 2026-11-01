@@ -127,8 +127,9 @@ export function announceSandboxKept(p: { email: string; slug: string; days: numb
 /** Insert the account row and, for a door whose row is the arrival, tell the
  *  operator. `db` is the meta connection or a transaction on it, so a door
  *  that creates the membership in the same transaction keeps doing so. */
-export async function createAccount(db: Kysely<MetaDB> | Transaction<MetaDB>, values: UserInsert, door: AccountDoor): Promise<string> {
+export async function createAccount(db: Kysely<MetaDB> | Transaction<MetaDB>, values: UserInsert, door: AccountDoor, opts: { announceLater?: boolean } = {}): Promise<string> {
   const row = await db.insertInto("users").values(values).returning("id").executeTakeFirstOrThrow();
-  if (ANNOUNCED_AT_BIRTH.has(door.via)) announceAccountCreated({ email: values.email, displayName: values.display_name, door });
+  // Inside a transaction that may still roll back, the caller announces once it commits.
+  if (ANNOUNCED_AT_BIRTH.has(door.via) && !opts.announceLater) announceAccountCreated({ email: values.email, displayName: values.display_name, door });
   return row.id;
 }

@@ -664,17 +664,22 @@ export function WhatToDoPanel({
     const busy = discardMut.isPending || batchMut.isPending || confirmMut.isPending || mergeMut.isPending || (!!d?.bundle_external_id && materialize.busy(d.bundle_external_id));
     const open = expanded.has(it.id);
     return <li key={it.id}>
-      <div data-testid="captured-item" className="flex min-w-0 items-center gap-2 rounded-lg bg-surface px-1 py-2 dark:bg-slate-900">
+      {/* Wraps: at 200% text the thumbnail, the name and both buttons need more
+          than a phone's width, so the buttons go under the name, at the right,
+          rather than past the screen's edge (#9080). */}
+      <div data-testid="captured-item" className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg bg-surface px-1 py-2 dark:bg-slate-900">
         <CaptureThumbnail slug={slug} item={it} name={name} />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-20">
           {captures.length > 1 ? <button type="button" aria-expanded={open} aria-controls={`captures-${it.id}`} aria-label={`${open ? "Collapse" : "Expand"} ${title}`} onClick={() => setExpanded(prev => { const next = new Set(prev); if (open) next.delete(it.id); else next.add(it.id); return next; })} className="flex w-full min-w-0 items-center gap-1 text-left text-sm font-medium text-content hover:text-accent">
             <span className="line-clamp-2 min-w-0 break-words sm:line-clamp-1">{name}</span><span className="shrink-0"> ×{captures.length}</span>{open ? <ChevronUp size={12} className="shrink-0" /> : <ChevronDown size={12} className="shrink-0" />}
           </button> : <Link to={`/scan?item=${it.id}`} data-testid="captured-item-link" className="line-clamp-2 break-words sm:line-clamp-1 text-sm font-medium text-content hover:text-accent">{name}</Link>}
           {label !== headerLabel && <span data-testid="capture-destination" className="mt-1 inline-block max-w-full truncate rounded bg-subtle px-1.5 py-0.5 text-[11px] text-muted dark:bg-slate-800">{label}</span>}
           {enriching && <span data-testid="captured-item-progress" className="block truncate text-[11px] text-faint">{d ? "still filling in…" : it.suggested_name ? "looking it up…" : "finding a home…"}</span>}
         </div>
+        <div data-testid="captured-item-actions" className="ml-auto flex shrink-0 items-center gap-2">
         {(d || done) && !needsName && <button type="button" disabled={busy} aria-label={`${d?.bundle_external_id ? "Create" : "Add"} ${title} to ${label}`} onClick={() => addCaptures(captures)} className="shrink-0 rounded-md bg-cobble-600 px-2 py-2 text-xs font-medium text-white hover:bg-cobble-700 disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" /> : d?.bundle_external_id ? "Create" : "Add"}</button>}
         <button type="button" disabled={discardMut.isPending || busy} aria-label={`Dismiss ${captures.length > 1 ? `one ${name} capture` : name}`} title={`Dismiss ${captures.length > 1 ? `one ${name} capture` : name}`} onClick={() => discardMut.mutate(it.id)} className="shrink-0 rounded p-2 text-faint hover:bg-subtle hover:text-content disabled:opacity-50"><X size={14} /></button>
+        </div>
       </div>
       {needsName && <NameIt slug={slug} itemId={it.id} />}
       {captures.length > 1 && open && <div id={`captures-${it.id}`} className="pl-2">
@@ -906,13 +911,13 @@ export function WhatToDoPanel({
               </div>
               {known.length > 0 && <section aria-label="Already in your workspace" data-testid="capture-known" className="min-w-0">
                 <h3 className="py-1 text-[10px] uppercase tracking-widest text-faint">Already in your workspace · {known.length}</h3>
-                <ul>{known.map((it) => <li key={it.id} className="flex min-w-0 items-center gap-2 rounded-lg bg-surface px-1 py-2 dark:bg-slate-900">
+                <ul>{known.map((it) => <li key={it.id} className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg bg-surface px-1 py-2 dark:bg-slate-900">
                   <CaptureThumbnail slug={slug} item={it} name={captureName(it)} />
-                  <div className="min-w-0 flex-1 text-sm">
+                  <div className="min-w-0 flex-1 basis-20 text-sm">
                     <span className="line-clamp-1 font-medium text-content">{captureName(it)}</span>
                     <span className="block truncate text-[11px] text-muted">You have {scanTrackedMatch(it as never)?.title}</span>
                   </div>
-                  <Link to={`/scan?item=${it.id}`} aria-label={`Open ${captureName(it)} in the scan inbox`} className="shrink-0 rounded-md border border-line px-2 py-2 text-xs font-medium text-content hover:border-cobble-400 dark:border-slate-700 dark:text-mortar-100">Open</Link>
+                  <Link to={`/scan?item=${it.id}`} aria-label={`Open ${captureName(it)} in the scan inbox`} className="ml-auto shrink-0 rounded-md border border-line px-2 py-2 text-xs font-medium text-content hover:border-cobble-400 dark:border-slate-700 dark:text-mortar-100">Open</Link>
                 </li>)}</ul>
               </section>}
             </div>

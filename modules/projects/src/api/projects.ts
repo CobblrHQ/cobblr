@@ -122,30 +122,34 @@ projectsRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
-    const inserted = await db
-      .insertInto("projects_projects")
-      .values({
-        instance: instanceOf(req),
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        status: parsed.data.status ?? "active",
-        priority: parsed.data.priority ?? "med",
-        start_date: fieldDay(parsed.data.start_date),
-        target_date: fieldDay(parsed.data.target_date),
-        completion_date: fieldDay(parsed.data.completion_date),
-        color: parsed.data.color ?? null,
-        metadata: parsed.data.metadata ?? {},
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const inserted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const inserted = await trx
+        .insertInto("projects_projects")
+        .values({
+          instance: instanceOf(req),
+          name: parsed.data.name,
+          description: parsed.data.description ?? null,
+          status: parsed.data.status ?? "active",
+          priority: parsed.data.priority ?? "med",
+          start_date: fieldDay(parsed.data.start_date),
+          target_date: fieldDay(parsed.data.target_date),
+          completion_date: fieldDay(parsed.data.completion_date),
+          color: parsed.data.color ?? null,
+          metadata: parsed.data.metadata ?? {},
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
 
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "project_created",
-      ref: { module: "projects", entityType: "project", entityId: inserted.id },
-      diff: { name: inserted.name },
+      await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "project_created",
+        ref: { module: "projects", entityType: "project", entityId: inserted.id },
+        diff: { name: inserted.name },
+      });
+      return inserted;
     });
+
     platform().events.emit("projects.project.created", {
       orgId: ctx.org.id,
       projectId: inserted.id,
@@ -214,26 +218,30 @@ projectsRouter.patch(
 
     // The row as it was: the log says what this edit changed (#4517).
     const before = await db.selectFrom("projects_projects").selectAll().where("id", "=", id).where("instance", "=", instanceOf(req)).executeTakeFirst();
-    const updated = await db
-      .updateTable("projects_projects")
-      .set(withMetadataMerged(patch as Record<string, unknown>) as never)
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returningAll()
-      .executeTakeFirst();
+    const updated = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const updated = await trx
+        .updateTable("projects_projects")
+        .set(withMetadataMerged(patch as Record<string, unknown>) as never)
+        .where("id", "=", id)
+        .where("instance", "=", instanceOf(req))
+        .returningAll()
+        .executeTakeFirst();
+
+      if (updated) await log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "project_updated",
+        ref: { module: "projects", entityType: "project", entityId: updated.id },
+        diff: parsed.data,
+        before,
+      });
+      return updated;
+    });
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "project not found" } });
       return;
     }
 
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "project_updated",
-      ref: { module: "projects", entityType: "project", entityId: updated.id },
-      diff: parsed.data,
-      before,
-    });
     platform().events.emit("projects.project.updated", {
       orgId: ctx.org.id,
       projectId: updated.id,

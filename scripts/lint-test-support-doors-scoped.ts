@@ -19,9 +19,8 @@
 // the same two tokens); the pass's own signature then has to take it, which
 // tsc holds. And every test under api/tests that POSTs a run-migration door
 // sends `org_id` in that call's body. The precedent already in the tree is
-// the receipt-placeholders door:
-// `retireReceiptFailurePlaceholders(org_id ? { onlyOrgId: org_id } : {})`,
-// with its test sending `{ org_id: s.orgId }` (#2898).
+// the scan-category-axis door: `reconcileScanCategoryFields(onlyOrg(req))`,
+// with its test sending `{ org_id: s.orgId }`.
 //
 // A pass with genuinely no per-workspace shape opts out with
 // `// ALLOW-POOL-WIDE: <reason>` on the door's `.post(` line. None qualifies
@@ -146,7 +145,7 @@ if (violations.length) {
   console.error(`lint:test-support-doors-scoped - ${violations.length} violation(s):`);
   for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.what}`);
   console.error(
-    "Read org_id from the body and pass { onlyOrgId: org_id } to the pass (retireReceiptFailurePlaceholders is the precedent); give the pass the option; send { org_id: s.orgId } from the test.",
+    "Read org_id from the body and pass { onlyOrgId: org_id } to the pass (the scan-category-axis door is the precedent); give the pass the option; send { org_id: s.orgId } from the test.",
   );
   process.exit(1);
 }

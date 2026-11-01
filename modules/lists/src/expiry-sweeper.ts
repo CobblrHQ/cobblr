@@ -29,6 +29,7 @@
 
 import { Kysely, sql } from "kysely";
 import { platform, expiryState, expiryPhrase, arrivedEverywhere, daysUntilField, SYSTEM_VIEWER } from "@cobblr/platform-contract";
+import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { expiryStages } from "./expiry-stages.js";
 import { expiryDigest, type ExpiryLine } from "./expiry-card.js";
 
@@ -40,13 +41,24 @@ export function startExpirySweeper(): void {
   // The walk is the kernel's (platform().sweeps, #3036): this registers the
   // per-workspace visit and its cadence and owns no timer, so the pass shares
   // one walk and one connection budget with every other pass.
-  platform().sweeps.register({
+  platform().sweeps.register(narrowSweep({
     name: EXPIRY_PASS,
     everyMs: TICK_MS,
     module: "lists",
     visit: ({ orgId, db, now }) => visitWorkspace(orgId, db, now),
-  });
+  }, hasExpiryWork));
   console.log(`[lists] expiry sweeper registered — every ${TICK_MS / 60_000} min, threshold ${EXPIRY_SOON_DAYS}d`);
+}
+
+/** Whether a workspace has anything that expires: a part with an
+ *  `expires_on`, whatever the day, or one whose date names no day (the visit
+ *  reports those, so they must keep being read). A date months away counts:
+ *  time passing writes nothing, so the workspace stays a candidate until it
+ *  is due (#9048). */
+export async function hasExpiryWork({ orgId }: { orgId: string }): Promise<boolean> {
+  const dated = await platform().calendar.queryDateField(orgId, "inventory:part", "expires_on", "1970-01-01", "9999-12-31");
+  if (dated.length) return true;
+  return (await platform().calendar.unreadableDateField(orgId, "inventory:part", "expires_on")).length > 0;
 }
 
 /** Nothing to stop: the kernel's walk owns the timer. Kept for the module's shutdown hook. */

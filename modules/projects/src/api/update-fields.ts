@@ -54,19 +54,21 @@ export async function updateProjectFields(ctx: EntityUpdateContext): Promise<Ent
   const set: Record<string, unknown> = { updated_at: new Date(), ...parsed.data };
   for (const k of DAYS) if (typeof set[k] === "string") set[k] = fieldDay(set[k] as string);
   if (Object.keys(split.custom).length) set.metadata = split.custom;
-  await db
-    .updateTable("projects_projects")
-    .set(withMetadataMerged(set, []) as never)
-    .where("id", "=", ctx.id)
-    .execute();
+  await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+    await trx
+      .updateTable("projects_projects")
+      .set(withMetadataMerged(set, []) as never)
+      .where("id", "=", ctx.id)
+      .execute();
 
-  await platform().activity.log({
-    orgId: ctx.orgId,
-    userId: ctx.userId,
-    action: "project_updated",
-    ref: { module: "projects", entityType: "project", entityId: ctx.id },
-    diff: Object.keys(split.custom).length ? { ...parsed.data, metadata: split.custom } : parsed.data,
-    before,
+    await log({
+      orgId: ctx.orgId,
+      userId: ctx.userId,
+      action: "project_updated",
+      ref: { module: "projects", entityType: "project", entityId: ctx.id },
+      diff: Object.keys(split.custom).length ? { ...parsed.data, metadata: split.custom } : parsed.data,
+      before,
+    });
   });
   platform().events.emit("projects.project.updated", { orgId: ctx.orgId, projectId: ctx.id });
   if (parsed.data.status === "done" || parsed.data.status === "abandoned") {

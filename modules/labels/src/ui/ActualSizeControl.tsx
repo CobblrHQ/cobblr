@@ -115,7 +115,7 @@ export function ActualSizeControl({
               <HelpCircle size={14} />
             </button>
             {why && (
-              <div className="absolute right-0 bottom-6 w-64 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 text-[11px] text-muted dark:text-slate-400 leading-relaxed shadow-xl z-10">
+              <div className="absolute right-0 bottom-6 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 text-[11px] text-muted dark:text-slate-400 leading-relaxed shadow-xl z-10">
                 <b className="text-content dark:text-mortar-100">Why calibrate?</b> CSS millimetres assume 96 dpi, which
                 almost no screen actually is, so "actual size" is a guess until the ruler matches a real one. Saved for
                 this device; printing ignores it and uses true millimetres.

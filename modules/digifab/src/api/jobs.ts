@@ -200,34 +200,38 @@ jobsRouter.post(
         .json({ error: { code: "no_target", message: "a job needs a connection_id or a target_pool" } });
     }
     // A pool job is created UNASSIGNED — no connection yet (the worker stamps it).
-    const row = await tenantDb(req)
-      .insertInto("digifab_jobs")
-      .values({
-        connection_id: pool ? null : (parsed.data.connection_id ?? null),
-        file_ref: parsed.data.file_ref,
-        target_device: parsed.data.target_device ?? null,
-        target_tag: parsed.data.target_tag ?? null,
-        target_pool: pool,
-        material_part_id: parsed.data.material_part_id ?? null,
-        material_grams: parsed.data.material_grams != null ? String(parsed.data.material_grams) : null,
-        material_grams_by_tool: parsed.data.material_grams_by_tool?.length ? JSON.stringify(parsed.data.material_grams_by_tool) : null,
-        material_type: parsed.data.material_type ?? null,
-        file_id: parsed.data.file_id ?? null,
-        linked_machine_id: parsed.data.linked_machine_id ?? null,
-        linked_task_id: parsed.data.linked_task_id ?? null,
-        linked_build_id: parsed.data.linked_build_id ?? null,
-        build_qty: parsed.data.build_qty ?? 1,
-        priority: parsed.data.priority ?? 0,
-        max_attempts: parsed.data.max_attempts ?? 1,
-      })
-      .returning(JOB_COLS)
-      .executeTakeFirstOrThrow();
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "job_created",
-      ref: { module: "digifab", entityType: "job", entityId: row.id },
-      diff: { name: row.file_ref },
+    const row = await platform().activity.transaction(tenantContext(req).org.id, tenantDb(req), async (trx, log) => {
+      const row = await trx
+        .insertInto("digifab_jobs")
+        .values({
+          connection_id: pool ? null : (parsed.data.connection_id ?? null),
+          file_ref: parsed.data.file_ref,
+          target_device: parsed.data.target_device ?? null,
+          target_tag: parsed.data.target_tag ?? null,
+          target_pool: pool,
+          material_part_id: parsed.data.material_part_id ?? null,
+          material_grams: parsed.data.material_grams != null ? String(parsed.data.material_grams) : null,
+          material_grams_by_tool: parsed.data.material_grams_by_tool?.length ? JSON.stringify(parsed.data.material_grams_by_tool) : null,
+          material_type: parsed.data.material_type ?? null,
+          file_id: parsed.data.file_id ?? null,
+          linked_machine_id: parsed.data.linked_machine_id ?? null,
+          linked_task_id: parsed.data.linked_task_id ?? null,
+          linked_build_id: parsed.data.linked_build_id ?? null,
+          build_qty: parsed.data.build_qty ?? 1,
+          priority: parsed.data.priority ?? 0,
+          max_attempts: parsed.data.max_attempts ?? 1,
+        })
+        .returning(JOB_COLS)
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: tenantContext(req).org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "job_created",
+        ref: { module: "digifab", entityType: "job", entityId: row.id },
+        diff: { name: row.file_ref },
+      });
+
+      return row;
     });
     // Drip pool jobs onto a free printer as soon as possible.
     if (pool) {
@@ -557,34 +561,38 @@ jobsRouter.post(
       return void res.status(409).json({ error: { code: "just_reprinted", message: "You just reprinted this. Print another copy?" } });
     }
     // check-then-insert: The stamp serializes requests; clones get generated ids with no batch ordinal.
-    const clone = await db
-      .insertInto("digifab_jobs")
-      .values({
-        connection_id: src.target_pool ? null : src.connection_id,
-        file_ref: src.file_ref,
-        target_device: src.target_pool ? null : src.target_device,
-        target_tag: src.target_tag,
-        target_pool: src.target_pool,
-        material_part_id: src.material_part_id,
-        material_grams: src.material_grams,
-        material_grams_by_tool: src.material_grams_by_tool == null ? null : JSON.stringify(src.material_grams_by_tool),
-        material_type: src.material_type,
-        file_id: src.file_id,
-        linked_machine_id: src.linked_machine_id,
-        linked_task_id: src.linked_task_id,
-        linked_build_id: src.linked_build_id,
-        build_qty: src.build_qty,
-        priority: src.priority,
-        max_attempts: src.max_attempts,
-      })
-      .returning(JOB_COLS)
-      .executeTakeFirstOrThrow();
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "job_created",
-      ref: { module: "digifab", entityType: "job", entityId: clone.id },
-      diff: { name: clone.file_ref, cloned_from: src.id },
+    const clone = await platform().activity.transaction(tenantContext(req).org.id, db, async (trx, log) => {
+      const clone = await trx
+        .insertInto("digifab_jobs")
+        .values({
+          connection_id: src.target_pool ? null : src.connection_id,
+          file_ref: src.file_ref,
+          target_device: src.target_pool ? null : src.target_device,
+          target_tag: src.target_tag,
+          target_pool: src.target_pool,
+          material_part_id: src.material_part_id,
+          material_grams: src.material_grams,
+          material_grams_by_tool: src.material_grams_by_tool == null ? null : JSON.stringify(src.material_grams_by_tool),
+          material_type: src.material_type,
+          file_id: src.file_id,
+          linked_machine_id: src.linked_machine_id,
+          linked_task_id: src.linked_task_id,
+          linked_build_id: src.linked_build_id,
+          build_qty: src.build_qty,
+          priority: src.priority,
+          max_attempts: src.max_attempts,
+        })
+        .returning(JOB_COLS)
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: tenantContext(req).org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "job_created",
+        ref: { module: "digifab", entityType: "job", entityId: clone.id },
+        diff: { name: clone.file_ref, cloned_from: src.id },
+      });
+
+      return clone;
     });
     if (src.target_pool) {
       const { kickAssign } = await import("../assign-worker.js");

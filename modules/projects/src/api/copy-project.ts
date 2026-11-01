@@ -18,7 +18,7 @@ export async function copyProject(
   name: string,
   instance?: string,
 ) {
-  const made = await db.transaction().execute(async (trx) => {
+  const made = await platform().activity.transaction(orgId, db, async (trx, log) => {
     let q = trx.selectFrom("projects_projects").selectAll().where("id", "=", sourceId);
     if (instance) q = q.where("instance", "=", instance);
     const source = await q.executeTakeFirst();
@@ -77,16 +77,17 @@ export async function copyProject(
       await trx.insertInto("projects_task_dependencies").values({ task_id: task, depends_on_task_id: on }).execute();
       waiting.add(task);
     }
+    await log({
+      orgId,
+      userId,
+      action: "project_copied",
+      ref: { module: "projects", entityType: "project", entityId: project.id },
+      diff: { name: project.name, copied_from: sourceId, tasks: copied.length },
+    });
     return { project, copied, waiting };
   });
   if (!made) return null;
-  await platform().activity.log({
-    orgId,
-    userId,
-    action: "project_copied",
-    ref: { module: "projects", entityType: "project", entityId: made.project.id },
-    diff: { name: made.project.name, copied_from: sourceId, tasks: made.copied.length },
-  });
+
   platform().events.emit("projects.project.created", { orgId, projectId: made.project.id });
   for (const t of made.copied) {
     const person = assigneeOf(t.metadata);

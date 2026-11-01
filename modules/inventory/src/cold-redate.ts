@@ -42,19 +42,20 @@ export function registerColdRedate(): void {
   platform().events.on("core-placement.placed", "inventory", async (raw: unknown) => {
     const p = (raw ?? {}) as { orgId?: string; containeeKind?: string; containeeId?: string; containerKind?: string; containerId?: string };
     if (!p.orgId || !p.containeeKind || !p.containeeId || !p.containerKind || !p.containerId) return;
+    const { orgId, containeeId } = p;
     try {
-      if ((await platform().entities.baseKindOf(p.orgId, p.containeeKind)) !== "inventory:part") return;
-      const db = (await platform().tenants.getDb(p.orgId)) as Kysely<InventoryDB>;
-      const row = await db.selectFrom("inventory_parts").select(["qty", "metadata"]).where("id", "=", p.containeeId).executeTakeFirst();
+      if ((await platform().entities.baseKindOf(orgId, p.containeeKind)) !== "inventory:part") return;
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+      const row = await db.selectFrom("inventory_parts").select(["qty", "metadata"]).where("id", "=", containeeId).executeTakeFirst();
       if (!row) return;
       const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
       const numbers = clockNumbers(md);
       // States no cold number: nothing for a move to say.
       if (numbers.refrigerated === null && numbers.frozen === null) return;
 
-      const clock = clockFor(await coldnessOfPlace(p.orgId, { kind: p.containerKind, id: p.containerId }));
-      const kind = await platform().entities.resolvedKindForEntity(p.orgId, "inventory:part", p.containeeId).catch(() => "inventory:part");
-      const roles = await platform().entities.roledFieldsFor(p.orgId, kind).catch(() => []);
+      const clock = clockFor(await coldnessOfPlace(orgId, { kind: p.containerKind, id: p.containerId }));
+      const kind = await platform().entities.resolvedKindForEntity(orgId, "inventory:part", containeeId).catch(() => "inventory:part");
+      const roles = await platform().entities.roledFieldsFor(orgId, kind).catch(() => []);
       const expiryField = roles.find((f) => f.field_role === "expiry")?.name ?? "expires_on";
       const acquiredField = roles.find((f) => f.field_role === "acquired-on")?.name ?? "acquired_on";
 
@@ -69,17 +70,19 @@ export function registerColdRedate(): void {
 
       const to = earliestExpiry(restated.batches);
       const patch: Record<string, unknown> = { ...(kept ? { batches: restated.batches } : {}), ...(to ? { [expiryField]: to } : {}) };
-      await db
-        .updateTable("inventory_parts")
-        .set({ metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`, updated_at: new Date() })
-        .where("id", "=", p.containeeId)
-        .execute();
-      await platform().activity.log({
-        orgId: p.orgId,
-        userId: null,
-        action: "part_redated",
-        ref: { module: "inventory", entityType: "part", entityId: p.containeeId },
-        diff: { said: `${WORDS[clock]}: good until ${to ?? "no date"}`, from: visible, to, clock },
+      await platform().activity.transaction(orgId, db, async (trx, log) => {
+        await trx
+          .updateTable("inventory_parts")
+          .set({ metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`, updated_at: new Date() })
+          .where("id", "=", containeeId)
+          .execute();
+        await log({
+          orgId: orgId,
+          userId: null,
+          action: "part_redated",
+          ref: { module: "inventory", entityType: "part", entityId: containeeId },
+          diff: { said: `${WORDS[clock]}: good until ${to ?? "no date"}`, from: visible, to, clock },
+        });
       });
     } catch (err) {
       // A subscriber must never be able to fail a move.

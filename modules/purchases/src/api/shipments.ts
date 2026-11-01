@@ -45,6 +45,7 @@ export async function addShipment(orgId: string, userId: string | null, orderId:
   const out = await recordShipment(db, orgId, userId, orderId, body);
   if (!out) return null;
   if (out.created) {
+    // capability-except activity:a-change-and-its-history-line-commit-together: recordShipment calls unreceiveOrderLines, which drains its own receipt transactions and tells inventory about stock before recording the parcel (#9035)
     await platform().activity.log({
       orgId,
       userId,

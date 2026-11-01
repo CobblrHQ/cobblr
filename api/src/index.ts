@@ -107,6 +107,7 @@ import * as deletedRecords from "./platform/deleted-records.js";
 import * as dispositions from "./platform/dispositions.js";
 import { registerIssuedUndosSweep } from "./platform/issued-undos.js";
 import { registerTraceSweep } from "./platform/activity-trace.js";
+import { changeWithHistory } from "./platform/activity-outbox.js";
 import { registerTenantMigrationsCatchUp } from "./platform/tenant-migrations-catch-up.js";
 import { registerRequestReplaysSweep } from "./platform/request-replays.js";
 import { registerHistoryWriter } from "./platform/history-store.js";
@@ -135,7 +136,7 @@ import * as scanRegistry from "./platform/scan-registry.js";
 import * as unitsImpl from "./platform/units.js";
 import * as instancesImpl from "./platform/instances.js";
 import { contentsWordOf, setContentsWord } from "./platform/contents-word.js";
-import { registerMover } from "./platform/move-records.js";
+import { registerMover, registerMoveRecovery } from "./platform/move-records.js";
 import * as scanResolvers from "./platform/scan-resolvers.js";
 import * as categoryAxis from "./platform/category-axis.js";
 import * as queue from "./platform/queue.js";
@@ -424,7 +425,7 @@ async function boot() {
     deletedRecords,
     dispositions: { markGone: dispositions.markGone, bringBack: dispositions.bringBack },
     money,
-    activity: { log: activity.log, logMany: activity.logMany, createdNamesMatching: activity.createdNamesMatching, entryOf: activity.entryOf, changeSince: activity.changeSince, registerHistoryWriter },
+    activity: { log: activity.log, transaction: changeWithHistory, logMany: activity.logMany, createdNamesMatching: activity.createdNamesMatching, entryOf: activity.entryOf, changeSince: activity.changeSince, registerHistoryWriter },
     events: { emit: events.emit, on: events.on },
     tenants: {
       getDb: async (orgId) => secretPresenceDb(orgId, await getTenantDb(orgId)),
@@ -1973,6 +1974,7 @@ async function boot() {
   await registerTidySweep();
   registerDeletedRelations();
   deletedRecords.registerDeletedRecordsSweep();
+  registerMoveRecovery();
   registerIssuedUndosSweep();
   registerTraceSweep();
   registerTenantMigrationsCatchUp();

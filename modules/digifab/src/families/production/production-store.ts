@@ -28,7 +28,7 @@ export async function saveProductionPlan(db: Kysely<DigifabDB>, raw: unknown, id
 }
 export async function prepareProductionAttempt(db: Kysely<DigifabDB>, raw: z.infer<typeof PrepareAttempt>) {
  const input = PrepareAttempt.parse(raw);
- return db.transaction().execute(async trx => {
+ const prepare = async (trx: Kysely<DigifabDB>) => {
   await sql`select pg_advisory_xact_lock(hashtext(${`production-unit:${input.unit.kind}:${input.unit.id}`}))`.execute(trx);
   const saved = await trx.selectFrom("digifab_test_plan_versions").selectAll().where("plan_id", "=", input.plan_id).where("version", "=", input.plan_version).executeTakeFirstOrThrow();
   if (saved.plan.required_jig_id && saved.plan.required_jig_id !== input.jig_id) throw new Error("Scan the jig required by this plan.");
@@ -52,7 +52,8 @@ export async function prepareProductionAttempt(db: Kysely<DigifabDB>, raw: z.inf
   const row = await trx.insertInto("digifab_test_runs").values({ unit_kind: input.unit.kind, unit_id: input.unit.id, plan_id: input.plan_id, plan_version: input.plan_version, plan: saved.plan, plan_hash: saved.plan_hash, operator_id: input.operator_id, station: input.station, jig_id: input.jig_id, bridge_connection_id: input.bridge_connection_id ?? null, unit_snapshot: input.unit_snapshot ?? {}, jig_pins: jig_pins == null ? null : JSON.stringify(jig_pins), metadata: jig_pins == null ? {} : { jig_pins }, jig_cycle, attempt: (latest?.attempt ?? 0) + 1 }).returningAll().executeTakeFirstOrThrow();
   await trx.insertInto("digifab_test_delivery").values({ run_id: row.id }).execute();
   return { ...row, unit: input.unit };
- });
+ };
+ return db.isTransaction ? prepare(db) : db.transaction().execute(prepare);
 }
 export function verifyProductionResult(plan: ProductionPlan, result: ProductionTestResult, unit?: { serial?: string | null }): ProductionTestResult {
  // A result is stored as it arrives, so a wireless credential is refused here, before anything is kept.

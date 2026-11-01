@@ -96,7 +96,7 @@ export async function reserveAllocation(
   userId: string,
   d: ReserveRequest,
 ): Promise<{ ok: true; row: Record<string, unknown> } | { ok: false; code: "part_not_found" }> {
-  const inserted = await db.transaction().execute(async trx => {
+  const inserted = await platform().activity.transaction(orgId, db, async (trx, log) => {
     // The part has to exist before we hand out a reservation on it.
     // FK would error eventually but we want a clean 404 not a 5xx.
     const part = await trx
@@ -124,22 +124,23 @@ export async function reserveAllocation(
         "reason", "target_line", "reserved_at",
       ])
       .executeTakeFirstOrThrow();
+    await log({
+      orgId,
+      userId,
+      action: "allocation_reserved",
+      ref: { module: "inventory", entityType: "allocation", entityId: inserted.id },
+      diff: {
+        // A reservation is of a part: every feed names and opens the part.
+        subject: { kind: "inventory:part", id: d.part_id },
+        part_id: d.part_id,
+        qty: d.qty,
+        target: `${d.target_module}/${d.target_entity_type}/${d.target_entity_id}`,
+      },
+    });
     return inserted;
   });
   if (!inserted) return { ok: false, code: "part_not_found" };
-  await platform().activity.log({
-    orgId,
-    userId,
-    action: "allocation_reserved",
-    ref: { module: "inventory", entityType: "allocation", entityId: inserted.id },
-    diff: {
-      // A reservation is of a part: every feed names and opens the part.
-      subject: { kind: "inventory:part", id: d.part_id },
-      part_id: d.part_id,
-      qty: d.qty,
-      target: `${d.target_module}/${d.target_entity_type}/${d.target_entity_id}`,
-    },
-  });
+
   platform().events.emit("inventory.allocation.reserved", {
     orgId,
     allocationId: inserted.id,
@@ -148,7 +149,6 @@ export async function reserveAllocation(
   });
   return { ok: true, row: inserted as unknown as Record<string, unknown> };
 }
-
 
 // AI-ACTION: inventory:reserve-stock
 allocationsRouter.post(
@@ -196,7 +196,7 @@ export async function settleAllocation(
   // Consuming decrements stock on the underlying part — both
   // updates land in one transaction so a half-applied consumption
   // can't happen.
-  const result = await db.transaction().execute(async (trx) => {
+  const result = await platform().activity.transaction(orgId, db, async (trx, log) => {
     const current = await trx
       .selectFrom("inventory_allocations")
       .select([
@@ -269,6 +269,14 @@ export async function settleAllocation(
         "consumed_at", "released_at",
       ])
       .executeTakeFirstOrThrow();
+    const action = status === "consumed" ? "allocation_consumed" : "allocation_released";
+    await log({
+      orgId,
+      userId,
+      action,
+      ref: { module: "inventory", entityType: "allocation", entityId: next.id },
+      diff: { subject: { kind: "inventory:part", id: current.part_id }, part_id: current.part_id, qty: status === "consumed" ? take : current.qty },
+    });
     return { ok: true as const, next, partId: current.part_id, qty: status === "consumed" ? take : current.qty };
   });
 
@@ -277,14 +285,6 @@ export async function settleAllocation(
     return { ok: false, code: "wrong_state", status: result.current?.status ?? "unknown" };
   }
 
-  const action = status === "consumed" ? "allocation_consumed" : "allocation_released";
-  await platform().activity.log({
-    orgId,
-    userId,
-    action,
-    ref: { module: "inventory", entityType: "allocation", entityId: result.next.id },
-    diff: { subject: { kind: "inventory:part", id: result.partId }, part_id: result.partId, qty: result.qty },
-  });
   platform().events.emit(status === "consumed" ? "inventory.allocation.consumed" : "inventory.allocation.released", {
     orgId,
     allocationId: result.next.id,

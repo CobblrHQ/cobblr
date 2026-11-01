@@ -57,27 +57,30 @@ entriesRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const row = await db
-      .insertInto("knowledge_entries")
-      .values({
-        title: parsed.data.title,
-        body: parsed.data.body ?? null,
-        kind: parsed.data.kind ?? null,
-        pinned: parsed.data.pinned ?? false,
-        code: parsed.data.code ?? null,
-        image_path: parsed.data.image_path ?? null,
-        metadata: jsonb(parsed.data.metadata) as never,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    void platform().events.emit("knowledge.entry.created", { orgId: ctx.org.id, entryId: row.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "entry_created",
-      ref: { module: "knowledge", entityType: "entry", entityId: row.id },
-      diff: { name: row.title, kind: row.kind },
+    const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .insertInto("knowledge_entries")
+        .values({
+          title: parsed.data.title,
+          body: parsed.data.body ?? null,
+          kind: parsed.data.kind ?? null,
+          pinned: parsed.data.pinned ?? false,
+          code: parsed.data.code ?? null,
+          image_path: parsed.data.image_path ?? null,
+          metadata: jsonb(parsed.data.metadata) as never,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "entry_created",
+        ref: { module: "knowledge", entityType: "entry", entityId: row.id },
+        diff: { name: row.title, kind: row.kind },
+      });
+      return row;
     });
+    void platform().events.emit("knowledge.entry.created", { orgId: ctx.org.id, entryId: row.id });
     res.status(201).json(row);
   }),
 );
@@ -114,24 +117,27 @@ entriesRouter.patch(
     if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
     // The row as it was: the log says what this edit changed (#4517).
     const before = await db.selectFrom("knowledge_entries").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
-    const row = await db
-      .updateTable("knowledge_entries")
-      .set(patch)
-      .where("id", "=", req.params.id!)
-      .returningAll()
-      .executeTakeFirst();
+    const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .updateTable("knowledge_entries")
+        .set(patch)
+        .where("id", "=", req.params.id!)
+        .returningAll()
+        .executeTakeFirst();
+      // The request as sent, on the record's history: the one place a value
+      // a later write replaced can still be read back (#3625).
+      if (row) await log({
+        orgId: tenantContext(req).org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "entry_updated",
+        ref: { module: "knowledge", entityType: "entry", entityId: String(req.params.id) },
+        diff: parsed.data as Record<string, unknown>,
+        before,
+      });
+      return row;
+    });
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Entry not found." } });
     void platform().events.emit("knowledge.entry.updated", { orgId: ctx.org.id, entryId: row.id });
-    // The request as sent, on the record's history: the one place a value
-    // a later write replaced can still be read back (#3625).
-    await platform().activity.log({
-      orgId: tenantContext(req).org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "entry_updated",
-      ref: { module: "knowledge", entityType: "entry", entityId: String(req.params.id) },
-      diff: parsed.data as Record<string, unknown>,
-      before,
-    });
     res.json(row);
   }),
 );
@@ -143,19 +149,22 @@ entriesRouter.delete(
     if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const row = await db
-      .deleteFrom("knowledge_entries")
-      .where("id", "=", req.params.id!)
-      .returning("id")
-      .executeTakeFirst();
+    const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx
+        .deleteFrom("knowledge_entries")
+        .where("id", "=", req.params.id!)
+        .returning("id")
+        .executeTakeFirst();
+      if (row) await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "entry_deleted",
+        ref: { module: "knowledge", entityType: "entry", entityId: row.id },
+      });
+      return row;
+    });
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Entry not found." } });
     void platform().events.emit("knowledge.entry.deleted", { orgId: ctx.org.id, entryId: row.id });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: sessionUser(req)?.id ?? null,
-      action: "entry_deleted",
-      ref: { module: "knowledge", entityType: "entry", entityId: row.id },
-    });
     res.status(204).end();
   }),
 );

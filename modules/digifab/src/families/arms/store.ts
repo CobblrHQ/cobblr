@@ -39,8 +39,10 @@ export async function setupArm(db: Kysely<DigifabDB>, orgId: string, userId: str
   const driver = await armDriver(db, orgId, setup.connection_id);
   try { await driver.state(setup.device_id); } catch { throw new ArmRefusal("Choose an arm your bridge reports. It did not answer with an arm's state."); }
  }
- await db.insertInto("digifab_arm_units").values({ machine_id: machineId, connection_id: setup.connection_id, device_id: setup.device_id }).onConflict(oc => oc.column("machine_id").doUpdateSet({ connection_id: setup.connection_id, device_id: setup.device_id, updated_at: new Date() })).execute();
- await platform().activity.log({ orgId, userId, action: "arm_set_up", ref: machineRef(machineId), diff: { connection_id: setup.connection_id, device_id: setup.device_id } });
+ await platform().activity.transaction(orgId, db, async (trx, log) => {
+   await trx.insertInto("digifab_arm_units").values({ machine_id: machineId, connection_id: setup.connection_id, device_id: setup.device_id }).onConflict(oc => oc.column("machine_id").doUpdateSet({ connection_id: setup.connection_id, device_id: setup.device_id, updated_at: new Date() })).execute();
+   await log({ orgId, userId, action: "arm_set_up", ref: machineRef(machineId), diff: { connection_id: setup.connection_id, device_id: setup.device_id } });
+ });
  if (setup.connection_id) await refreshArm(db, orgId, userId, machineId);
  return { ok: true };
 }
@@ -53,8 +55,10 @@ export async function refreshArm(db: Kysely<DigifabDB>, orgId: string, userId: s
  if (!unit.connection_id || !unit.device_id) throw new ArmRefusal("This arm has no controller connection. Type its programs instead.");
  const driver = await armDriver(db, orgId, unit.connection_id);
  const [info, list] = await Promise.all([driver.info(unit.device_id), driver.programs(unit.device_id)]);
- if (versionsOf(unit.last_info) !== versionsOf(info)) await platform().activity.log({ orgId, userId, action: "arm_versions_reported", ref: machineRef(machineId), diff: { model: info.model, software_versions: info.software_versions, previous: unit.last_info?.software_versions ?? null } });
- await db.updateTable("digifab_arm_units").set({ last_info: JSON.stringify(info), info_seen_at: new Date(), updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+ await platform().activity.transaction(orgId, db, async (trx, log) => {
+   if (versionsOf(unit.last_info) !== versionsOf(info)) await log({ orgId, userId, action: "arm_versions_reported", ref: machineRef(machineId), diff: { model: info.model, software_versions: info.software_versions, previous: unit.last_info?.software_versions ?? null } });
+   await trx.updateTable("digifab_arm_units").set({ last_info: JSON.stringify(info), info_seen_at: new Date(), updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+ });
  if (!list.supported) return { info, programs_listed: false, detail: list.detail };
  const now = new Date();
  await db.transaction().execute(async trx => {
@@ -74,9 +78,12 @@ export async function refreshArm(db: Kysely<DigifabDB>, orgId: string, userId: s
 export async function addTypedProgram(db: Kysely<DigifabDB>, orgId: string, userId: string | null, machineId: string, value: unknown) {
  const p = TypedProgramSchema.parse(value);
  await requireUnit(db, machineId);
- const row = await db.insertInto("digifab_arm_programs").values({ machine_id: machineId, name: p.name, revision: p.revision, family: p.family, tool: p.tool, installation: p.installation, source: "typed" }).onConflict(oc => oc.doNothing()).returningAll().executeTakeFirst();
- if (!row) throw new ArmRefusal("This arm already has that program at that revision.");
- await platform().activity.log({ orgId, userId, action: "arm_program_added", ref: machineRef(machineId), diff: { name: p.name, revision: p.revision, family: p.family } });
+ const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+   const row = await trx.insertInto("digifab_arm_programs").values({ machine_id: machineId, name: p.name, revision: p.revision, family: p.family, tool: p.tool, installation: p.installation, source: "typed" }).onConflict(oc => oc.doNothing()).returningAll().executeTakeFirst();
+   if (!row) throw new ArmRefusal("This arm already has that program at that revision.");
+   await log({ orgId, userId, action: "arm_program_added", ref: machineRef(machineId), diff: { name: p.name, revision: p.revision, family: p.family } });
+   return row;
+ });
  return row;
 }
 export async function editProgram(db: Kysely<DigifabDB>, orgId: string, userId: string | null, programId: string, value: unknown) {
@@ -84,24 +91,31 @@ export async function editProgram(db: Kysely<DigifabDB>, orgId: string, userId: 
  const before = await db.selectFrom("digifab_arm_programs").select(["family", "tool", "installation"]).where("id", "=", programId).executeTakeFirst();
  if (!before) throw new ArmRefusal("No such arm program.");
  const change = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined));
- const row = await db.updateTable("digifab_arm_programs").set(change).where("id", "=", programId).returningAll().executeTakeFirst();
- if (!row) throw new ArmRefusal("No such arm program.");
- await platform().activity.log({ orgId, userId, action: "arm_program_updated", ref: machineRef(row.machine_id), diff: { name: row.name, revision: row.revision, ...change, before: Object.fromEntries(Object.keys(change).map(k => [k, before[k as keyof typeof before]])) } });
+ const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+   const row = await trx.updateTable("digifab_arm_programs").set(change).where("id", "=", programId).returningAll().executeTakeFirst();
+   if (!row) throw new ArmRefusal("No such arm program.");
+   await log({ orgId, userId, action: "arm_program_updated", ref: machineRef(row.machine_id), diff: { name: row.name, revision: row.revision, ...change, before: Object.fromEntries(Object.keys(change).map(k => [k, before[k as keyof typeof before]])) } });
+   return row;
+ });
  return row;
 }
 export async function saveCompatibility(db: Kysely<DigifabDB>, orgId: string, userId: string | null, machineId: string, value: unknown) {
  const c = CompatibilitySchema.parse(value);
  await requireUnit(db, machineId);
- await db.updateTable("digifab_arm_units").set({ compatibility: JSON.stringify(c), updated_at: new Date() }).where("machine_id", "=", machineId).execute();
- await platform().activity.log({ orgId, userId, action: "arm_compatibility_recorded", ref: machineRef(machineId), diff: { support: supportOf(c) } });
+ await platform().activity.transaction(orgId, db, async (trx, log) => {
+   await trx.updateTable("digifab_arm_units").set({ compatibility: JSON.stringify(c), updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+   await log({ orgId, userId, action: "arm_compatibility_recorded", ref: machineRef(machineId), diff: { support: supportOf(c) } });
+ });
  return { ok: true, support: supportOf(c) };
 }
 export async function setMaintenance(db: Kysely<DigifabDB>, orgId: string, userId: string | null, machineId: string, value: unknown) {
  const m = MaintenanceSchema.parse(value);
  const unit = await requireUnit(db, machineId);
  if (unit.maintenance === m.maintenance && unit.maintenance_note === m.note) return { ok: true };
- await db.updateTable("digifab_arm_units").set({ maintenance: m.maintenance, maintenance_note: m.note, updated_at: new Date() }).where("machine_id", "=", machineId).execute();
- await platform().activity.log({ orgId, userId, action: "arm_maintenance_changed", ref: machineRef(machineId), diff: { from: unit.maintenance, to: m.maintenance, note: m.note } });
+ await platform().activity.transaction(orgId, db, async (trx, log) => {
+   await trx.updateTable("digifab_arm_units").set({ maintenance: m.maintenance, maintenance_note: m.note, updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+   await log({ orgId, userId, action: "arm_maintenance_changed", ref: machineRef(machineId), diff: { from: unit.maintenance, to: m.maintenance, note: m.note } });
+ });
  return { ok: true };
 }
 /** What is installed on the arm (gripper, suction cup, tool changer slot).
@@ -110,8 +124,10 @@ export async function setTooling(db: Kysely<DigifabDB>, orgId: string, userId: s
  const { tooling } = z.object({ tooling: z.string().trim().max(500) }).parse(value);
  const unit = await requireUnit(db, machineId);
  if (unit.tooling === tooling) return { ok: true };
- await db.updateTable("digifab_arm_units").set({ tooling, updated_at: new Date() }).where("machine_id", "=", machineId).execute();
- await platform().activity.log({ orgId, userId, action: "arm_tooling_changed", ref: machineRef(machineId), diff: { tooling, before: { tooling: unit.tooling } } });
+ await platform().activity.transaction(orgId, db, async (trx, log) => {
+   await trx.updateTable("digifab_arm_units").set({ tooling, updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+   await log({ orgId, userId, action: "arm_tooling_changed", ref: machineRef(machineId), diff: { tooling, before: { tooling: unit.tooling } } });
+ });
  return { ok: true };
 }
 /** Programs by family. A family names the job ("unload CNC 3"); each unit's

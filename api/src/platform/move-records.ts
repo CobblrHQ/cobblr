@@ -8,6 +8,7 @@
 // cross-module migration the substrate doc forbids.
 
 import { sql, type Kysely } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import { SATELLITE_TABLES, type SatelliteRef } from "./instance-move.js";
@@ -224,7 +225,11 @@ export async function planMove(
  * A crash between them leaves records in the new instance with meta references
  * still on the old kind. Every rewrite filters on the old kind, so re-issuing
  * the same move completes it instead of erroring or double-applying. That is
- * the case the crash-window test exercises.
+ * the case the crash-window test exercises. Nobody re-issued it, though: the
+ * records looked moved while their labels found nothing and their custom
+ * fields were hidden (#9071). So the move is written down first
+ * (record_move_intents), removed in the meta commit, and one left behind is
+ * finished by the move recovery pass (registerMoveRecovery).
  */
 export async function moveRecords(
   orgId: string,
@@ -232,12 +237,20 @@ export async function moveRecords(
   ids: string[],
   from: string,
   to: string,
-  opts: { carryFields?: string[] } = {},
+  opts: { carryFields?: string[]; intentId?: string } = {},
 ): Promise<MoveResult> {
   await validate(orgId, moduleName, from, to);
   const mover = movers.get(moduleName);
   if (!mover) throw new MoveError(`${moduleName} does not support moving records.`, "no_mover");
   if (ids.length === 0) return { moved: [], fieldsCarried: [], satellitesRewritten: 0 };
+  const intentId =
+    opts.intentId ??
+    (await meta
+      .insertInto("record_move_intents")
+      .values({ org_id: orgId, module_name: moduleName, ids, from_instance: from, to_instance: to, carry_fields: opts.carryFields ?? [] })
+      .returning("id")
+      .executeTakeFirstOrThrow()).id;
+  const forgetIntent = () => meta.deleteFrom("record_move_intents").where("id", "=", intentId).execute();
 
   const fromKind = mover.kindFor(from);
   const toKind = mover.kindFor(to);
@@ -247,6 +260,8 @@ export async function moveRecords(
   let rewritten = 0;
 
   // ── 1. tenant ────────────────────────────────────────────────────────────
+  // A failure here is answered to the person as a move that did not happen,
+  // so its intent goes too: recovery never makes a move they were told failed.
   await tenantDb.transaction().execute(async (trx) => {
     // The module writes through OUR transaction handle, not its own pool
     // connection, or its update would sit outside this transaction.
@@ -259,9 +274,16 @@ export async function moveRecords(
       if (!present.has(ref.table)) continue; // module not enabled here
       rewritten += await rewrite(t, ref, fromKind, toKind, moved);
     }
+  }).catch(async (err) => {
+    await forgetIntent().catch(() => {});
+    throw err;
   });
 
-  if (moved.length === 0) return { moved: [], fieldsCarried: [], satellitesRewritten: 0 };
+  if (moved.length === 0) {
+    await forgetIntent();
+    return { moved: [], fieldsCarried: [], satellitesRewritten: 0 };
+  }
+  moveDiesHereForTests();
 
   // ── 2. meta ──────────────────────────────────────────────────────────────
   const carried: string[] = [];
@@ -302,9 +324,70 @@ export async function moveRecords(
         carried.push(d.name);
       }
     }
+    await trx.deleteFrom("record_move_intents").where("id", "=", intentId).execute();
   });
 
   return { moved, fieldsCarried: carried, satellitesRewritten: rewritten };
+}
+
+/** How old a move's intent is before recovery takes it for one that died. */
+export const MOVE_STALE_MS = 5 * 60_000;
+
+/** Test-only: the next moves die between their two commits (#9071). */
+let moveFailures = 0;
+export function failMoveBetweenCommitsForTests(times: number): void {
+  moveFailures = Math.max(0, times);
+}
+function moveDiesHereForTests(): void {
+  if (moveFailures <= 0) return;
+  moveFailures--;
+  throw new Error("the move stopped between its two commits (a test's injected failure)");
+}
+
+/** Finish, or drop, the moves in a workspace that stopped between their two
+ *  commits. Finished only when the records are in their new collection (the
+ *  workspace's commit landed); otherwise nothing moved and the intent goes. */
+export async function recoverMoves(orgId: string, now = new Date()): Promise<{ finished: number; dropped: number }> {
+  const stale = await meta
+    .selectFrom("record_move_intents")
+    .selectAll()
+    .where("org_id", "=", orgId)
+    .where("created_at", "<", new Date(now.getTime() - MOVE_STALE_MS))
+    .orderBy("created_at")
+    .limit(20)
+    .execute();
+  let finished = 0;
+  let dropped = 0;
+  for (const intent of stale) {
+    const at = await instancesHolding(orgId, intent.module_name, intent.ids).catch(() => null);
+    if (at && "instance" in at && at.instance === intent.to_instance) {
+      await moveRecords(orgId, intent.module_name, intent.ids, intent.from_instance, intent.to_instance, { carryFields: intent.carry_fields, intentId: intent.id });
+      finished++;
+    } else {
+      await meta.deleteFrom("record_move_intents").where("id", "=", intent.id).execute();
+      dropped++;
+    }
+  }
+  return { finished, dropped };
+}
+
+export function registerMoveRecovery(): void {
+  platform().sweeps.register({
+    name: "platform.move-recovery",
+    everyMs: 10 * 60_000,
+    // Only a workspace with a move that stopped part way: no other is opened.
+    candidates: async (orgIds) => {
+      const rows = await meta
+        .selectFrom("record_move_intents")
+        .select("org_id")
+        .distinct()
+        .where("org_id", "in", orgIds)
+        .where("created_at", "<", new Date(Date.now() - MOVE_STALE_MS))
+        .execute();
+      return rows.map((r) => r.org_id);
+    },
+    visit: async ({ orgId, now }) => recoverMoves(orgId, now),
+  });
 }
 
 export { MoveError };

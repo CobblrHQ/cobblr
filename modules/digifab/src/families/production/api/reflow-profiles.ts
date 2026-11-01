@@ -30,10 +30,13 @@ export function registerReflowProfiles() {
     try { profile = parseReflowProfile(readJsonArg(args, "profile")); } catch (e) { throw new ActionRefusal((e as Error).message); }
     const fingerprint = createHash("sha256").update(JSON.stringify(profile)).digest("hex");
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>;
-    const row = await db.insertInto("digifab_reflow_profiles").values({ ...paste, fingerprint, profile, created_by: ctx.userId }).onConflict(oc => oc.columns(["paste_kind", "paste_id", "fingerprint"]).doNothing()).returningAll().executeTakeFirst();
-    const saved = row ?? await db.selectFrom("digifab_reflow_profiles").selectAll().where("paste_kind", "=", paste.paste_kind).where("paste_id", "=", paste.paste_id).where("fingerprint", "=", fingerprint).executeTakeFirstOrThrow();
-    if (row) await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId, action: "created", ref: { module: "digifab", entityType: "reflow-profile", entityId: row.id }, diff: { name: profile.name } });
-    return { ok: true, changed: !!row, data: saved };
+    const { saved, changed } = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+      const row = await trx.insertInto("digifab_reflow_profiles").values({ ...paste, fingerprint, profile, created_by: ctx.userId }).onConflict(oc => oc.columns(["paste_kind", "paste_id", "fingerprint"]).doNothing()).returningAll().executeTakeFirst();
+      const saved = row ?? await trx.selectFrom("digifab_reflow_profiles").selectAll().where("paste_kind", "=", paste.paste_kind).where("paste_id", "=", paste.paste_id).where("fingerprint", "=", fingerprint).executeTakeFirstOrThrow();
+      if (row) await log({ orgId: ctx.orgId, userId: ctx.userId, action: "created", ref: { module: "digifab", entityType: "reflow-profile", entityId: row.id }, diff: { name: profile.name } });
+      return { saved, changed: !!row };
+    });
+    return { ok: true, changed, data: saved };
   });
 }
 export const reflowProfilesRouter = Router({ mergeParams: true });

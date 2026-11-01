@@ -2,6 +2,11 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-01
+
+### Improvements
+- A change made in inventory just before the server stopped now keeps its History line, because the change and its line are saved together.
+
 ## 2026-10-31
 
 ### Improvements
