@@ -91,7 +91,7 @@ export function AdminLayout() {
   // /admin/overview, so an SPA redirect to "/" would loop.
   if (!user?.is_platform_admin) {
     return (
-      <main id={MAIN_ID} className="min-h-screen flex items-center justify-center bg-canvas dark:bg-slate-950 px-4" data-testid="admin-not-for-you">
+      <main id={MAIN_ID} className="min-h-screen flex items-center justify-center bg-canvas dark:bg-slate-950 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))]" data-testid="admin-not-for-you">
         <div className="max-w-sm text-center space-y-3">
           <ShieldCheck size={28} className="mx-auto text-faint" aria-hidden />
           <h1 className="text-lg font-semibold text-content dark:text-mortar-100">This page is for the people who run this {productName()}</h1>
@@ -113,7 +113,9 @@ export function AdminLayout() {
           window resized. A vertical rail gives every cluster its heading, keeps
           the whole map visible at once, and matches the workspace shell's own
           sidebar so the operator console stops feeling like a different app. */}
-      <aside className="hidden md:block w-56 shrink-0 border-r border-line dark:border-slate-800 bg-surface dark:bg-slate-900">
+      {/* A phone on its side has the notch on the left: the rail's own colour
+          fills the inset and its rows start past it (#9106). */}
+      <aside className="hidden md:block w-56 box-content pl-[var(--inset-left)] shrink-0 border-r border-line dark:border-slate-800 bg-surface dark:bg-slate-900">
         <div className="sticky-under-header fill-under-header flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-line dark:border-slate-800">
           <div className="flex items-center gap-2 min-w-0">
@@ -182,7 +184,7 @@ export function AdminLayout() {
           which is what a phone can actually carry. */}
       <div className="flex-1 min-w-0 flex flex-col">
         <header style={{ paddingTop: "var(--inset-top)" }} className="md:hidden sticky-under-header z-30 bg-surface dark:bg-slate-900 border-b-2 border-cobble-500 dark:border-b dark:border-slate-700">
-          <div className="px-4 py-2.5 flex items-center gap-2 min-w-0">
+          <div className="pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] py-2.5 flex items-center gap-2 min-w-0">
             <ShieldCheck size={16} className="text-cobble-600 dark:text-cobble-300 shrink-0" />
             <span className="font-display font-extrabold tracking-tight text-sm">{productName()}</span>
             <span className="text-[10px] uppercase tracking-widest text-cobble-700 dark:text-cobble-300">
@@ -199,7 +201,7 @@ export function AdminLayout() {
               <LogOut size={14} />
             </button>
           </div>
-          <nav className="flex flex-nowrap overflow-x-auto gap-0.5 px-2">
+          <nav className="flex flex-nowrap overflow-x-auto gap-0.5 pl-[max(0.5rem,var(--inset-left))] pr-[max(0.5rem,var(--inset-right))]">
             {ADMIN_SECTIONS.map((s) => {
               const Icon = s.icon;
               return (
@@ -229,7 +231,7 @@ export function AdminLayout() {
           </nav>
         </header>
 
-        <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none flex-1 min-w-0">
+        <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none flex-1 min-w-0 max-md:pl-[var(--inset-left)] pr-[var(--inset-right)]">
           {/* page-shell, not a literal max-w: AdminConsole declares
               usePageWidth("wide") and the hook targets .page-shell — with the
               hardcoded 6xl every wide table (AI 9-col, Barcodes 9-col, View-as

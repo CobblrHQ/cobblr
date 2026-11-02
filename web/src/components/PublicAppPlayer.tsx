@@ -204,7 +204,7 @@ export function PublicAppPlayer({
   return (
     <div className="min-h-screen" style={themeWrapperStyle(theme) ?? { background: "#f4f2ee" }}>
       <SkipToContent />
-      <header className="px-6 py-4 flex items-center gap-3 border-b" style={{ borderColor: "var(--app-border, #e2e8f0)" }}>
+      <header className="pl-[max(1.5rem,var(--inset-left))] pr-[max(1.5rem,var(--inset-right))] py-4 flex items-center gap-3 border-b" style={{ borderColor: "var(--app-border, #e2e8f0)" }}>
         {theme?.logo ? (
           // EXTERNAL-IMAGE-OK: an app theme assetRef (data: URL or hosted URL, capped at 500KB),
           // never a core-files path. This page also holds no token, so an authed path could not
@@ -215,7 +215,7 @@ export function PublicAppPlayer({
         <div className="flex-1" />
         <span className="text-[10px] uppercase tracking-widest" style={mutedStyle(theme)}>public · read-only</span>
       </header>
-      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none max-w-5xl mx-auto px-6 py-8 space-y-5">
+      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none max-w-5xl mx-auto px-6 py-8 space-y-5 pl-[max(1.5rem,var(--inset-left))] pr-[max(1.5rem,var(--inset-right))]">
         {stats.length > 0 && (
           <div className="flex flex-wrap gap-3">
             {stats.map((b, i) => (

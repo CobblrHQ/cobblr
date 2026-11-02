@@ -27,6 +27,7 @@ import { meta } from "../db/meta.js";
 import { RUNTIME_INSTALL_DIR, loadOneSandboxedModule, uninstallSandboxedModule } from "../sandbox/loader.js";
 import { mountNewlyRegistered } from "../modules/mount.js";
 import { fetchGithubJson, fetchGithubBuffer } from "../lib/github-registry.js";
+import * as sharedCache from "../platform/shared-cache.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 export const sandboxInstallRouter = Router();
@@ -59,6 +60,31 @@ const DEFAULT_REGISTRY =
   process.env.COBBLR_REGISTRY_URL ||
   "https://raw.githubusercontent.com/CobblrHQ/registry/main/modules.json";
 
+
+/** Test-only: what the registry at a URL answers, standing in for the
+ *  network (the fetch refuses loopback, so a test can't serve its own).
+ *  `null` is a registry answering 404, as raw.githubusercontent.com did
+ *  on 2026-11-02 (#9106). Per URL, so another test file is never affected.
+ *  The install reads through the same door, so its test runs (#9109). */
+const registryAnswersForTests = new Map<string, unknown>();
+export function answerRegistryForTests(url: string, answer: unknown): void {
+  if (answer === undefined) registryAnswersForTests.delete(url);
+  else registryAnswersForTests.set(url, answer);
+}
+async function readRegistryJson<T>(url: string): Promise<T> {
+  if (registryAnswersForTests.has(url)) {
+    const answer = registryAnswersForTests.get(url);
+    if (answer === null) throw new Error(`fetch ${url} → 404 Not Found (a test's injected failure)`);
+    return answer as T;
+  }
+  return (await fetchGithubJson(url)) as T;
+}
+async function readRegistryFile(url: string): Promise<Buffer> {
+  const answer = registryAnswersForTests.get(url);
+  if (typeof answer === "string") return Buffer.from(answer, "base64");
+  if (answer === null) throw new Error(`fetch ${url} → 404 Not Found (a test's injected failure)`);
+  return fetchGithubBuffer(url);
+}
 
 /** Audit a tarball's members BEFORE extraction. Even though the tarball
  *  is ed25519-verified and only a super-admin can install, a malicious
@@ -122,7 +148,7 @@ sandboxInstallRouter.post("/install", async (req, res, next) => {
       }>;
     };
 
-    const registry = (await fetchGithubJson(registryUrl)) as RegistryShape;
+    const registry = await readRegistryJson<RegistryShape>(registryUrl);
     const modSpec = registry.modules.find((m) => m.name === name);
     if (!modSpec) {
       res.status(404).json({ error: { code: "not_in_registry", message: `${name} not in registry` } });
@@ -161,7 +187,7 @@ sandboxInstallRouter.post("/install", async (req, res, next) => {
     }
 
     // Fetch + verify + extract.
-    const tarball = await fetchGithubBuffer(versionSpec.source_url);
+    const tarball = await readRegistryFile(versionSpec.source_url);
     const gotSha = createHash("sha256").update(tarball).digest("hex");
     if (gotSha !== versionSpec.sha256) {
       res.status(400).json({
@@ -283,25 +309,50 @@ sandboxInstallRouter.post("/install", async (req, res, next) => {
   }
 });
 
+/** The last registry each URL answered, so a blip at GitHub shows the
+ *  marketplace as it last was instead of an error page. Only the browse
+ *  list reads it: an install always fetches fresh, so a version pulled from
+ *  the registry is never installed off an old copy. */
+const REGISTRY_LAST_GOOD = "sandbox-registry-last-good";
+
+type RegistryList = { modules: Array<{ name: string }> };
+type LastGoodRegistry = { registry: RegistryList; fetched_at: string };
+
 /** Browse-the-registry helper for the UI. Returns the same modules.json
  *  the operator-curated registry serves, optionally annotated with
- *  installed-status from the local installed_modules table. */
+ *  installed-status from the local installed_modules table. When the
+ *  registry can't be reached it answers the last copy it read, with
+ *  `stale` saying when that was and why the fetch failed. */
 sandboxInstallRouter.get("/registry", async (req, res, next) => {
   try {
     const registryUrl =
       (typeof req.query.url === "string" ? req.query.url : undefined) ?? DEFAULT_REGISTRY;
-    let registry: { modules: Array<{ name: string }> };
+    let registry: RegistryList;
+    let stale: { fetched_at: string; age_seconds: number; reason: string } | null = null;
     try {
-      registry = (await fetchGithubJson(registryUrl)) as { modules: Array<{ name: string }> };
+      registry = await readRegistryJson<RegistryList>(registryUrl);
+      if (!Array.isArray(registry?.modules)) throw new Error("registry answered without a modules list");
+      await sharedCache.put(REGISTRY_LAST_GOOD, registryUrl, {
+        registry,
+        fetched_at: new Date().toISOString(),
+      } satisfies LastGoodRegistry);
     } catch (e) {
-      // An unreachable/misconfigured registry is an EXPECTED condition on
-      // self-hosted/dev instances — answer 503 with a clear code instead of
-      // bubbling an unhandled 500 (console audit, 2026-06-11). The web's
-      // Marketplace section already renders a friendly banner off this.
-      res.status(503).json({
-        error: { code: "registry_unreachable", message: `Couldn't reach the module registry: ${(e as Error).message}` },
-      });
-      return;
+      const lastGood = await sharedCache.get<LastGoodRegistry>(REGISTRY_LAST_GOOD, registryUrl);
+      if (!lastGood) {
+        // Never read once: an unreachable/misconfigured registry is an
+        // EXPECTED condition on self-hosted/dev instances, so a clear 503
+        // rather than a 500. The Marketplace section renders a banner off it.
+        res.status(503).json({
+          error: { code: "registry_unreachable", message: `Couldn't reach the module registry: ${(e as Error).message}` },
+        });
+        return;
+      }
+      registry = lastGood.registry;
+      stale = {
+        fetched_at: lastGood.fetched_at,
+        age_seconds: Math.max(0, Math.floor((Date.now() - Date.parse(lastGood.fetched_at)) / 1000)),
+        reason: (e as Error).message,
+      };
     }
     const installedRows = await meta
       .selectFrom("installed_modules")
@@ -312,7 +363,7 @@ sandboxInstallRouter.get("/registry", async (req, res, next) => {
       ...m,
       installed: installedByName.get(m.name) ?? null,
     }));
-    res.json({ items });
+    res.json({ items, stale });
   } catch (err) {
     next(err);
   }

@@ -29,13 +29,18 @@ import { beginWrite, outcomeOf } from "./write-identity";
 
 const roles = new Map<string, string>();
 const shared = new Map<string, PortalShares>();
+const readOnlySupport = new Set<string>();
 
 /** `shares`: what the portal shares, sent with a guest's membership. An older
- *  server sends none, and then the server alone judges a read of a share. */
-export function rememberRole(slug: string, role: string, shares?: PortalShares | null): void {
+ *  server sends none, and then the server alone judges a read of a share.
+ *  `readOnlySupport`: this tab is an operator's View as of the workspace, not
+ *  switched to editing, which the server refuses every write. */
+export function rememberRole(slug: string, role: string, shares?: PortalShares | null, opts?: { readOnlySupport?: boolean }): void {
   roles.set(slug, role);
   if (shares) shared.set(slug, shares);
   else shared.delete(slug);
+  if (opts?.readOnlySupport) readOnlySupport.add(slug);
+  else readOnlySupport.delete(slug);
 }
 
 export function roleIn(slug: string): string | null {
@@ -52,13 +57,28 @@ export function refusedForGuest(method: string, path: string): boolean {
 }
 
 /** For a write the page makes on its own, not one a person pressed (a scanned
- *  label asking its shelf to light up): would it be made at all? A guest
- *  changes nothing but what the portal lets them, so the page does not send
- *  it. A write a person asked for still goes, so the server's refusal can
- *  offer to ask for more. */
+ *  label asking its shelf to light up, a live stream's ticket): would it be
+ *  made at all? A guest changes nothing but what the portal lets them, and a
+ *  read-only View as nothing at all, so the page does not send it: the stream
+ *  ticket asked, was refused and asked again for the life of the tab (#9129).
+ *  A write a person asked for still goes, so the server's refusal can offer to
+ *  ask for more. */
 export function makesBackgroundWrites(slug: string): boolean {
-  return roleIn(slug) !== "guest";
+  return roleIn(slug) !== "guest" && !readOnlySupport.has(slug);
 }
+
+/** Is this a write the server would refuse because the tab is a read-only
+ *  View as of the workspace? The same rule as the server's
+ *  (supportSessionRefuses, api/src/middleware/tenant.ts): anything but a read
+ *  to "/orgs/<slug>/...". Refused here, it never leaves the page, so nothing
+ *  the page sends on its own can be refused and sent again for the life of
+ *  the tab the way the record stream's ticket was (#9129). */
+export function refusedForSupportSession(method: string, path: string): boolean {
+  if (SUPPORT_READS.has(method.toUpperCase())) return false;
+  const slug = /^\/orgs\/([^/?#]+)/.exec(path)?.[1];
+  return !!slug && readOnlySupport.has(decodeURIComponent(slug));
+}
+const SUPPORT_READS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /** For a query's `enabled`: may the person in this workspace read this path? */
 export function mayRead(path: string): boolean {
@@ -67,6 +87,9 @@ export function mayRead(path: string): boolean {
 
 /** The server's sentence for the same refusal (api/src/middleware/tenant.ts). */
 export const GUEST_NOT_SHARED = "A guest sees what this workspace shares in its portal, and this is not part of it.";
+
+/** The server's answer to a write in a read-only View as (api/src/middleware/tenant.ts). */
+export const SUPPORT_READ_ONLY = "This is a read-only support session. Enable editing to make changes.";
 
 /** `fetch`, for a module page talking to its workspace: a guest's read the
  *  server would refuse is answered here with the server's own 403, so it never
@@ -90,6 +113,9 @@ export async function workspaceFetch(input: string | URL | Request, init?: Reque
   const path = url.replace(/^[a-z]+:\/\/[^/]+/i, "").replace(/^\/api\/v1(?=\/orgs\/)/, "");
   if (refusedForGuest(method, path)) {
     return new Response(JSON.stringify({ error: { code: "guest_not_shared", message: GUEST_NOT_SHARED } }), { status: 403, headers: { "content-type": "application/json" } });
+  }
+  if (refusedForSupportSession(method, path)) {
+    return new Response(JSON.stringify({ error: { code: "impersonation_read_only", message: SUPPORT_READ_ONLY } }), { status: 403, headers: { "content-type": "application/json" } });
   }
   // The dashboard's snapshot may already hold this read (primed-reads.ts).
   if (path.startsWith("/orgs/")) {

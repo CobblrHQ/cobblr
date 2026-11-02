@@ -15,6 +15,13 @@ export function getShareViewToken(): string | null {
   }
 }
 
+/** Is this tab a preview of someone else's view? Then it writes nothing of
+ *  the account's own (the tour seen, the time zone): the server refuses it,
+ *  and the refusal sheet opened over the share the preview was for (#9135). */
+export function previewingShare(): boolean {
+  return !!getShareViewToken();
+}
+
 export function setShareViewToken(token: string | null): void {
   try {
     if (token) sessionStorage.setItem(KEY, token);

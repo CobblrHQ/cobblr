@@ -89,7 +89,7 @@ export function PortalLayout() {
         className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900/80 backdrop-blur"
         style={skin ? { background: "var(--app-surface)", borderColor: "var(--app-border)" } : undefined}
       >
-        <div className="max-w-5xl mx-auto px-5 py-3 flex items-center gap-3 min-w-0">
+        <div className="max-w-5xl mx-auto pl-[max(1.25rem,var(--inset-left))] pr-[max(1.25rem,var(--inset-right))] py-3 flex items-center gap-3 min-w-0">
           <Link
             to={`/portal/${slug}`}
             className="flex items-center gap-2 hover:opacity-80 transition min-w-0"
@@ -175,7 +175,7 @@ export function PortalLayout() {
         isActive
         onClose={() => setLeaving(false)}
       />
-      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none min-w-0">
+      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none min-w-0 pl-[var(--inset-left)] pr-[var(--inset-right)]">
         <div className="max-w-5xl mx-auto w-full px-5 py-6">
           <Outlet context={{ portalConfig, activeSlug: slug ?? null, skin }} />
         </div>

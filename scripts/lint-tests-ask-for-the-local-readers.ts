@@ -3,7 +3,7 @@
 //
 // THE BUG THIS PREVENTS. a scanned receipt PDF test failed as a product regression on a laptop with no tesseract, while the OCR tests that asked ocrAvailable themselves skipped silently even in CI (#7778, 2026-10-22)
 //
-// THE RULE. A test file (*.test.ts or *.test.tsx under modules/) never calls
+// THE RULE. A test file (*.test.ts or *.test.tsx under modules/ or api/) never calls
 // ocrAvailable(): it asks localReadersForTest(what, { ocr, pdf }), which
 // throws in CI when a reader is missing and, anywhere else, skips with a line
 // saying what was not verified. A mention in a comment does not count.
@@ -11,9 +11,16 @@
 // THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. Only the direct question is
 // refused. A test that needs a reader and asks nothing at all fails on a
 // machine without it, loudly, which is how the eleven poppler tests of #7778
-// were found; that failure is visible, so a lint is not needed for it. The
-// helper itself (local-readers-in-tests.ts) is no test and asks
-// ocrAvailable on everyone's behalf.
+// were found; that failure is visible, so a lint is not needed for it. Visible
+// is not the same as read rightly, though: an api test that read a PDF
+// fixture without asking failed on a rig as "personal", a product verdict,
+// and could earn no Rig-ran line (#9124). Such a test now asks
+// localReadersForTest for the case that reads, and passes the Rig-ran gate
+// with a CI-ran line from a CI run. Nothing static tells a test that reads a
+// PDF from one that only uploads one (24 api test files hold a PDF fixture),
+// so that stays a review question, not a rule. The helper itself
+// (local-readers-in-tests.ts) is no test and asks ocrAvailable on
+// everyone's behalf.
 //
 //   npx tsx scripts/lint-tests-ask-for-the-local-readers.ts   (pnpm lint tests-ask-for-the-local-readers)
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -23,7 +30,7 @@ import { onlyChanged } from "./lib/lint-only-files.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
-const ROOTS = ["modules"];
+const ROOTS = ["modules", "api"];
 
 /** One offending place. `line` is 1-based for a clickable path:line. */
 interface Violation {

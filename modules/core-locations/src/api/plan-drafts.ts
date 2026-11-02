@@ -486,8 +486,14 @@ async function revertApplied(
     await setFloorplan(db, m.id, (m.before.floorplan as Record<string, unknown> | null) ?? null);
     places++;
   }
+  // Newest first, the layout's own shelves go before their rack; a place
+  // given a shelf since keeps it, and stays with it (#4115).
   let deleted = 0;
-  for (const c of [...applied.created].reverse()) if (await deletePlace(orgId, c.id, userId)) deleted++;
+  for (const c of [...applied.created].reverse()) {
+    const gone = await deletePlace(orgId, c.id, userId, undefined, true);
+    if (gone === "places_inside") leftWhereTheyAre++;
+    else if (gone) deleted++;
+  }
   return { things, places, deleted, leftWhereTheyAre };
 }
 

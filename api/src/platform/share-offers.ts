@@ -36,7 +36,7 @@ import { lookup, resolveKind } from "./entities.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
 import { PROVENANCE_FIELDS } from "@cobblr/platform-contract/provenance-fields";
 import { fileIdFromRawPath } from "./file-paths.js";
-import { addShareEndingPass, enqueueShareOp, getShareLink, registerShareOp, type ShareLinkRow } from "./share-sync.js";
+import { addShareEndingPass, enqueueShareOp, flushShareLink, getShareLink, queueShareOpIn, registerShareOp, type ShareLinkRow } from "./share-sync.js";
 
 type RecordSource = { org_id: string; kind: string; id: string };
 type InboxSource = { org_id: string; inbox_id: string };
@@ -311,21 +311,32 @@ export async function decideOffer(
   opts: { userId: string; into?: string | null },
 ): Promise<{ ok: true; landed?: { orgId: string; inboxId: string } } | { ok: false; error: string }> {
   const found = await inRowFor(orgId, inboxId);
-  if (!found) return { ok: false, error: "That is not an offer here." };
+  if (!found) {
+    // Taken into a workspace of the person's own, and the api stopped after
+    // the commit before the share copy went: the copy still shows, and
+    // touching it finishes the move rather than refusing (#9071).
+    const left = await takenFromHere(orgId, inboxId);
+    if (!left) return { ok: false, error: "That is not an offer here." };
+    await finishTakeInto(orgId, inboxId, left);
+    return { ok: true, landed: { orgId: left.org_id, inboxId: left.inbox_id } };
+  }
   // One answer per offer: two tabs pressing Take together each found it open
   // and each landed a copy (#7861). The offer's row is held for the length of
   // the answer, and its status read again once held, so the second waits and
   // is told it was already taken. No key update, so the rows that point at it
   // can still be written while it is held.
+  const byName = await nameOf(opts.userId);
   const answered = await meta.transaction().execute(async (trx) => {
     const held = await trx.selectFrom("share_offers").select("status").where("id", "=", found.id).forNoKeyUpdate().executeTakeFirst();
     if (!held || !open(held.status)) return { done: false as const, status: held?.status ?? found.status };
     const r = await answerOffer(trx, orgId, inboxId, { ...found, status: held.status }, decision, opts);
+    if (r.ok) await queueShareOpIn(trx, found.link_id!, "offer.decided", { offer_id: found.peer_offer_id, decision, by_name: byName }, `offer.decided:${found.id}:${decision}:${Date.now()}`);
     return { done: true as const, ...r };
   });
   if (!answered.done) return { ok: false, error: `That offer was already ${answered.status}.` };
   if (!answered.ok) return answered;
-  await enqueueShareOp(found.link_id!, "offer.decided", { offer_id: found.peer_offer_id, decision, by_name: await nameOf(opts.userId) }, `offer.decided:${found.id}:${decision}:${Date.now()}`);
+  if (answered.landed && answered.landed.orgId !== orgId) await finishTakeInto(orgId, inboxId, { org_id: answered.landed.orgId, inbox_id: answered.landed.inboxId });
+  void flushShareLink(found.link_id!).catch((err) => console.error(`[share] flush of ${found.link_id} failed:`, err));
   return { ok: true, ...(answered.landed ? { landed: answered.landed } : {}) };
 }
 
@@ -347,6 +358,12 @@ async function answerOffer(
       if (!member) return { ok: false, error: "You can only take it into a workspace of yours." };
       const thing = await it.asThing(orgId, inboxId);
       if (!thing) return { ok: false, error: "That offer is no longer in the inbox." };
+      // Received before the commit, and safe to receive again: a second
+      // receive of the same offer returns the row the first made. The share
+      // copy goes, and the new copy is marked taken, only once the answer is
+      // committed (finishTakeInto), so an answer that fails to commit leaves
+      // the offer open with the thing still in the share space, and a retry
+      // makes no second copy (#9071).
       const [moved] = await it.receive(opts.into, {
         session: { key: `share-take:${row.id}`, label: `From ${row.peer_name ?? "a share"}`, from: row.peer_name ?? "" },
         things: [{ offer_id: row.id, thing }],
@@ -354,11 +371,8 @@ async function answerOffer(
         acquiredOn: await platform().accounts.dayFor(opts.userId),
         as: await routeAs(opts.into, opts.userId),
       });
-      await it.remove(orgId, inboxId);
-      if (moved) {
-        landed = { org_id: opts.into, inbox_id: moved.inbox_id };
-        await it.mark(opts.into, moved.inbox_id, "taken");
-      }
+      if (!moved) return { ok: false, error: "That could not be taken into your workspace." };
+      landed = { org_id: opts.into, inbox_id: moved.inbox_id };
     } else {
       await it.mark(orgId, inboxId, "taken");
     }
@@ -373,6 +387,32 @@ async function answerOffer(
     .where("id", "=", row.id)
     .execute();
   return { ok: true, ...(landed.org_id !== orgId ? { landed: { orgId: landed.org_id, inboxId: landed.inbox_id } } : {}) };
+}
+
+/** Where a share copy's offer went, when it was taken into another workspace. */
+async function takenFromHere(orgId: string, inboxId: string): Promise<Landed | null> {
+  const offerId = (await intake().state(orgId, inboxId)).offer_id;
+  if (!offerId) return null;
+  const row = await meta
+    .selectFrom("share_offers as o")
+    .innerJoin("share_links as l", "l.id", "o.link_id")
+    .select(["o.landed"])
+    .where("o.id", "=", offerId)
+    .where("o.direction", "=", "in")
+    .where("o.status", "=", "taken")
+    .where("l.org_id", "=", orgId)
+    .executeTakeFirst();
+  const landed = (row?.landed ?? null) as Landed | null;
+  return landed && landed.org_id !== orgId && landed.inbox_id ? landed : null;
+}
+
+/** The two writes a take into a person's own workspace makes once its answer
+ *  is committed: the new copy marked taken, the share copy gone. Each is safe
+ *  to repeat, so the next touch of a share copy left behind runs them again. */
+async function finishTakeInto(shareOrgId: string, shareInboxId: string, into: { org_id: string; inbox_id: string }): Promise<void> {
+  const it = intake();
+  await it.mark(into.org_id, into.inbox_id, "taken");
+  await it.remove(shareOrgId, shareInboxId);
 }
 
 async function offerRow(orgId: string, offerId: string) {
@@ -417,9 +457,12 @@ export async function withdrawOffer(orgId: string, offerId: string, userId: stri
   }
   if (!row || row.direction !== "out" || !(await mayManageOffer(orgId, userId, offerId))) return { ok: false, error: "That is not an offer you made." };
   if (!open(row.status)) return { ok: false, error: `It was already ${row.status}.` };
-  await meta.updateTable("share_offers").set({ status: "withdrawn", decided_at: new Date() }).where("id", "=", row.id).execute();
+  await meta.transaction().execute(async (trx) => {
+    await trx.updateTable("share_offers").set({ status: "withdrawn", decided_at: new Date() }).where("id", "=", row.id).execute();
+    await queueShareOpIn(trx, row.link_id!, "offer.withdrawn", { offer_id: row.id }, `offer.withdrawn:${row.id}`);
+  });
   await clearSourceMark(row.source as Source);
-  await enqueueShareOp(row.link_id!, "offer.withdrawn", { offer_id: row.id }, `offer.withdrawn:${row.id}`);
+  void flushShareLink(row.link_id!).catch((err) => console.error(`[share] flush of ${row.link_id} failed:`, err));
   return { ok: true };
 }
 
@@ -439,8 +482,11 @@ export async function sendBack(orgId: string, offerId: string, userId: string): 
       if (!r.ok) return { ok: false, error: r.error };
     }
   }
-  await meta.updateTable("share_offers").set({ status: "returned", decided_at: new Date() }).where("id", "=", row.id).execute();
-  await enqueueShareOp(row.link_id!, "offer.returned", { offer_id: row.peer_offer_id }, `offer.returned:${row.id}`);
+  await meta.transaction().execute(async (trx) => {
+    await trx.updateTable("share_offers").set({ status: "returned", decided_at: new Date() }).where("id", "=", row.id).execute();
+    await queueShareOpIn(trx, row.link_id!, "offer.returned", { offer_id: row.peer_offer_id }, `offer.returned:${row.id}`);
+  });
+  void flushShareLink(row.link_id!).catch((err) => console.error(`[share] flush of ${row.link_id} failed:`, err));
   return { ok: true };
 }
 
@@ -486,14 +532,44 @@ async function callOffOpenOffers(link: ShareLinkRow): Promise<void> {
     .where("status", "in", ["offered", "maybe"])
     .execute();
   for (const r of rows) {
-    const called = await meta.updateTable("share_offers").set({ status: "withdrawn", decided_at: new Date() }).where("id", "=", r.id).where("status", "in", ["offered", "maybe"]).executeTakeFirst();
-    if (!Number(called.numUpdatedRows)) continue;
+    // Where it landed as this call-off leaves it, not as first read: an
+    // arrival is in the inbox before its landing is recorded (#7711). One
+    // recorded after this, the landing sees called off and removes (#9133).
+    const called = await meta.updateTable("share_offers").set({ status: "withdrawn", decided_at: new Date() }).where("id", "=", r.id).where("status", "in", ["offered", "maybe"]).returning(["landed"]).executeTakeFirst();
+    if (!called) continue;
     if (r.direction === "out") await clearSourceMark(r.source as Source | null);
-    else {
-      const landed = r.landed as Landed | null;
-      if (landed && (await intake().state(landed.org_id, landed.inbox_id)).status === "waiting") await intake().remove(landed.org_id, landed.inbox_id);
-    }
+    else await removeWaitingArrival(called.landed as Landed | null);
   }
+}
+
+/** An unanswered arrival leaves the inbox; one already answered stays.
+ *  Answers whether it went. */
+async function removeWaitingArrival(landed: Landed | null): Promise<boolean> {
+  if (!landed || (await intake().state(landed.org_id, landed.inbox_id)).status !== "waiting") return false;
+  await intake().remove(landed.org_id, landed.inbox_id);
+  return true;
+}
+
+/** Arrivals in this workspace's inbox whose offer an ended share called off
+ *  before #9133, removed: each still waits, an offer nobody can answer.
+ *  Only offers decided before `since` (heal-called-off-arrivals.ts). */
+export async function healCalledOffArrivalsIn(orgId: string, since: Date): Promise<number> {
+  const rows = await meta
+    .selectFrom("share_offers as o")
+    .innerJoin("share_links as l", "l.id", "o.link_id")
+    .select(["o.landed"])
+    .where("l.org_id", "=", orgId)
+    .where("o.direction", "=", "in")
+    .where("o.status", "=", "withdrawn")
+    .where("o.landed", "is not", null)
+    .where("o.decided_at", "<", since)
+    .execute();
+  let removed = 0;
+  for (const r of rows) {
+    const landed = r.landed as Landed | null;
+    if (landed?.org_id === orgId && (await removeWaitingArrival(landed))) removed++;
+  }
+  return removed;
 }
 
 async function clearSourceMark(src: Source | null): Promise<void> {
@@ -677,7 +753,13 @@ export function registerShareOfferOps(): void {
       as: await routeAs(link.org_id),
     });
     await heldAt(link.org_id, "landing", thing.name);
-    if (landed) await meta.updateTable("share_offers").set({ landed: JSON.stringify({ org_id: link.org_id, inbox_id: landed.inbox_id }) as never }).where("id", "=", row.id).execute();
+    if (!landed) return;
+    const at: Landed = { org_id: link.org_id, inbox_id: landed.inbox_id };
+    // Recorded with the status as it stands: a share that ended while this
+    // landed called the offer off before it knew where (#9133). One taken in
+    // the gap stays, waiting to be filed (#7711).
+    const recorded = await meta.updateTable("share_offers").set({ landed: JSON.stringify(at) as never }).where("id", "=", row.id).returning(["status"]).executeTakeFirst();
+    if (recorded?.status === "withdrawn") await removeWaitingArrival(at);
   });
 
   // The other side answered one of ours.

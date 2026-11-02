@@ -35,7 +35,7 @@ export function ReflowStation({ slug, machineId, orderId, api }: { slug: string;
   const agreed = await confirm({ title: "Stop this reflow run?", message: run?.model === "t962-ue" ? "Send Stop to the oven and keep the interrupted run for review." : "Stop the oven at its own controls, then confirm it has stopped. This records the interruption and stops bridge monitoring.", confirmLabel: "Confirm stop" });
   if (agreed) stop.mutate(async () => { await call("builds:stop-reflow", args()); });
  }
- return <main id="main-content" className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4"><header className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold flex-1">Reflow station</h1><Link className={button} to="/machines">Machines</Link></header>
+ return <main id="main-content" className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]"><header className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold flex-1">Reflow station</h1><Link className={button} to="/machines">Machines</Link></header>
  {order.isError && <QueryError what="the oven work order" onRetry={() => void order.refetch()} />}
  {!run && order.data && <p>Prepare a paste profile and oven on this work order first.</p>}
  {run && !belongs && <p role="alert">This batch belongs to another oven. Open its station from the work order.</p>}

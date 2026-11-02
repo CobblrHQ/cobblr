@@ -301,6 +301,7 @@ export async function invokeAction(
   actionId: string,
   args: Record<string, unknown>,
   entity?: { kind: string; id: string },
+  undo_id?: string,
 ): Promise<ActionOutcome> {
   try {
     const res = await http<{ ok: boolean; result: ActionOutcome }>(session, org(session, "/actions/invoke"), {
@@ -308,6 +309,7 @@ export async function invokeAction(
       body: {
         actionId,
         args,
+        ...(undo_id ? { undo_id } : {}),
         ...(entity ? { entityKind: entity.kind, entityId: entity.id } : {}),
       },
     });

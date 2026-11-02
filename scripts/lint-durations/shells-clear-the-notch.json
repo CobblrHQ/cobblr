@@ -1,0 +1,10 @@
+{
+  "lint": "lint:shells-clear-the-notch",
+  "run": "node scripts/lint-shells-clear-the-notch.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 696,
+  "recorded": "2026-11-02",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

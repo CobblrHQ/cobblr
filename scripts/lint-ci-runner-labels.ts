@@ -86,7 +86,11 @@ const B550_LABELS = new Set(["ci-test", "bake-b550", "ci-walk", "ci-long", "nigh
 // UBUNTU-LATEST HAS NO DOCKER (2026-11-01, server-setup org-light-a6): the org's short ubuntu-latest jobs got a runner
 // on the A6 that the admission gate never pauses, so it is charged only while a job runs, and its jobs get no docker
 // socket: a build or a container one started through the host's docker would sit outside every cap the gate books.
-// A job that runs docker asks for a label whose runner is charged for it (light, docker-build).
+// A job that runs docker asks for a label whose runner is charged for it (docker-build).
+// LIGHT JOINED IT (2026-11-02, #6226): the gate now holds org-a6 at its largest reserve (the bake's 4096 MB beyond its
+// 2048) from its let-in, so a 7-s gate job there cost 6144 MB; [light] moved to the same never-paused runner. The labels
+// that runner serves are listed here; server-setup's a6-admission test keeps them off every runner with a socket.
+const NO_DOCKER_LABELS = new Set(["ubuntu-latest", "light"]);
 const USES_DOCKER = /\bdocker(?:\s+compose|-compose|\s+(?:build|buildx|run|pull|login|exec|create|start|load))\b/;
 
 // A SCHEDULED RUN NEVER TAKES A FAST LANE'S RUNNER (#6226, 2026-10-25): at 07:15Z ci-impact's shard test-4 took z87's one
@@ -217,9 +221,9 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
       const what = publishesIn(jobBody(src.split("\n"), i));
       if (what) errors.push(`.forgejo/workflows/${f}:${i + 1} runs on "${label}", which the test-only b550 carries (bad RAM), and the job publishes (${what}): a flipped bit would ship. Run it on an A6-only label (ci-e2e for the test image), or say why on the line: # b550-ok: <why>.`);
     }
-    if (label === "ubuntu-latest") {
+    if (NO_DOCKER_LABELS.has(label)) {
       const what = USES_DOCKER.exec(jobBody(src.split("\n"), i))?.[0];
-      if (what) errors.push(`.forgejo/workflows/${f}:${i + 1} runs on "ubuntu-latest" and the job runs docker (${what}): that label's never-paused A6 runner gives its jobs no docker socket, since a build or container started there sits outside every cap. Use \`runs-on: light\` (or docker-build for an image build).`);
+      if (what) errors.push(`.forgejo/workflows/${f}:${i + 1} runs on "${label}" and the job runs docker (${what}): that label's never-paused A6 runner gives its jobs no docker socket, since a build or container started there sits outside every cap. Use \`runs-on: docker-build\`, whose runner the gate charges for it.`);
     }
     const inLane = RELEASE_LANE_WORKFLOWS.includes(f);
     if (label === "release" && !inLane) {

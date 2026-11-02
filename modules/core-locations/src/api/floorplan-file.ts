@@ -256,8 +256,12 @@ export async function importFloorplan(orgId: string, plan: FloorplanFileT, opts:
 
 /** Undo an import: each place it updated back to the layout it had, each it
  *  made deleted (newest first; a thing put in one since stays in the
- *  workspace with no place set, as any delete leaves it). */
-export async function undoImport(orgId: string, result: Pick<ImportResult, "created" | "updated">, userId: string | null): Promise<{ restored: number; deleted: number; note: string }> {
+ *  workspace with no place set, as any delete leaves it). The ids come back
+ *  from whoever runs the undo, so a place with places still inside is kept:
+ *  newest first, the import's own shelves and racks are gone before their
+ *  room, and a room it never made, or one given a shelf since, stays. That
+ *  is the line a member's delete holds (#4115). */
+export async function undoImport(orgId: string, result: Pick<ImportResult, "created" | "updated">, userId: string | null): Promise<{ restored: number; deleted: number; kept: number; note: string }> {
   const db = (await platform().tenants.getDb(orgId)) as unknown as Db;
   let restored = 0;
   for (const u of result.updated) {
@@ -269,11 +273,16 @@ export async function undoImport(orgId: string, result: Pick<ImportResult, "crea
     restored++;
   }
   let deleted = 0;
+  let kept = 0;
   for (const id of [...result.created].reverse()) {
     const still = await db.selectFrom("core_locations_locations").select("id").where("id", "=", id).executeTakeFirst();
-    if (still && (await deletePlace(orgId, id, userId))) deleted++;
+    if (!still) continue;
+    const gone = await deletePlace(orgId, id, userId, undefined, true);
+    if (gone === "places_inside") kept++;
+    else if (gone) deleted++;
   }
-  return { restored, deleted, note: `Took back the import: ${deleted} made, ${restored} put back as they were.` };
+  const keptNote = kept ? ` Kept ${kept} with places inside that the import did not make.` : "";
+  return { restored, deleted, kept, note: `Took back the import: ${deleted} made, ${restored} put back as they were.${keptNote}` };
 }
 
 /** A place and everything drawn under it, as cobblr-floorplan/1. `rootId` is a

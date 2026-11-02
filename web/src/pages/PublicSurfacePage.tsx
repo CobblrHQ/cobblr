@@ -279,7 +279,7 @@ function PublicShell({
   return (
     <div className={`min-h-screen bg-subtle dark:bg-slate-950 text-content dark:text-mortar-100 ${themeClass}`}>
       <SkipToContent />
-      <header className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-6 py-4">
+      <header className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900 pl-[max(1.5rem,var(--inset-left))] pr-[max(1.5rem,var(--inset-right))] py-4">
         <div className="max-w-6xl mx-auto flex items-center gap-3">
           <CobblestoneMark size={26} />
           <span className="font-display font-extrabold text-content dark:text-mortar-100">
@@ -299,7 +299,7 @@ function PublicShell({
           </span>
         </div>
       </header>
-      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none max-w-6xl mx-auto px-6 py-8">{children}</main>
+      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none max-w-6xl mx-auto px-6 py-8 pl-[max(1.5rem,var(--inset-left))] pr-[max(1.5rem,var(--inset-right))]">{children}</main>
     </div>
   );
 }

@@ -65,7 +65,7 @@ const stationTitles: Readonly<Record<string, string>> = {
 function UnavailableMachineStation({ kind, error, refused }: { kind?: string | null; error?: unknown; refused?: boolean }) {
   const title = kind && Object.hasOwn(stationTitles, kind) ? stationTitles[kind]! : "Machine station";
   usePageTitle(title);
-  return <><SkipToContent /><main id={MAIN_ID} className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
+  return <><SkipToContent /><main id={MAIN_ID} className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]">
     <h1 className="text-2xl font-semibold">{title}</h1>
     {refused ? <p>Only an admin, or an operator who runs the machines here, can use a machine station.</p> : error ? <p role="alert">{errorText(error)}</p> : <p>This machine has no station screen yet.</p>}
     <Link className={button} to="/digifab">Exit to the fleet</Link>
@@ -74,7 +74,7 @@ function UnavailableMachineStation({ kind, error, refused }: { kind?: string | n
 
 function BenchMachineStation({slug,machineId}:{slug:string;machineId?:string|null}) {
   usePageTitle("Bench station");
-  return <><SkipToContent/><main id={MAIN_ID} className="mx-auto max-w-3xl p-4 space-y-4"><h1 className="text-xl font-semibold">Bench station</h1>{machineId?<BenchInstrument slug={slug} machineId={machineId} station/>:<>
+  return <><SkipToContent/><main id={MAIN_ID} className="mx-auto max-w-3xl p-4 space-y-4 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))]"><h1 className="text-xl font-semibold">Bench station</h1>{machineId?<BenchInstrument slug={slug} machineId={machineId} station/>:<>
    <p>Link this instrument to a machine record before collecting readings: in Devices, open the instrument's connection and choose its machine under "link to machine".</p>
    <div className="flex flex-wrap gap-2"><Link className={button} to="/configuration/devices?tab=machines">Link it in Devices</Link><Link className={button} to="/digifab">Exit to the fleet</Link></div>
   </>}</main></>;
@@ -177,7 +177,7 @@ function LaserMachineStationPage() {
   };
   const saveFile = (tag: LaserMaterialTag) => run(async () => { if (!library) return; await api.renameDigifabLibrary(slug, library.id, { laser_material: tag }); setEditFile(false); await q.refetch(); });
 
-  return <><SkipToContent /><main id={MAIN_ID} tabIndex={-1} className="min-h-screen bg-surface text-content p-4 sm:p-6 max-w-5xl mx-auto space-y-5" data-testid="machine-station">
+  return <><SkipToContent /><main id={MAIN_ID} tabIndex={-1} className="min-h-screen bg-surface text-content p-4 sm:p-6 max-w-5xl mx-auto space-y-5 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]" data-testid="machine-station">
     <GlobalScanWedge activeSlug={slug} />
     <header className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">

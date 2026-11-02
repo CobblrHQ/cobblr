@@ -29,7 +29,7 @@ export function NoWorkspacePage() {
   const [creating, setCreating] = useState(false);
   const [gone] = useState(takeGoneWorkspace);
   return (
-    <main id={MAIN_ID} tabIndex={-1} data-testid="no-workspace" className="min-h-full flex items-center justify-center p-6 focus:outline-none">
+    <main id={MAIN_ID} tabIndex={-1} data-testid="no-workspace" className="min-h-full flex items-center justify-center p-6 focus:outline-none pl-[max(1.5rem,var(--inset-left))] pr-[max(1.5rem,var(--inset-right))]">
       <SkipToContent />
       <div className="w-full max-w-md space-y-6">
         <div className="flex items-center gap-3">

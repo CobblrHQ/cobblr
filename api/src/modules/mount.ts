@@ -5,7 +5,7 @@
 // tenant resolution. A module reaches another through
 // platform().entities, an action or an event, never by calling its router.
 
-import type { Router, Request, Response, NextFunction } from "express";
+import { Router as makeRouter, type IRouter, type Router, type Request, type Response, type NextFunction } from "express";
 import type { Application } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -36,7 +36,11 @@ import { observeInstanceHistory, observeModuleHistory } from "../platform/histor
 import { observeInstanceSaves, observeModuleSaves } from "../platform/entity-saved.js";
 
 const primaryRouters = new Map<string, Router>();
-let appRef: Application | null = null;
+/** Where a module installed after boot is mounted. Boot puts it in the
+ *  module slot, ahead of completeApp's catch-all 404; a router added to the
+ *  app itself after boot would sit behind that 404 and never answer until a
+ *  restart. */
+let lateModules: Router | null = null;
 
 
 /** Does this module answer /instances/:name/items at all? A caller in this
@@ -229,17 +233,18 @@ function explainModuleOff(req: Request, res: Response, next: NextFunction): void
 export async function mountModules(app: Application): Promise<{
   mounted: string[];
 }> {
-  appRef = app;
   const mounted: string[] = [];
   for (const entry of listEntries()) {
     if (await mountSingleEntry(app, entry)) mounted.push(entry.manifest.name);
   }
+  lateModules = makeRouter();
+  app.use(lateModules);
   // From here the registries the bundles fill are known, and "none" means none.
   markModulesMounted();
   return { mounted };
 }
 
-async function mountSingleEntry(app: Application, entry: ReturnType<typeof listEntries>[number]): Promise<boolean> {
+async function mountSingleEntry(app: IRouter, entry: ReturnType<typeof listEntries>[number]): Promise<boolean> {
   const { manifest } = entry;
   if (mountedNames.has(manifest.name)) return false;
   if (!manifest.api) return false;
@@ -280,7 +285,7 @@ async function mountSingleEntry(app: Application, entry: ReturnType<typeof listE
  *  true if the mount was performed; false if the module is already
  *  mounted or has no api(). */
 export async function mountNewlyRegistered(moduleName: string): Promise<boolean> {
-  if (!appRef) {
+  if (!lateModules) {
     console.error(`[modules] cannot mount ${moduleName}: app not initialised`);
     return false;
   }
@@ -289,5 +294,5 @@ export async function mountNewlyRegistered(moduleName: string): Promise<boolean>
     console.error(`[modules] cannot mount ${moduleName}: not in registry`);
     return false;
   }
-  return mountSingleEntry(appRef, entry);
+  return mountSingleEntry(lateModules, entry);
 }

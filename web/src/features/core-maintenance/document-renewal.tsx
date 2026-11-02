@@ -1,7 +1,7 @@
 import { renewalDocumentTypes } from "@cobblr/platform-contract/renewal-document-types";
 import { useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MoneyInput, runAction, useMoneyCurrency } from "@cobblr/platform-web";
+import { MoneyInput, runAction, runUndoSteps, undoStepsOf, type UndoStep, useMoneyCurrency } from "@cobblr/platform-web";
 import type { PersonalDocumentRead } from "@cobblr/platform-contract/personal-documents";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { dayLabel } from "@cobblr/platform-contract/day";
@@ -26,7 +26,7 @@ export function DocumentRenewalCard({ slug, read, file, folder }: { slug: string
   const [newCar, setNewCar] = useState(false);
   const [collection, setCollection] = useState("");
   const [carName, setCarName] = useState([fields.year, fields.make, fields.model].filter(Boolean).join(" "));
-  const [done, setDone] = useState<{ summary: string; undo: Array<{ action_id: string; args: Record<string, unknown> }> } | null>(null);
+  const [done, setDone] = useState<{ summary: string; undo: UndoStep[] } | null>(null);
   const [undone, setUndone] = useState(false);
   const identity = { vin: fields.vin, plate: fields.plate, make: fields.make, model: fields.model, year: fields.year };
   const planKey = ["document-renewal-plan", slug, id];
@@ -63,12 +63,12 @@ export function DocumentRenewalCard({ slug, read, file, folder }: { slug: string
       previous_expiry: previousExpiry, new_expiry: fields.expires, ...(fields.amount ? { cost: Number(fields.amount) } : {}), reference: fields.reference || "", folder: folderChoice, currency,
     } });
     const result = outcome.result as { summary?: string };
-    setDone({ summary: result.summary || `${declaration.label} renewed. The original is in your Vault.`, undo: outcome.undo as Array<{ action_id: string; args: Record<string, unknown> }> || [] });
+    setDone({ summary: result.summary || `${declaration.label} renewed. The original is in your Vault.`, undo: undoStepsOf(outcome.undo) });
   } });
   const undo = useMutation({ mutationFn: async () => {
     // NO-UNDO: This press runs the issued Undo and offers no Undo of its own.
     // PRESS-ARGS: The action door issues the complete Undo arguments for this confirmed renewal.
-    for (const step of done?.undo ?? []) await runAction(api, qc, slug, { actionId: step.action_id, args: step.args });
+    await runUndoSteps(body => runAction(api, qc, slug, body), done?.undo ?? []);
     setUndone(true);
   } });
   const error = confirm.error || create.error || undo.error || plan.error || folders.error;

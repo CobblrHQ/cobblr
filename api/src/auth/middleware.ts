@@ -5,6 +5,7 @@
 // tenant routing (milestone 3). Here we just establish "who is this
 // person and are they still active."
 
+import { shareViewPathAllowed, SHARE_VIEW_BLOCKED, SHARE_VIEW_READ_ONLY } from "@cobblr/platform-contract/share-view";
 import { isMcpProxyCall } from "./mcp-proxy.js";
 import { isSelfCall, selfCallAssistant } from "../platform/self-fetch.js";
 import type { NextFunction, Request, Response } from "express";
@@ -321,17 +322,9 @@ export function mcpWritePathAllowed(method: string, originalUrl: string, slug: s
  *  words in Cobb's mouth. */
 const MCP_NARRATE_PATH = "/modules/core-ai/chat/turns/open/steps";
 
-/** What a View as grant may reach: reads of its one workspace, the account
- *  read the app starts from (answered narrowed, me.ts), and ending itself. */
-export function shareViewPathAllowed(method: string, originalUrl: string, slug: string): boolean {
-  const path = (originalUrl.split("?")[0] ?? "").replace(/\/+$/, "");
-  if (path.includes("..")) return false;
-  if (method === "POST") return path === "/api/v1/share-view/end" || path === "/api/v1/share-view/renew";
-  if (method !== "GET" && method !== "HEAD") return false;
-  const safe = slug.replace(/[^a-z0-9-]/gi, "");
-  if (!safe) return false;
-  return path === "/api/v1/me" || path === `/api/v1/orgs/${safe}` || path.startsWith(`/api/v1/orgs/${safe}/`);
-}
+/** What a View as grant may reach: one rule with the web's client
+ *  (@cobblr/platform-contract/share-view). */
+export { shareViewPathAllowed };
 
 /** Reads that ask a model unless told `ai=0`: the grant admits them only
  *  with it, so a read token never spends a model call (get_scan_item's
@@ -514,15 +507,8 @@ export async function requireAuth(
         res.status(403).json({
           error: {
             code: "share_view_read_only",
-            message: "Viewing as someone is read-only.",
-            blocked: {
-              sentence: "This is a read-only preview of what they see, so nothing can be changed here.",
-              remedies: [],
-              requestable: false,
-              reason: "Exit the view to make changes in your own workspace.",
-              approvers: { count: 0, names: [] },
-              pending: null,
-            },
+            message: SHARE_VIEW_READ_ONLY,
+            blocked: SHARE_VIEW_BLOCKED,
           },
         });
         return;

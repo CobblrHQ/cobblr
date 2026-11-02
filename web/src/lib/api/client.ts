@@ -8,12 +8,13 @@ import { getImpersonationToken } from "../impersonation";
 import { forgetDashboardCopies } from "../../dashboard/device-copy";
 import { UploadError, beginWrite, isAWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
+import { SHARE_VIEW_BLOCKED, SHARE_VIEW_READ_ONLY, shareViewPathAllowed } from "@cobblr/platform-contract/share-view";
 import { EDITED_FROM_HEADER } from "@cobblr/platform-contract/edited-from";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { counted } from "../in-flight";
 import { AI_AVAILABILITY_WRITE } from "../ai-availability-keys";
 import { awaitBlockedAction, carriesOnItself, isMutating, raiseBlockedAction, refusedRequestFor } from "../blocked-action";
-import { GUEST_NOT_SHARED, refusedForGuest } from "../acting-role";
+import { GUEST_NOT_SHARED, SUPPORT_READ_ONLY, refusedForGuest, refusedForSupportSession } from "../acting-role";
 import { isPageLeaving } from "../page-leaving";
 import { busySentence, fetchThroughUpdating, parseRetryAfter } from "../request-wait";
 import { markSandboxEnded } from "../sandbox-session";
@@ -322,6 +323,11 @@ async function sendRequest<T>(
   const byAMutation = madeByAMutation();
   // A guest's read the server would refuse is refused here, unsent (acting-role.ts).
   if (refusedForGuest(method, path)) throw new ApiError(403, "guest_not_shared", GUEST_NOT_SHARED);
+  // What a share's View as may not ask is refused here, unsent, by the
+  // server's own rule; so is a write a read-only support session would be
+  // refused (#9129).
+  if (getShareViewToken() && !shareViewPathAllowed(method, `/api/v1${path}`, null)) throw new ApiError(403, "share_view_read_only", SHARE_VIEW_READ_ONLY, undefined, SHARE_VIEW_BLOCKED);
+  if (refusedForSupportSession(method, path)) throw new ApiError(403, "impersonation_read_only", SUPPORT_READ_ONLY);
   // The page is going, with other credentials than it ran on (leaving View
   // as, opening a share's View as): it asks nothing more (page-leaving.ts).
   if (isPageLeaving()) return new Promise<T>(() => {});

@@ -72,14 +72,17 @@ export async function waitSettled(page, { capMs = 8000, holdMs = 750 } = {}) {
  *  screen: an Undo is judged, then pressed, before it goes. */
 export const FEEDBACK_MARGIN_MS = 4000;
 
-/** How long until the soonest toast shown since `since` (the page's clock)
- *  goes by itself, in ms, or null when none is on screen. Run in the page:
- *  each card says when it was shown and when it goes
- *  (packages/platform-web/src/ToastContext.tsx). */
-export function feedbackLeftInPage(since) {
+/** How long until the soonest toast shown since `since` (the page's clock),
+ *  or an earlier one whose button a later step presses, goes by itself, in ms,
+ *  or null when none is on screen. Run in the page: each card says when it was
+ *  shown and when it goes (packages/platform-web/src/ToastContext.tsx).
+ *  @param {number | { since: number, presses?: string[] }} at */
+export function feedbackLeftInPage(at) {
+  const { since, presses = [] } = typeof at === "number" ? { since: at } : at;
   let soonest = null;
   for (const el of document.querySelectorAll("[data-goes-at]")) {
-    if (Number(el.getAttribute("data-shown-at")) < since) continue;
+    const pressedLater = [...el.querySelectorAll("button")].some((b) => presses.includes((b.textContent ?? "").trim()));
+    if (Number(el.getAttribute("data-shown-at")) < since && !pressedLater) continue;
     const left = Number(el.getAttribute("data-goes-at")) - Date.now();
     if (soonest === null || left < soonest) soonest = left;
   }
@@ -87,10 +90,24 @@ export function feedbackLeftInPage(since) {
 }
 
 /** Whether an offer shown since `since` (the page's clock), a toast with its
- *  own button such as an Undo that goes by itself, is still on screen. Run in
- *  the page; the card marks itself (packages/platform-web/src/ToastContext.tsx). */
-export function timedOfferInPage(since) {
-  return [...document.querySelectorAll("[data-timed-offer]")].some((el) => Number(el.getAttribute("data-shown-at")) >= since);
+ *  own button such as an Undo that goes by itself, is still on screen. An
+ *  earlier step's offer counts too when a later step presses its button: a
+ *  cancellation's Undo, pressed after the next step removed a line, went by
+ *  while that step ran 200% text and the notch (#6881). Run in the page; the
+ *  card marks itself (packages/platform-web/src/ToastContext.tsx).
+ *  @param {number | { since: number, presses?: string[] }} at */
+export function timedOfferInPage(at) {
+  const { since, presses = [] } = typeof at === "number" ? { since: at } : at;
+  return [...document.querySelectorAll("[data-timed-offer]")].some(
+    (el) => Number(el.getAttribute("data-shown-at")) >= since || [...el.querySelectorAll("button")].some((b) => presses.includes((b.textContent ?? "").trim())),
+  );
+}
+
+/** The names of the buttons the steps after `stepIndex` press: an offer still
+ *  on screen with one of them is one the walk has yet to press.
+ *  @param {{ steps: { do?: any[] }[] }} spec @param {number} stepIndex */
+export function pressedAfter(spec, stepIndex) {
+  return spec.steps.slice(stepIndex + 1).flatMap((st) => (st.do ?? []).map((a) => a?.click?.name).filter((n) => typeof n === "string"));
 }
 
 /**
@@ -118,14 +135,15 @@ export function autoKindsFor(kinds, { named, offerUp }) {
  * waitFor is what waits for the change it made.
  * @param {any} page
  * @param {number} since the page's Date.now() before the step acted
+ * @param {{ marginMs?: number, settle?: Function, presses?: string[] }} [o] presses: the buttons later steps press (pressedAfter)
  */
-export async function waitSettledWhileFeedbackLasts(page, since, { marginMs = FEEDBACK_MARGIN_MS, settle = waitSettled } = {}) {
+export async function waitSettledWhileFeedbackLasts(page, since, { marginMs = FEEDBACK_MARGIN_MS, settle = waitSettled, presses = [] } = {}) {
   const t0 = Date.now();
   let done = false;
   const settled = settle(page).finally(() => { done = true; });
   const feedbackDue = (async () => {
     while (!done) {
-      const left = await page.evaluate(feedbackLeftInPage, since).catch(() => null);
+      const left = await page.evaluate(feedbackLeftInPage, { since, presses }).catch(() => null);
       if (left !== null && left <= marginMs) return { settled: false, ms: Date.now() - t0, feedback: true };
       await new Promise((r) => setTimeout(r, 100));
     }

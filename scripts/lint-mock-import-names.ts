@@ -9,6 +9,7 @@
 // importer. Variable factories and objects with spreads count as complete.
 // A mock-import-names-exempt: name, name; reason comment immediately above
 // a mock records specific omitted names, so future imports still get checked.
+// Exempt names must still be imported in that graph; removed imports lose theirs.
 //
 // THE BOUNDARY. Whole-module stand-ins keep database pools out of unit tests;
 // requiring importOriginal would defeat that isolation. Mocked modules are
@@ -22,7 +23,7 @@ import { isEmbeddedPayload } from "./lib/embedded-payloads.mjs";
 
 const ROOTS = ["api", "modules", "web/src", "packages", "ops-console/src", "scripts"];
 type Load = (file: string) => string | undefined;
-interface Finding { file: string; line: number; module: string; missing: string[] }
+interface Finding { file: string; line: number; module: string; missing: string[]; stale?: string[] }
 interface Import { module: string; names: string[] }
 
 function parse(file: string, source: string): ts.SourceFile {
@@ -142,7 +143,11 @@ export function checkMockImports(file: string, source: string, load: Load, depen
       }));
       for (const name of required) if (!keys.has(name) && !mock.exempt.has(name)) missing.add(name);
     }
-    if (missing.size) findings.push({ file, line: mock.line, module: mock.module, missing: [...missing].sort() });
+    const stale = [...mock.exempt].filter((name) => !required.has(name)).sort();
+    if (missing.size || stale.length) findings.push({
+      file, line: mock.line, module: mock.module, missing: [...missing].sort(),
+      ...(stale.length ? { stale } : {}),
+    });
   }
   return findings;
 }
@@ -178,9 +183,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     const source = load(resolve(file)) || "";
     if (source.includes("mock")) findings.push(...checkMockImports(file, source, load, dependenciesOf));
   }
-  for (const finding of findings) console.error(`${finding.file}:${finding.line} ${finding.module} mock is missing: ${finding.missing.join(", ")}`);
+  for (const finding of findings) {
+    const location = `${finding.file}:${finding.line} ${finding.module}`;
+    if (finding.missing.length) console.error(`${location} mock is missing: ${finding.missing.join(", ")}`);
+    if (finding.stale?.length) console.error(`${location} mock has stale exemption names: ${finding.stale.join(", ")}`);
+  }
   if (findings.length) {
-    console.error(`lint:mock-import-names: ${findings.length} incomplete mock(s). Define the missing names, or record mock-import-names-exempt: name, name; reason immediately above the mock.`);
+    console.error(`lint:mock-import-names: ${findings.length} invalid mock(s). Remove stale exemption names. Define missing names, or record mock-import-names-exempt: name, name; reason immediately above the mock.`);
     process.exitCode = 1;
   } else console.log("lint:mock-import-names OK");
 }

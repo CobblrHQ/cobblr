@@ -17,7 +17,7 @@ export function OfflineScreen() {
   return (
     <>
     <SkipToContent />
-    <main id={MAIN_ID} tabIndex={-1} data-testid="offline-screen" className="min-h-screen flex items-center justify-center p-6 bg-canvas focus:outline-none">
+    <main id={MAIN_ID} tabIndex={-1} data-testid="offline-screen" className="min-h-screen flex items-center justify-center p-6 bg-canvas focus:outline-none pl-[max(1.5rem,var(--inset-left))] pr-[max(1.5rem,var(--inset-right))]">
       <div className="w-full max-w-sm space-y-4 text-center">
         <div className="flex justify-center">
           <CobblestoneMark size={40} />

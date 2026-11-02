@@ -13,6 +13,7 @@ import { queryShowsKinds } from "@cobblr/platform-web";
 import { RECORD_STREAM_EVENT, type RecordStreamChange } from "@cobblr/platform-contract/record-stream";
 import { api } from "../lib/api";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { makesBackgroundWrites } from "../lib/acting-role";
 import { STREAM_LINGER_MS } from "./useNotificationStream";
 
 const RETRY_MIN_MS = 5_000;
@@ -37,9 +38,12 @@ const streams = new Map<string, { users: number; stop: () => void; linger?: Retu
 
 export function useRecordStream(slug: string | null | undefined, role: string | null | undefined): void {
   const qc = useQueryClient();
+  // A read-only View as is refused the ticket's POST (#9129); asked in render,
+  // so switching it to editing opens the stream.
+  const asks = !!slug && makesBackgroundWrites(slug);
   useEffect(() => {
     if (!slug || typeof EventSource === "undefined") return;
-    if (!roleSatisfies(role, ["member"])) {
+    if (!roleSatisfies(role, ["member"]) || !asks) {
       // Made a guest: the stream another view may still be lingering on is
       // shut now, not when the linger ends (a guest is told no record's
       // changes).
@@ -70,7 +74,7 @@ export function useRecordStream(slug: string | null | undefined, role: string | 
         streams.delete(slug);
       }, STREAM_LINGER_MS);
     };
-  }, [slug, role, qc]);
+  }, [slug, role, qc, asks]);
 }
 
 function openRecordStream(slug: string, qc: QueryClient): () => void {

@@ -35,12 +35,37 @@ export function githubRegistryHeaders(url: string): Record<string, string> {
   return h;
 }
 
+/** A raw file fetched with a token GitHub will not take answers 404, even
+ *  when the file is public, so such a 404 is asked once more without the
+ *  token, and a public file is reached whatever token the environment
+ *  carries. A private index uses the contents API, which is never retried
+ *  bare. `auth` says which request the answer came from. */
+async function githubFetch(url: string, headers: Record<string, string>): Promise<{ res: Response; auth: "token" | "none" }> {
+  const res = await fetch(url, { headers });
+  const auth = headers.Authorization ? "token" : "none";
+  if (res.status !== 404 || auth === "none" || !/^https:\/\/([^/]*\.)?githubusercontent\.com\b/.test(url)) return { res, auth };
+  const { Authorization: _refused, ...bare } = headers;
+  const again = await fetch(url, { headers: bare });
+  if (again.ok) console.warn(`[registry] ${url} answered 404 to the configured token and 200 without it: the token has no access to it`);
+  return again.ok ? { res: again, auth: "none" } : { res, auth };
+}
+
+/** A failed fetch, said with what names its cause: the walk saw a 404 from a
+ *  public registry that answered 200 to every later read, with or without the
+ *  token (#9106). The status, which credentials it went with (never their
+ *  value) and GitHub's own request id travel in the error and the log. */
+function fetchFailed(url: string, got: { res: Response; auth: "token" | "none" }): Error {
+  const said = `fetch ${url} → ${got.res.status} ${got.res.statusText} (auth: ${got.auth}, github request: ${got.res.headers.get("x-github-request-id") ?? "none"})`;
+  console.warn(`[registry] ${said}`);
+  return new Error(said);
+}
+
 /** SSRF-checked GET returning the raw response text. */
 export async function fetchGithubText(url: string): Promise<string> {
   await assertSafeUrl(url);
-  const r = await fetch(url, { headers: githubRegistryHeaders(url) });
-  if (!r.ok) throw new Error(`fetch ${url} → ${r.status} ${r.statusText}`);
-  return r.text();
+  const got = await githubFetch(url, githubRegistryHeaders(url));
+  if (!got.res.ok) throw fetchFailed(url, got);
+  return got.res.text();
 }
 
 /** SSRF-checked GET parsing the response as JSON. */
@@ -52,9 +77,7 @@ export async function fetchGithubJson<T = unknown>(url: string): Promise<T> {
  *  Forces `Accept: octet-stream` so GitHub serves the blob, not metadata. */
 export async function fetchGithubBuffer(url: string): Promise<Buffer> {
   await assertSafeUrl(url);
-  const r = await fetch(url, {
-    headers: { ...githubRegistryHeaders(url), Accept: "application/octet-stream" },
-  });
-  if (!r.ok) throw new Error(`fetch ${url} → ${r.status} ${r.statusText}`);
-  return Buffer.from(await r.arrayBuffer());
+  const got = await githubFetch(url, { ...githubRegistryHeaders(url), Accept: "application/octet-stream" });
+  if (!got.res.ok) throw fetchFailed(url, got);
+  return Buffer.from(await got.res.arrayBuffer());
 }

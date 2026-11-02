@@ -73,6 +73,26 @@ export function authHeaders(url) {
   return h;
 }
 
+// The api's github-registry.ts copy: a raw file fetched with a token GitHub
+// will not take answers 404 even when it is public, so that 404 is asked
+// once more without the token (#9106). The contents API is never retried bare.
+async function githubFetch(url, headers) {
+  const res = await fetch(url, { headers });
+  if (res.status !== 404 || !headers.Authorization || !/^https:\/\/([^/]*\.)?githubusercontent\.com\b/.test(url)) return res;
+  const { Authorization: _refused, ...bare } = headers;
+  const again = await fetch(url, { headers: bare });
+  if (again.ok) console.warn(`[registry] ${url} answered 404 to the configured token and 200 without it: the token is expired or has no access`);
+  if (again.ok) Object.defineProperty(again, "sentAuth", { value: "none" });
+  return again.ok ? again : Object.defineProperty(res, "sentAuth", { value: "token" });
+}
+
+// What names a failed fetch's cause (#9106): its status, which credentials it
+// went with (never their value) and GitHub's own request id.
+function fetchFailed(url, res) {
+  const auth = res.sentAuth ?? (authHeaders(url).Authorization ? "token" : "none");
+  return `fetch ${url} → ${res.status} ${res.statusText} (auth: ${auth}, github request: ${res.headers.get("x-github-request-id") ?? "none"})`;
+}
+
 async function fetchBuffer(url) {
   // file:// is allowed for local fixtures + air-gapped builds.
   if (url.startsWith("file://")) {
@@ -82,8 +102,8 @@ async function fetchBuffer(url) {
   // when Accept is octet-stream — keeps Authorization safe through
   // the redirect chain. Browser-facing release URLs (releases/download/…)
   // also work; undici strips Authorization on cross-origin redirect.
-  const res = await fetch(url, { headers: { ...authHeaders(url), accept: "application/octet-stream" } });
-  if (!res.ok) fail(`fetch ${url} → ${res.status} ${res.statusText}`);
+  const res = await githubFetch(url, { ...authHeaders(url), accept: "application/octet-stream" });
+  if (!res.ok) fail(fetchFailed(url, res));
   return Buffer.from(await res.arrayBuffer());
 }
 
@@ -91,8 +111,8 @@ async function fetchJson(url) {
   if (url.startsWith("file://")) {
     return JSON.parse(readFileSync(fileURLToPath(url), "utf-8"));
   }
-  const res = await fetch(url, { headers: authHeaders(url) });
-  if (!res.ok) fail(`fetch ${url} → ${res.status} ${res.statusText}`);
+  const res = await githubFetch(url, authHeaders(url));
+  if (!res.ok) fail(fetchFailed(url, res));
   return res.json();
 }
 

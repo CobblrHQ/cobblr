@@ -579,15 +579,18 @@ export async function revokeShareLink(orgId: string, linkId: string): Promise<bo
   // The other side hears it as soon as it can be reached: the notice stays
   // queued (the one change a revoked link still sends) until it arrives.
   if (wasActive) {
-    await enqueueShareOp(linkId, REVOKED_OP, {});
     if (link.side === "share") void flushShareLinkNow(linkId).then(() => retireToldShareSpaces(link.org_id)).catch((err) => console.error(`[share] could not retire share space ${link.org_id}:`, err));
+    else void flushShareLink(linkId).catch((err) => console.error(`[share] flush of ${linkId} failed:`, err));
   }
   return true;
 }
 
 async function endLink(link: ShareLinkRow, opts: { keepSpaceToTell?: boolean } = {}): Promise<void> {
   await settleEndingShare(link);
-  await meta.updateTable("share_links").set({ status: "revoked", revoked_at: new Date(), invite_code_hash: null }).where("id", "=", link.id).execute();
+  await meta.transaction().execute(async (trx) => {
+    await trx.updateTable("share_links").set({ status: "revoked", revoked_at: new Date(), invite_code_hash: null }).where("id", "=", link.id).execute();
+    if (opts.keepSpaceToTell) await queueShareOpIn(trx, link.id, REVOKED_OP, {});
+  });
   // Nothing else is said over an ended share.
   await outboxDelete((q) => q.where("link_id", "=", link.id).where("sent_at", "is", null).where("op", "!=", REVOKED_OP)).execute();
   if (link.side === "share") {

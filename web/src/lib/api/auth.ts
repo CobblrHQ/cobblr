@@ -293,6 +293,8 @@ export const authApi = {
         }>;
         installed: { name: string; version: string; source: string } | null;
       }>;
+      /** Set when the registry couldn't be reached and this is the last copy read. */
+      stale?: { fetched_at: string; age_seconds: number; reason: string } | null;
     }>("GET", `/sandbox/registry${qs}`);
   },
   sandboxInstall: (body: { name: string; version: string; registry_url?: string }) =>

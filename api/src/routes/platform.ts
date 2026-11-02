@@ -49,7 +49,8 @@ import { ocrAvailable } from "@cobblr/core-scan/services/ocr";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { issueUndos, judgeUndo, returnIssuedUndo, spendIssuedUndo } from "../platform/issued-undos.js";
-import { askedByAnAssistant, doorRefusal, mayInvoke, permissionRefusal, type InvokeAsker } from "../platform/may-invoke.js";
+import { askedByAnAssistant, doorRefusal, isUndoOnly, mayInvoke, permissionRefusal, type InvokeAsker } from "../platform/may-invoke.js";
+import { UNDO_ONLY_NEEDS_ITS_UNDO, undoOnlyVerdict } from "../platform/undo-only.js";
 import { actionGateOf } from "../platform/action-gates.js";
 import { RECORD_BAR_ACTIONS } from "@cobblr/platform-contract/record-bar-actions";
 import { actionOwner, actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
@@ -943,6 +944,9 @@ platformOrgRouter.post(
         res.status(door.status).json(door.body);
         return;
       }
+      // Says when the door noticed an undo-only press with no issued Undo, so
+      // a test sees the press the next release refuses (#9117).
+      if (undoOnlyVerdict({ undoOnly: isUndoOnly(parsed.data.actionId), ownUndo: !!ownUndo, enforce: UNDO_ONLY_NEEDS_ITS_UNDO }) === "log") res.setHeader("x-cobblr-undo-door", "logged");
       if (ownUndo && !parsed.data.dry_run && !(await spendIssuedUndo(ownUndo))) {
         res.status(409).json({ error: { code: "undo_already_pressed", message: "This Undo was already pressed. It runs once; look at the record to see where it stands." } });
         return;

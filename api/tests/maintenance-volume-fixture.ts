@@ -6,7 +6,7 @@ import { http, org, signupFreshOrg, type TestSession } from "./helpers.js";
 export type Schedule = { id: string; name: string; every_n: number; current_expiry: string | null; ended_at: string | null; occurrence: { id: string } | null };
 export type Entry = { id: string; name: string; schedule_id: string | null; scheduled_at: string | null; performed_at: string | null; notes: string | null; nag_stopped_at: string | null; nag_snoozed_until: string | null; cost_cents: number | null };
 export type Term = { id: string; schedule_id: string; cost_cents: number | null; reference: string | null; term_start: string; term_end: string };
-export type Outcome = { result: { ok: boolean; error?: string }; undo?: Array<{ action_id: string; args: Record<string, unknown> }> };
+export type Outcome = { result: { ok: boolean; error?: string }; undo?: Array<{ action_id: string; undo_id: string; args: Record<string, unknown> }> };
 
 /** A workspace whose "Other machine" carries 120 paid renewals, a fresh
  *  "Chosen machine" for every test, and a check after each that none of the
@@ -39,7 +39,8 @@ export function maintenanceVolume(shape: "fresh" | "volume" = "volume") {
   const undo = async (outcome: Outcome) => {
     expect(outcome.undo).toHaveLength(1);
     const step = outcome.undo![0]!;
-    const restored = await http<Outcome>(session, org(session, "/actions/invoke"), { method: "POST", body: { actionId: step.action_id, args: step.args } });
+    expect(step.undo_id, "the run issued its Undo").toEqual(expect.any(String));
+    const restored = await http<Outcome>(session, org(session, "/actions/invoke"), { method: "POST", body: { actionId: step.action_id, undo_id: step.undo_id, args: step.args } });
     expect(restored.result.ok, restored.result.error).toBe(true);
   };
   const snapshot = async () => ({

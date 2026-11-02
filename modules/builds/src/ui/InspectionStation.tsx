@@ -23,7 +23,7 @@ export function InspectionStation({ slug, machineId, orderId, api }: { slug: str
  const bench = order.data?.assembly.inspection_machine, belongs = bench?.id === machineId;
  const locked = !!order.data?.assembly.finish_intent || order.data?.assembly.state === "tested";
  useStationWakeLock(!!credential && belongs && !locked);
- return <main id="main-content" className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4"><header className="flex flex-wrap gap-3 items-center"><h1 className="text-2xl font-semibold flex-1">Inspection station</h1><Link className={button} to="/machines">Machines</Link></header>
+ return <main id="main-content" className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]"><header className="flex flex-wrap gap-3 items-center"><h1 className="text-2xl font-semibold flex-1">Inspection station</h1><Link className={button} to="/machines">Machines</Link></header>
  {(order.isError || resources.isError) && <QueryError what="the inspection batch" onRetry={() => { void order.refetch(); void resources.refetch(); }} />}
  {order.data && !belongs && <p role="alert">Choose this inspection bench on the work order before recording evidence here.</p>}
  {belongs && <>

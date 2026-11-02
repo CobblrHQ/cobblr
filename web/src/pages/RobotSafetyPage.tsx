@@ -9,7 +9,7 @@ const named = (text: string) => text.replace(/\bCobblr\b/g, productName());
 export function RobotSafetyPage() {
  const { activeSlug: slug } = useActiveOrg();
  usePageTitle(named(SAFETY_BOUNDARY.title));
- return <div className="min-h-screen bg-surface text-content"><SkipToContent /><main id={MAIN_ID} data-testid="robot-safety" className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4">
+ return <div className="min-h-screen bg-surface text-content"><SkipToContent /><main id={MAIN_ID} data-testid="robot-safety" className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]">
   <header className="flex flex-wrap gap-3 items-center"><h1 className="flex-1 text-2xl font-semibold">{named(SAFETY_BOUNDARY.title)}</h1><WorkspaceLink className="min-h-11 rounded border border-line px-3 py-2" slug={slug} to="/machines">Back to machines</WorkspaceLink></header>
   <p className="text-lg">{named(SAFETY_BOUNDARY.summary)}</p>
   {SAFETY_BOUNDARY.sections.map(s => <section key={s.heading} className="space-y-1"><h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{s.heading}</h2><p>{named(s.body)}</p></section>)}

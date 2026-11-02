@@ -34,7 +34,7 @@ export function ReplyToMessagePage() {
   return (
     <>
       <SkipToContent />
-      <main id={MAIN_ID} tabIndex={-1} className="min-h-screen bg-canvas dark:bg-slate-950 px-4 py-16">
+      <main id={MAIN_ID} tabIndex={-1} className="min-h-screen bg-canvas dark:bg-slate-950 px-4 py-16 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))]">
         <div className="mx-auto max-w-md rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 space-y-3" data-testid="reply-to-message">
           {about.isLoading && <p className="text-sm text-muted">Reading the link…</p>}
           {about.isError && <p className="text-sm text-ember-700 dark:text-ember-300">{(about.error as Error).message}</p>}

@@ -45,7 +45,7 @@ export function PrintStation({ slug, connectionId, deviceId }: { slug: string; c
   } });
   const run = (work: () => Promise<void>) => operation.mutateAsync(work);
   const currentReview = review?.context === context ? review.value : null;
-  return <><SkipToContent /><main id={MAIN_ID} tabIndex={-1} data-testid="machine-station" className="min-h-screen max-w-5xl mx-auto bg-surface text-content p-4 sm:p-6 space-y-5">
+  return <><SkipToContent /><main id={MAIN_ID} tabIndex={-1} data-testid="machine-station" className="min-h-screen max-w-5xl mx-auto bg-surface text-content p-4 sm:p-6 space-y-5 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]">
     <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Printer station</h1><p className="break-words text-muted">{device?.name || "Snapmaker printer"}</p></div><Link className={button} to="/digifab">Exit to the fleet</Link></header>
     {credential && <StationInstall />}
     {(!reviewRefused && error || q.error) && <p role="alert" className="rounded border border-red-500 p-4 break-words">{error || String(q.error)}</p>}

@@ -22,6 +22,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { isSandboxSession } from "../lib/sandbox-session";
+import { previewingShare } from "../lib/share-view";
 
 const LEGACY_SEEN_KEY = "cobblr.tour.dashboard.v1";
 const seenKey = (userId: string | null) => `cobblr.tour.dashboard.v1:${userId ?? "anon"}`;
@@ -64,7 +65,7 @@ export function useTour(
   // user who already toured would be shown it one more time on their next empty
   // workspace - the exact complaint, re-introduced by the fix for it.
   useEffect(() => {
-    if (backfilled.current || !userId || seenAt === undefined) return;
+    if (backfilled.current || !userId || seenAt === undefined || previewingShare()) return;
     if (seenAt === null && localSeen(userId)) {
       backfilled.current = true;
       markSeen?.();
@@ -84,6 +85,9 @@ export function useTour(
     // that as empty, and the welcome card opening over a dead page
     // (2026-09-14). The replay door below stays open there.
     if (isSandboxSession()) return;
+    // Nor in a share's View as: it shows someone else's view, and the tour is
+    // the account's own (#9135).
+    if (previewingShare()) return;
     const id = window.setTimeout(() => setOpen(true), 600);
     return () => window.clearTimeout(id);
   }, [enabled, userId, seenAt]);
@@ -103,7 +107,7 @@ export function useTour(
     } catch {
       /* private mode - localSeen() already treats that as seen */
     }
-    markSeen?.();
+    if (!previewingShare()) markSeen?.();
     setOpen(false);
   };
   return { open, close };

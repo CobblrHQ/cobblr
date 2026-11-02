@@ -19,6 +19,8 @@ import { accessMessage } from "../auth/token-access.js";
 import { actionRefusal, actionSafety } from "./ai-action-door.js";
 import { actionChangesWorkspace, actionGateOf, kindActionsOfFace } from "./action-gates.js";
 import { isRequester } from "./actions.js";
+import { listEntries } from "../modules/registry.js";
+import { UNDO_ONLY_NEEDS_ITS_UNDO, undoOnlyVerdict } from "./undo-only.js";
 import { platformActionMinRole, platformActionStandsFor } from "./platform-actions.js";
 
 /** Who is asking, and through what. */
@@ -98,7 +100,26 @@ export async function doorRefusal(asker: InvokeAsker, actionId: string, target: 
     const refused = opts.ownUndo && !effectNeedsAPerson(safety?.effect) ? null : actionRefusal(safety);
     if (refused) return refuse(403, { code: "needs_a_person", message: refused });
   }
+  const undoOnly = undoOnlyRefusal(actionId, !!opts.ownUndo, asker);
+  if (undoOnly) return undoOnly;
   return null;
+}
+
+export function isUndoOnly(actionId: string): boolean {
+  return listEntries().some((e) => ((e.manifest.exposes?.actions ?? []) as Array<{ id: string; internal?: boolean }>).some((a) => a.id === actionId && a.internal === true));
+}
+
+function undoOnlyRefusal(actionId: string, ownUndo: boolean, asker: InvokeAsker): InvokeRefusal | null {
+  const verdict = undoOnlyVerdict({ undoOnly: isUndoOnly(actionId), ownUndo, enforce: UNDO_ONLY_NEEDS_ITS_UNDO });
+  if (verdict === "run") return null;
+  if (verdict === "log") {
+    console.warn(`[undo-door] ${actionId} pressed without its issued Undo (via ${asker.via ?? "app"}${asker.aiDoor ? ", assistant" : ""}); let through until the refusal ships (#4115)`);
+    return null;
+  }
+  return refuse(403, {
+    code: "undo_without_its_run",
+    message: "This only takes back another change, and it runs from that change's Undo. Press Undo where the change was made.",
+  });
 }
 
 /** May this person run it, by role, grant, or the record's own module? A

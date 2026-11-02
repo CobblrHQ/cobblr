@@ -49,7 +49,7 @@ export function CutterStation({slug,connectionId,deviceId}:{slug:string;connecti
  const selectedRoll=q.data?.stock.items.find(r=>r.id===roll);
  const loaded=q.data?.stock.loaded.some(l=>l.part_id===saved?.plan.roll.id&&l.slot==="stock");
  const panel="rounded border border-line p-4 space-y-4";
- return <><SkipToContent/><main id={MAIN_ID} tabIndex={-1} className="mx-auto min-h-screen max-w-5xl space-y-5 bg-surface p-4 text-content sm:p-6" data-testid="cutter-station">
+ return <><SkipToContent/><main id={MAIN_ID} tabIndex={-1} className="mx-auto min-h-screen max-w-5xl space-y-5 bg-surface p-4 text-content sm:p-6 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]" data-testid="cutter-station">
   <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Cutter station</h1><p>{device?.name||"Vinyl and craft cutter"}</p></div><Link to="/digifab" className={button}>Exit to the fleet</Link></header>
   <div className="flex flex-wrap gap-3">{!currentReview&&!profileOpen&&<button className={`${button} border-red-500`} onClick={stop}>Stop cutter</button>}<p>Stay beside the cutter. Use its physical Stop in an emergency.</p></div>
   {(error||q.error||design.error||profiles.error)&&<p role="alert" className="rounded border border-red-500 p-4 break-words">{error||String(q.error||design.error||profiles.error)}</p>}{notice&&<p role="status">{notice}</p>}

@@ -354,7 +354,7 @@ function WhoIsWorking({ slug, address, kiosk, crew, onPicked }: { slug: string; 
   };
   return (
     <Shell kiosk={kiosk} large>
-      <main id={MAIN_ID} tabIndex={-1} className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-6 px-4 pb-[calc(var(--inset-bottom)+24px)] pt-[calc(var(--top-edge)+24px)] outline-none">
+      <main id={MAIN_ID} tabIndex={-1} className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-6 px-4 pb-[calc(var(--inset-bottom)+24px)] pt-[calc(var(--top-edge)+24px)] outline-none pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))]">
         <h1 className="text-center text-4xl font-semibold">Who's working?</h1>
         <p className="text-center text-lg text-muted">Tap your name. What you do here is recorded to you.</p>
         {error && <p role="alert" className="text-center text-lg font-medium text-red-700 dark:text-red-300">{error}</p>}
@@ -970,7 +970,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         onPointerDown={() => (touchedAt.current = Date.now())}
         data-testid="station"
       >
-        <header className="flex flex-wrap items-center justify-between gap-[12px] px-[16px] pt-3 sm:px-6">
+        <header className="flex flex-wrap items-center justify-between gap-[12px] pl-[max(16px,var(--inset-left))] pr-[max(16px,var(--inset-right))] pt-3 sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]">
           <div className="flex min-w-0 max-w-full flex-wrap items-center gap-[12px]">
             {settings.back_url && (
               // The dashboard this station was opened from (Home Assistant): the
@@ -1022,7 +1022,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
           </div>
         </header>
 
-        <main id={MAIN_ID} tabIndex={-1} className="flex flex-1 items-start justify-center px-4 pb-8 pt-4 outline-none sm:items-center sm:px-6">
+        <main id={MAIN_ID} tabIndex={-1} className="flex flex-1 items-start justify-center px-4 pb-8 pt-4 outline-none sm:items-center sm:px-6 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]">
           {view.kind === "ready" && (
             <Ready label={props.label} last={last} onUndo={undo} camera={lens !== null}>
               {lens === "ask" && <StationLensChoice onPick={pickLens} />}

@@ -71,7 +71,7 @@ export function StockStationPage() {
     try { await runAction({ actionId: "labels:print", entityKind: kind, entityId: id }); }
     catch (e) { setError(e instanceof Error ? e.message : "The label could not be printed."); }
   };
-  return <main id={MAIN_ID} className="p-4 sm:p-6 max-w-5xl mx-auto space-y-5">
+  return <main id={MAIN_ID} className="p-4 sm:p-6 max-w-5xl mx-auto space-y-5 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]">
     <SkipToContent /><GlobalScanWedge activeSlug={slug} />
     <header className="space-y-2"><h1 className="text-2xl font-semibold">Stock station</h1><p className="text-muted break-words">{station}</p>{!stockOff && <Link to="/inventory" className="inline-flex min-h-11 items-center underline">Back to inventory</Link>}</header>
     {stockOff ? <p data-testid="stock-station-inventory-off" className="rounded border border-dashed border-line p-6 text-center text-muted">Stock is kept in Inventory, which is not on in this workspace. <Link to="/configuration/modules" className="text-accent hover:underline">Turn it on in Modules</Link></p> : <>

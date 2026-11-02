@@ -23,7 +23,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { Code, SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput, useSentWords } from "@cobblr/platform-web";
+import { Code, SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput, useSentWords, relativeTime } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
@@ -1125,6 +1125,15 @@ function MarketplaceTab() {
 
   return (
     <div className="space-y-3">
+      {q.data.stale && (
+        <div
+          role="status"
+          className="rounded-xl border border-ember-200 dark:border-ember-700 bg-ember-50 dark:bg-ember-900/20 px-4 py-3 text-xs text-ember-700 dark:text-ember-300"
+        >
+          Couldn't reach the registry just now, so this is the list as it was{" "}
+          {relativeTime(q.data.stale.fetched_at)}. Installs still check the registry live.
+        </div>
+      )}
       <div className="text-xs text-muted dark:text-slate-400 px-1">
         Browse signed marketplace modules from the cobblr registry. Installing
         downloads, verifies sha256 + ed25519 signature, extracts to

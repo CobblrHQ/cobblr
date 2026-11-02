@@ -12,7 +12,7 @@ export function WorkspaceAccessBoundary({ slug, children }: { slug: string; chil
   return (
     <>
       <SkipToContent />
-      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none min-h-screen grid place-items-center bg-canvas text-content px-5 py-8">
+      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none min-h-screen grid place-items-center bg-canvas text-content px-5 py-8 pl-[max(1.25rem,var(--inset-left))] pr-[max(1.25rem,var(--inset-right))]">
         <div className="w-full max-w-md space-y-4">
           <h1 className="text-xl font-semibold">Access ended</h1>
           <p role="alert">This workspace is no longer available to you. The share may have ended or your access may have been removed.</p>

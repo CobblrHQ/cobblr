@@ -16,7 +16,7 @@ export function PrinterStationPage() {
   const query = useQuery({ queryKey: ["printer-station", slug, machineId], queryFn: () => api.lookupEntity(slug, "machines:machine", machineId) });
   return <div className="min-h-screen bg-surface text-content">
     <SkipToContent /><GlobalScanWedge activeSlug={slug} />
-    <main id={MAIN_ID} className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4">
+    <main id={MAIN_ID} className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]">
       <header className="space-y-3"><WorkspaceLink className="inline-flex min-h-11 items-center rounded border border-line px-3 py-2" slug={slug} to={`/digifab`}>Back to machines</WorkspaceLink><h1 className="text-2xl font-semibold">{query.data?.title || "Printer station"}</h1></header>
       <p>Scan the spool you are loading. {productName()} saves the swap and sends the previous spool back to its shelf.</p>
       {query.isError && <QueryError what="The record could not be loaded." onRetry={() => void query.refetch()} />}

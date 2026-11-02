@@ -1,0 +1,10 @@
+{
+  "lint": "lint:e2e-presence-waits",
+  "run": "node scripts/lint-e2e-presence-waits.ts",
+  "rows": [
+    "e2e"
+  ],
+  "ms": 500,
+  "recorded": "2026-11-02",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

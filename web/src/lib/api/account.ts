@@ -5,6 +5,7 @@ import type { OrgMembership } from "./members";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import type { TokenAccess } from "@cobblr/platform-contract/token-access";
 import { ApiError, browserTimeZone, getToken, request, setToken } from "./client";
+import { previewingShare } from "../share-view";
 import type { SignupInvite } from "./admin";
 
 export interface CommunityLink {
@@ -187,7 +188,8 @@ export const accountApi = {
     const tz = browserTimeZone();
     // Once per page for a zone: the shell drawn a second time during a load
     // sent the same PATCH twice (#7622).
-    if (!tz || tz === known || tz === sentTimeZone) return Promise.resolve(null);
+    // A share's View as is someone else's view: not this account's day (#9135).
+    if (!tz || tz === known || tz === sentTimeZone || previewingShare()) return Promise.resolve(null);
     sentTimeZone = tz;
     return request<{ user: { time_zone: string | null } }>("PATCH", "/me", { time_zone: tz });
   },

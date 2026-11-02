@@ -28,6 +28,11 @@
 //      place is a dispatch, and Forgejo leaves a job's `if:` to the runner that picks it up: the stood-down run
 //      holds a shared group until its gated runner reaches a no-op job. e2e-suite's night run (68003) waited
 //      behind its own stood-down cron (68002) from 06:16Z on 10-28, its slot's turn passing every four minutes.
+//   6. (2026-11-01) In a workflow that runs scripts/ci-slot.sh, the slot job runs on `light`, and a job on any other
+//      label carries no `if:` of its own: it needs a `light` job whose `if:` reads the slot's verdict. Forgejo leaves
+//      a job's `if:` to the runner that takes it, so a stood-down run's ci-e2e job waited for that runner only to be
+//      skipped (run 60465: from 06:21Z to 02:33Z the next day), counted as waiting demand all along. A job with no
+//      `if:` behind a skipped one is skipped by the forge itself, with no runner (#8961).
 //   3. A workflow that ALSO runs on push must NOT call scripts/ci-slot.sh.
 //      This is the part that matters most and the one a copy gets wrong: the
 //      decision tells a cron run from a dispatch, and on this Forgejo a cron
@@ -97,6 +102,58 @@ export function shapeOf(src: string): Shape {
   };
 }
 
+export interface Job {
+  id: string;
+  runsOn: string;
+  needs: string[];
+  cond: string | null;
+}
+
+/** Each job's id, `runs-on`, `needs` and `if:` (one-line forms, which is all these files use). */
+export function jobsOf(src: string): Job[] {
+  const lines = src.split("\n");
+  const start = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+  if (start < 0) return [];
+  const jobs: Job[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const head = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]!);
+    if (!head) continue;
+    const job: Job = { id: head[1]!, runsOn: "", needs: [], cond: null };
+    for (let j = i + 1; j < lines.length && !/^ {0,2}\S/.test(lines[j]!); j++) {
+      const l = lines[j]!;
+      const runsOn = /^ {4}runs-on:\s*(.*)$/.exec(l);
+      if (runsOn) job.runsOn = runsOn[1]!.trim();
+      const cond = /^ {4}if:\s*(.*)$/.exec(l);
+      if (cond) job.cond = cond[1]!.trim();
+      const needs = /^ {4}needs:\s*(.*)$/.exec(l);
+      if (needs) job.needs = needs[1]!.replace(/[[\]]/g, "").split(",").map((n) => n.trim()).filter(Boolean);
+    }
+    jobs.push(job);
+  }
+  return jobs;
+}
+
+const LIGHT = "light";
+
+/** Rule 6: what in a slot workflow would wait for a gated runner on a stood-down morning. */
+export function standdownWaits(src: string): string[] {
+  const jobs = jobsOf(src);
+  const out: string[] = [];
+  const slot = jobs.find((j) => j.id === "slot");
+  if (!slot) return out;
+  if (slot.runsOn !== LIGHT) out.push(`the slot job runs on \`${slot.runsOn || "(none)"}\`: every run, stood down or not, waits for that runner just to decide. Run it on \`light\``);
+  const gated = new Set(jobs.filter((j) => j.runsOn === LIGHT && j.cond !== null && /needs\.slot\.outputs\.run/.test(j.cond)).map((j) => j.id));
+  for (const j of jobs) {
+    if (j.id === "slot" || j.runsOn === LIGHT) continue;
+    if (j.cond !== null) {
+      out.push(`job \`${j.id}\` runs on \`${j.runsOn}\` with an \`if:\` of its own. Forgejo leaves a job's \`if:\` to the runner that takes it, so on a stood-down morning it waits for that runner only to be skipped (#8961). Move the condition to a \`light\` job it needs, and give this one none`);
+    } else if (!j.needs.some((n) => gated.has(n))) {
+      out.push(`job \`${j.id}\` runs on \`${j.runsOn}\` and needs no \`light\` job whose \`if:\` reads the slot's verdict, so it runs on a stood-down morning too`);
+    } else gated.add(j.id);
+  }
+  return out;
+}
+
 const violations: Violation[] = [];
 let scheduled = 0;
 for (const name of readdirSync(DIR).filter((f) => /\.ya?ml$/.test(f)).sort()) {
@@ -137,6 +194,7 @@ for (const name of readdirSync(DIR).filter((f) => /\.ya?ml$/.test(f)).sort()) {
       what: `\`${s.sharedGroup}\` is one concurrency group for a cron run and the dispatch ${SHARED} sends in its place, so a stood-down cron run holds its own replacement until a runner reaches its no-op job. Give a dispatch its own group: group: \${{ github.event_name == 'workflow_dispatch' && format('<name>-dispatch-{0}', github.ref) || '<name>' }}`,
     });
   }
+  for (const what of s.runsSlot ? standdownWaits(src) : []) violations.push({ file: name, what });
   if (s.crons > 1 && !s.onPush && !s.callsShared && !s.ownStanddown) {
     violations.push({
       file: name,

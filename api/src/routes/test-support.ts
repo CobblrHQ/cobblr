@@ -391,6 +391,68 @@ testSupportRouter.post("/test-support/share-accept-fails", async (req, res, next
     next(err);
   }
 });
+// What the module registry at `url` answers the marketplace (#9106, #9109):
+// `modules` for a good index read, `file` (base64) for a tarball, null for a
+// 404, neither to go back to the network. Body: { url, modules?, file? }.
+testSupportRouter.post("/test-support/registry-answers", async (req, res, next) => {
+  try {
+    const { url, modules, file } = (req.body ?? {}) as { url?: string; modules?: Array<{ name: string }> | null; file?: string | null };
+    if (typeof url !== "string") {
+      res.status(400).json({ error: { code: "bad_body", message: "url required" } });
+      return;
+    }
+    const { answerRegistryForTests } = await import("./sandbox-install.js");
+    const answer = file !== undefined ? file : modules === undefined ? undefined : modules === null ? null : { modules };
+    answerRegistryForTests(url, answer);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+// A sandboxed module installed after boot, the way /sandbox/install ends once
+// its tarball is verified and extracted: the repo's hello-as wasm under a new
+// name, with one /greet route. Body: { name } installs, { name, remove: true }
+// uninstalls. No registry and no tarball, so a test needs neither the network
+// nor a platform admin to reach the mount.
+testSupportRouter.post("/test-support/runtime-module", async (req, res, next) => {
+  try {
+    const { name, remove } = (req.body ?? {}) as { name?: string; remove?: boolean };
+    if (typeof name !== "string" || !/^test-[a-z0-9-]{4,40}$/.test(name)) {
+      res.status(400).json({ error: { code: "bad_body", message: "name must look like test-<a-z0-9->" } });
+      return;
+    }
+    const { RUNTIME_INSTALL_DIR, SANDBOXED_MODULES_DIR, loadOneSandboxedModule, uninstallSandboxedModule } = await import("../sandbox/loader.js");
+    if (remove) {
+      res.json(await uninstallSandboxedModule(name));
+      return;
+    }
+    const { mkdirSync, copyFileSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(RUNTIME_INSTALL_DIR, name);
+    mkdirSync(dir, { recursive: true });
+    copyFileSync(join(SANDBOXED_MODULES_DIR, "hello-as", "module.wasm"), join(dir, "module.wasm"));
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify({
+      name,
+      version: "0.0.1",
+      displayName: `Test install ${name}`,
+      description: "Installed after boot by a test. One greet route that hits ACTIVITY_LOG.",
+      band: "marketplace",
+      abi_version: 2,
+      routes: [{ method: "POST", path: "/greet", handler: "handle" }],
+      network: [],
+      max_memory_pages: 64,
+    }));
+    const loaded = await loadOneSandboxedModule(dir);
+    if (!loaded) {
+      res.status(500).json({ error: { code: "register_failed", message: `${name} did not register` } });
+      return;
+    }
+    const { mountNewlyRegistered } = await import("../modules/mount.js");
+    res.json({ name: loaded.name, mounted: await mountNewlyRegistered(loaded.name) });
+  } catch (err) {
+    next(err);
+  }
+});
 // The next record moves die between their two commits (#9071). Body: { times }.
 testSupportRouter.post("/test-support/move-fails", async (req, res, next) => {
   try {

@@ -24,6 +24,7 @@ import { useAuth } from "./AuthContext";
 import { deepPathAfterWorkspace, pathAcrossWorkspaces } from "../lib/deep-path";
 import { displaySlug } from "../lib/workspaceSlug";
 import { useImpersonation } from "../lib/impersonation";
+import { getShareViewToken } from "../lib/share-view";
 import { goneWorkspaceMessage, noteGoneWorkspace, takeGoneWorkspace } from "../lib/gone-workspace";
 import { BootScrim } from "../components/BootScrim";
 import { useToast } from "@cobblr/platform-web";
@@ -118,7 +119,9 @@ export function ActiveOrgProvider({
     return resolveHandle(urlHandle, orgs);
   }, [urlHandle, orgs, imp]);
   // In render, before any page below starts a query (lib/acting-role.ts).
-  if (org) rememberRole(org.slug, org.role, org.portal_shares);
+  // A share's View as is read-only by construction, a support session unless
+  // switched to editing (#9129).
+  if (org) rememberRole(org.slug, org.role, org.portal_shares, { readOnlySupport: !!getShareViewToken() || (!!imp && imp.workspace.slug === org.slug && imp.mode !== "write") });
 
   // If the URL handle doesn't resolve to a membership (deleted, revoked, wrong
   // account, typo, or a shared/placeholder slug like a docs link), go where the

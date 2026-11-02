@@ -23,7 +23,7 @@ import { setSandboxedModuleInfo, deleteSandboxedModuleInfo } from "./sandboxed-m
 import { envNumber } from "@cobblr/platform-contract/env-number";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SANDBOXED_MODULES_DIR = resolve(__dirname, "..", "..", "..", "sandboxed-modules");
+export const SANDBOXED_MODULES_DIR = resolve(__dirname, "..", "..", "..", "sandboxed-modules");
 /** Persistent runtime-installed sandboxed modules. Mounted as a
  *  volume in prod docker-compose so install survives api restart. */
 export const RUNTIME_INSTALL_DIR =

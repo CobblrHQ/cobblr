@@ -139,7 +139,9 @@ export async function pressNotificationAction(args: {
   // the Undo they are offered is theirs to run (issued-undos.ts).
   const undo = await undoFor(resolved.action, result, { orgId: resolved.orgId, ...(entity ? { entity: { kind: entity.kind, id: entity.id } } : {}) }).catch(() => null);
   const issued = (undo ?? []).flatMap((u) => ("action_id" in u ? [u] : []));
-  if (issued.length) await issueUndos(resolved.orgId, resolved.userId, issued).catch((e) => console.error("[notification-press] could not issue the undo:", (e as Error).message));
+  if (issued.length) await issueUndos(resolved.orgId, resolved.userId, issued)
+    .then(ids => { issued.forEach((step, i) => Object.assign(step, { undo_id: ids[i] })); })
+    .catch((e) => console.error("[notification-press] could not issue the undo:", (e as Error).message));
   return { ok: true, label: resolved.label, ...(resolved.short ? { short: resolved.short } : {}), ...(undo?.length ? { undo } : {}) };
 }
 

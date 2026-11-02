@@ -28,7 +28,7 @@ export function AssemblyStation({ slug, machineId, orderId, api, camera }: { slu
     const agreed = await confirm({ title: operation === "start" ? `Start ${side} side?` : `Complete ${side} side?`, message: operation === "start" ? `Confirm all ${countOf(Number(order.data?.qty ?? 0), "board")} are loaded, the exported ${side} program is selected and its package calibrations match this machine.` : `Confirm every placement on all ${countOf(Number(order.data?.qty ?? 0), "board")} completed. The last side draws the reserved reels and blank boards and adds placed board stock.`, confirmLabel: operation === "start" ? "Confirm and start" : "Confirm completion" });
     if (agreed) run.mutate(async () => { await call(`builds:${operation}-placement`, { order_id: orderId, station_token: credential.token, side, source: "manual", confirmed_all_boards: true }); });
   }
-  return <main className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4" id="main-content">
+  return <main className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4 pl-[max(1rem,var(--inset-left))] pr-[max(1rem,var(--inset-right))] sm:pl-[max(1.5rem,var(--inset-left))] sm:pr-[max(1.5rem,var(--inset-right))]" id="main-content">
     <header className="flex flex-wrap gap-3 items-center"><h1 className="text-2xl font-semibold flex-1">Placement station</h1><Link to="/machines" className={button}>Machines</Link></header>
     {order.isError && <QueryError what="assembly work order" onRetry={() => void order.refetch()} />}
     {program.isError && <QueryError what="placement program" onRetry={() => void program.refetch()} />}
