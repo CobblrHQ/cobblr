@@ -30,7 +30,6 @@ import { uploadMiddleware } from "../platform/uploads.js";
 import { UPLOAD_CEILING_BYTES, uploadedFile } from "@cobblr/platform-contract/upload";
 import { Router } from "express";
 import { ZipArchive } from "archiver";
-import unzipper from "unzipper";
 import type { Client } from "pg";
 import { createClient } from "../db/client-error-guard.js";
 import { z } from "zod";
@@ -62,10 +61,11 @@ import {
 import { randomBytes } from "node:crypto";
 import { Readable } from "node:stream";
 import * as activity from "../platform/activity.js";
-import { captureBlueprint, applyBlueprint, type BlueprintManifestT } from "./blueprint.js";
-import { makeUncompressedBudget, readEntryBounded, BackupTooLargeError } from "./backup-limits.js";
+import { captureBlueprint, applyBlueprint } from "./blueprint.js";
+import { BackupTooLargeError } from "./backup-limits.js";
+import { parseBackupZip, type DataIndexFile, type DataIndexTable, type ParsedBackup } from "./backup-archive.js";
 import { backupBudget, BackupBusyError, BACKUP_BUSY_RETRY_SEC } from "./backup-heavy-slot.js";
-import { capturePlatformRows, platformIdMap, restorePlatformRows, swapIds, type PlatformRows } from "../platform/backup-platform-rows.js";
+import { capturePlatformRows, platformIdMap, restorePlatformRows, swapIds } from "../platform/backup-platform-rows.js";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 // Tables the generic dump/restore must never touch:
@@ -104,16 +104,6 @@ interface BackupTenantDB {
   core_files_files: CoreFilesRow;
 }
 
-interface DataIndexTable {
-  table: string;
-  file: string;
-  row_count: number;
-}
-interface DataIndexFile {
-  file_id: string;
-  name: string;
-  mime: string;
-}
 
 /** A one-off SUPERUSER connection to a specific tenant DB. The per-tenant role
  *  (from db_credentials) can't `SET session_replication_role`, so the FK-free
@@ -363,75 +353,6 @@ export function safeInsertColumns(
   generatedCols: Set<string>,
 ): string[] {
   return rowKeys.filter((c) => knownCols.has(c) && !generatedCols.has(c));
-}
-
-interface ParsedBackup {
-  manifest: BlueprintManifestT & {
-    data_index?: { tables: DataIndexTable[]; files: DataIndexFile[]; platform?: DataIndexTable[] };
-  };
-  tables: Map<string, Array<Record<string, unknown>>>;
-  /** Null for a backup taken before the shared tables were carried: a restore
-   *  of one leaves the target's shared rows as they are rather than clearing
-   *  them for nothing. */
-  platform: PlatformRows | null;
-  files: Map<string, Buffer>;
-}
-
-/** A .jsonl entry's rows, split on the bytes: the entry can be longer than one
- *  string can hold, though no line of it is (#7704). A newline byte never sits
- *  inside a multi-byte UTF-8 character, so each slice decodes whole. */
-function jsonlRows(buf: Buffer): Array<Record<string, unknown>> {
-  const rows: Array<Record<string, unknown>> = [];
-  for (let at = 0; at < buf.length; ) {
-    const nl = buf.indexOf(10, at);
-    const end = nl === -1 ? buf.length : nl;
-    const line = buf.toString("utf8", at, end);
-    if (line.trim()) rows.push(JSON.parse(line) as Record<string, unknown>);
-    at = end + 1;
-  }
-  return rows;
-}
-
-/** Reads the archive where it lies: a path (an upload, streamed to disk by the
- *  upload door) is opened in place, never read into memory whole. */
-async function parseBackupZip(src: Buffer | string): Promise<ParsedBackup> {
-  const dir = typeof src === "string" ? await unzipper.Open.file(src) : await unzipper.Open.buffer(src);
-  let manifest: ParsedBackup["manifest"] | null = null;
-  const tables = new Map<string, Array<Record<string, unknown>>>();
-  const shared: PlatformRows = new Map();
-  const files = new Map<string, Buffer>();
-  // A restore is admin-triggered but the .zip is attacker-supplyable, so a
-  // decompression bomb here would OOM the shared host (audit M-BOMB). Read every
-  // entry through a running uncompressed-byte budget that aborts mid-stream, so
-  // a tiny .zip can never inflate past the ceiling — declared header size is
-  // only a cheap pre-check; the actual streamed bytes are what's enforced.
-  const budget = makeUncompressedBudget();
-  const readEntry = async (entry: (typeof dir.files)[number]): Promise<Buffer> => {
-    budget.precheck(entry.uncompressedSize);
-    const b = await readEntryBounded(entry.stream() as AsyncIterable<Uint8Array>, {
-      maxEntryBytes: budget.maxEntryBytes,
-      remainingTotalBytes: budget.remaining(),
-    });
-    budget.charge(b.length);
-    return b;
-  };
-  for (const entry of dir.files) {
-    if (entry.type !== "File") continue;
-    if (entry.path === "manifest.json") {
-      manifest = JSON.parse((await readEntry(entry)).toString("utf8"));
-    } else if (entry.path.startsWith("data/") && entry.path.endsWith(".jsonl")) {
-      const table = entry.path.slice("data/".length, -".jsonl".length);
-      tables.set(table, jsonlRows(await readEntry(entry)));
-    } else if (entry.path.startsWith("platform/") && entry.path.endsWith(".jsonl")) {
-      const table = entry.path.slice("platform/".length, -".jsonl".length);
-      shared.set(table, jsonlRows(await readEntry(entry)));
-    } else if (entry.path.startsWith("files/")) {
-      files.set(entry.path.slice("files/".length), await readEntry(entry));
-    }
-  }
-  if (!manifest) throw Object.assign(new Error("manifest.json missing from backup"), { code: "bad_archive" });
-  const carriesPlatform = Array.isArray(manifest.data_index?.platform);
-  return { manifest, tables, platform: carriesPlatform ? shared : null, files };
 }
 
 /** Put a parsed backup into a workspace: its blueprint, then every file,

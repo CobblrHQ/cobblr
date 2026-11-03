@@ -101,8 +101,19 @@ export async function keepHeldWithinLifetime(db: Db, now = new Date()): Promise<
 /** The picture a suggestion shows: the preview it holds, or, once that was
  *  dropped, the picture fetched again from where it was found and held for
  *  another HELD_DAYS. Null when there is none to show: the suggestion was
- *  answered, or the site no longer gives the picture. */
-export async function heldPicture(db: Db, kind: string, id: string, download: (url: string) => Promise<FetchedImage | null>, now = new Date()): Promise<FetchedImage | null> {
+ *  answered, or the site no longer gives the picture.
+ *
+ *  A site that answers that the picture is gone (`gone`) ends the suggestion:
+ *  it becomes "none", so no card offers a picture nobody can fetch, and the
+ *  person can search again (#9138). A site that could not be reached keeps
+ *  it for the next look. */
+export async function heldPicture(
+  db: Db,
+  kind: string,
+  id: string,
+  download: (url: string) => Promise<{ image: FetchedImage } | { image: null; gone: boolean }>,
+  now = new Date(),
+): Promise<FetchedImage | null> {
   const row = await db
     .selectFrom(T)
     .select(["status", "held_bytes", "held_type", "held_name", "source_url"])
@@ -112,8 +123,19 @@ export async function heldPicture(db: Db, kind: string, id: string, download: (u
   if (!row) return null;
   if (row.held_bytes) return { bytes: new Uint8Array(row.held_bytes), mimeType: row.held_type || "image/jpeg", filename: row.held_name || "picture.jpg" };
   if (row.status !== "suggested" || !row.source_url) return null;
-  const got = await download(row.source_url).catch(() => null);
-  const preview = got ? await forHolding(got) : null;
+  const got = await download(row.source_url).catch(() => ({ image: null, gone: false }) as const);
+  if (!got.image && got.gone) {
+    await db
+      .updateTable(T)
+      .set({ status: "none", source_url: null, updated_at: now })
+      .where("entity_kind", "=", kind)
+      .where("entity_id", "=", id)
+      .where("status", "=", "suggested")
+      .where("held_bytes", "is", null)
+      .execute();
+    return null;
+  }
+  const preview = got.image ? await forHolding(got.image) : null;
   if (!preview) return null;
   // Only a row still waiting, and still holding nothing: an answer given
   // meanwhile is never undone.

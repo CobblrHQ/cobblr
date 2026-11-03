@@ -58,7 +58,10 @@
 #      makes room from failed partials, then from the oldest dumps (never the
 #      newest BACKUP_DAILY_FLOOR), and if that is not enough it skips the dump
 #      and fails loudly: a missed day, never a crashed database.
-#      BACKUP_DAILY_MAX_BYTES caps what the daily dumps may hold in all.
+#      BACKUP_DAILY_MAX_BYTES caps what the daily dumps may hold in all, and
+#      BACKUP_WEEKLY_MAX_BYTES the Sunday copies (never the newest
+#      BACKUP_WEEKLY_FLOOR). Retention runs before each dump as well as after,
+#      so a run starts with the room it needs.
 #   8. TONIGHT'S DUMP IS MOSTLY LAST NIGHT'S BYTES. The off-box copy (restic)
 #      stores only chunks it has not seen, and a plain gzip stream is new bytes
 #      from the first changed row on, so a 1.5 GB dump of a database that
@@ -84,6 +87,10 @@
 #                           (default 0: no cap beyond the count)
 #   BACKUP_DAILY_FLOOR      newest daily dumps space-pruning never removes
 #                           (default 3)
+#   BACKUP_WEEKLY_MAX_BYTES most bytes the Sunday copies may hold together
+#                           (default 0: no cap beyond the count)
+#   BACKUP_WEEKLY_FLOOR     newest Sunday copies the byte cap never removes
+#                           (default 1)
 #   PG*                     passed to pg_dumpall as usual
 #
 # scripts/backup-loop.test.ts drives it with a fake pg_dumpall and a fake clock.
@@ -98,6 +105,8 @@ WEEKLY="${BACKUP_WEEKLY_RETENTION:-12}"
 RESERVE="${BACKUP_MIN_FREE_BYTES:-2147483648}"
 DAILY_MAX="${BACKUP_DAILY_MAX_BYTES:-0}"
 FLOOR="${BACKUP_DAILY_FLOOR:-3}"
+WEEKLY_MAX="${BACKUP_WEEKLY_MAX_BYTES:-0}"
+WEEKLY_FLOOR="${BACKUP_WEEKLY_FLOOR:-1}"
 
 # --rsyncable restarts the compressor at points chosen by the content, so a
 # dump whose database barely moved is mostly the same bytes as last night's
@@ -235,6 +244,7 @@ make_room() {
 dump_once() {
   local stamp out partial failed ok sz
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  prune
   if ! make_room; then
     echo "[backup] $stamp SKIPPED - only $(free_bytes) bytes free on $DIR and nothing past the newest $FLOOR dumps left to remove; the database's disk is kept, not this dump"
     return 1
@@ -281,6 +291,13 @@ prune() {
     total=$(stat -c%s "$DIR"/daily/*.sql.gz 2>/dev/null | awk '{t+=$1} END{print t+0}')
     while [ "$total" -gt "$DAILY_MAX" ] && f=$(removable_dailies | tail -n1) && [ -n "$f" ]; do
       total=$(( total - $(stat -c%s "$f") )); rm -f "$f" && echo "[backup] removed $f: daily dumps over BACKUP_DAILY_MAX_BYTES ($DAILY_MAX)"
+    done
+  fi
+  if [ "$WEEKLY_MAX" -gt 0 ]; then
+    local wtotal w
+    wtotal=$(stat -c%s "$DIR"/weekly/*.sql.gz 2>/dev/null | awk '{t+=$1} END{print t+0}')
+    while [ "$wtotal" -gt "$WEEKLY_MAX" ] && w=$(ls -1t "$DIR"/weekly/*.sql.gz 2>/dev/null | tail -n +$(( WEEKLY_FLOOR + 1 )) | tail -n1) && [ -n "$w" ]; do
+      wtotal=$(( wtotal - $(stat -c%s "$w") )); rm -f "$w" && echo "[backup] removed $w: weekly copies over BACKUP_WEEKLY_MAX_BYTES ($WEEKLY_MAX)"
     done
   fi
 }

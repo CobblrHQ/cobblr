@@ -14,6 +14,7 @@
 
 import { open } from "node:fs/promises";
 import unzipper from "unzipper";
+import { zipOnDisk } from "@cobblr/platform-contract/zip-on-disk";
 import { zipSync } from "fflate";
 
 const SCAN_BYTES = 512 * 1024;
@@ -55,15 +56,20 @@ async function gcodeView(path: string): Promise<Buffer> {
 }
 
 async function threeMfView(path: string): Promise<Buffer> {
-  const dir = await unzipper.Open.file(path);
-  const kept: Record<string, Uint8Array> = {};
-  let total = 0;
-  for (const f of dir.files) {
-    if (f.type !== "File" || !KEEP.test(f.path)) continue;
-    if (f.uncompressedSize > ENTRY_MAX_BYTES || total + f.uncompressedSize > KEPT_MAX_BYTES) continue;
-    const bytes = await f.buffer();
-    total += bytes.length;
-    kept[f.path] = bytes;
+  const zip = await zipOnDisk(path);
+  try {
+    const dir = await unzipper.Open.custom(zip.source);
+    const kept: Record<string, Uint8Array> = {};
+    let total = 0;
+    for (const f of dir.files) {
+      if (f.type !== "File" || !KEEP.test(f.path)) continue;
+      if (f.uncompressedSize > ENTRY_MAX_BYTES || total + f.uncompressedSize > KEPT_MAX_BYTES) continue;
+      const bytes = await f.buffer();
+      total += bytes.length;
+      kept[f.path] = bytes;
+    }
+    return Buffer.from(zipSync(kept, { level: 0 }));
+  } finally {
+    await zip.close();
   }
-  return Buffer.from(zipSync(kept, { level: 0 }));
 }

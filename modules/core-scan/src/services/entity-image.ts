@@ -35,27 +35,30 @@ export interface FetchedImage {
 
 /** Fetch an external image (SSRF-guarded, size/timeout-bounded) and check it
  *  is a picture. Stores nothing. Never throws; a refusal says why. */
-export async function fetchImage(imageUrl: string): Promise<{ image: FetchedImage } | { image: null; why: string }> {
+/** `gone`: the site answered, and the picture is not there to be had (refused,
+ *  missing, not a picture). A timeout or a site that could not be reached is
+ *  not: it may answer next time. */
+export async function fetchImage(imageUrl: string): Promise<{ image: FetchedImage } | { image: null; why: string; gone: boolean }> {
   try {
     const dl = await guardedImageFetch(imageUrl, { headers: browserImageHeaders(imageUrl), signal: AbortSignal.timeout(8_000) });
     if (!dl.ok) {
-      if (dl.status === 401 || dl.status === 403) return { image: null, why: "That site doesn't allow its pictures to be saved elsewhere." };
-      if (dl.status === 404 || dl.status === 410) return { image: null, why: "That picture is no longer on the site it came from." };
-      return { image: null, why: `That site answered with an error (${dl.status}) instead of the picture.` };
+      if (dl.status === 401 || dl.status === 403) return { image: null, why: "That site doesn't allow its pictures to be saved elsewhere.", gone: true };
+      if (dl.status === 404 || dl.status === 410) return { image: null, why: "That picture is no longer on the site it came from.", gone: true };
+      return { image: null, why: `That site answered with an error (${dl.status}) instead of the picture.`, gone: dl.status < 500 && dl.status !== 408 && dl.status !== 429 };
     }
     const declared = Number(dl.headers.get("content-length") ?? 0);
-    if (declared && declared > MAX_IMAGE_BYTES) return { image: null, why: "That picture is too large to keep (over 10 MB)." };
+    if (declared && declared > MAX_IMAGE_BYTES) return { image: null, why: "That picture is too large to keep (over 10 MB).", gone: true };
     const blob = await dl.blob();
-    if (blob.size > MAX_IMAGE_BYTES) return { image: null, why: "That picture is too large to keep (over 10 MB)." };
-    if (blob.size === 0 || (blob.type && !blob.type.startsWith("image/"))) return { image: null, why: "That address gave back a page, not a picture." };
+    if (blob.size > MAX_IMAGE_BYTES) return { image: null, why: "That picture is too large to keep (over 10 MB).", gone: true };
+    if (blob.size === 0 || (blob.type && !blob.type.startsWith("image/"))) return { image: null, why: "That address gave back a page, not a picture.", gone: true };
     const filename = (imageUrl.split("/").pop() ?? "image").split("?")[0] || "image.jpg";
     return { image: { bytes: new Uint8Array(await blob.arrayBuffer()), mimeType: blob.type || "image/jpeg", filename } };
   } catch (err) {
     const e = err as Error;
-    if (e.name === "TimeoutError" || e.name === "AbortError") return { image: null, why: "That site took too long to send the picture." };
-    if (e.name === "StockPreviewRefused") return { image: null, why: "That is a stock agency's watermarked preview." };
-    if (/blocked/i.test(e.message)) return { image: null, why: "That address can't be reached from here." };
-    return { image: null, why: "That site couldn't be reached." };
+    if (e.name === "TimeoutError" || e.name === "AbortError") return { image: null, why: "That site took too long to send the picture.", gone: false };
+    if (e.name === "StockPreviewRefused") return { image: null, why: "That is a stock agency's watermarked preview.", gone: true };
+    if (/blocked/i.test(e.message)) return { image: null, why: "That address can't be reached from here.", gone: false };
+    return { image: null, why: "That site couldn't be reached.", gone: false };
   }
 }
 

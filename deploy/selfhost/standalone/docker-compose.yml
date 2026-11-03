@@ -152,6 +152,14 @@ services:
       # MUST be listed here: the entrypoint reads ${BACKUP_MIN_BYTES:-...} and a
       # value in .env reaches this container only if compose passes it.
       BACKUP_MIN_BYTES: ${BACKUP_MIN_BYTES:-10000}
+      # A dump never fills the disk it reads from (#8940): before each dump the
+      # loop wants twice the last dump plus BACKUP_MIN_FREE_BYTES free, and the
+      # byte caps (0 = none) bound what the daily dumps and Sunday copies hold.
+      BACKUP_MIN_FREE_BYTES: ${BACKUP_MIN_FREE_BYTES:-2147483648}
+      BACKUP_DAILY_MAX_BYTES: ${BACKUP_DAILY_MAX_BYTES:-0}
+      BACKUP_DAILY_FLOOR: ${BACKUP_DAILY_FLOOR:-3}
+      BACKUP_WEEKLY_MAX_BYTES: ${BACKUP_WEEKLY_MAX_BYTES:-0}
+      BACKUP_WEEKLY_FLOOR: ${BACKUP_WEEKLY_FLOOR:-1}
       # The hour the dump happens, in this machine's local time. It used to be
       # "24 h after this container last started", so it drifted with every
       # `compose pull` and nobody could say when their backup ran (#3307). Set

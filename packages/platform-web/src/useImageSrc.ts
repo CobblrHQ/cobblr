@@ -51,7 +51,10 @@ const KEEP_MS = 60_000;
  *  settles on its letter. One that is genuinely gone (401, 403, 404) is not. */
 const RETRY_DELAYS_MS = [400, 1_500];
 
-async function fetchPicture(src: string, reload = false): Promise<string | null> {
+/** The server's answer that there is no picture here now: not a failure. */
+const NO_PICTURE = "none" as const;
+
+async function fetchPicture(src: string, reload = false): Promise<string | null | typeof NO_PICTURE> {
   const token = typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_KEY) : null;
   for (let attempt = 0; ; attempt++) {
     let again = false;
@@ -59,6 +62,10 @@ async function fetchPicture(src: string, reload = false): Promise<string | null>
       const init: RequestInit = { headers: token ? { Authorization: `Bearer ${token}` } : {} };
       if (reload) init.cache = "reload";
       const res = await fetch(src, init);
+      // No content is the server saying there is no picture here now (a
+      // suggestion whose site let it go, #9138): the placeholder, not a
+      // broken picture to report or fetch again.
+      if (res.status === 204) return NO_PICTURE;
       if (res.ok) {
         const blob = await res.blob();
         // A body shorter than it says it is was cut off on the way, and the
@@ -92,13 +99,14 @@ function hold(src: string): Held {
   h.readers++;
   if (!h.url && !h.pending) {
     const entry = h;
-    entry.pending = fetchPicture(src).then((url) => {
+    entry.pending = fetchPicture(src).then((got) => {
+      const url = got === NO_PICTURE ? null : got;
       entry.pending = null;
       entry.url = url;
       // A failure is not kept: the next reader asks again.
       if (!url) {
         held.delete(src);
-        reportBrokenPicture(src, "it would not load");
+        if (got !== NO_PICTURE) reportBrokenPicture(src, "it would not load");
       }
       return url;
     });
@@ -125,11 +133,12 @@ export function reloadPicture(src: string): boolean {
   h.reloaded = true;
   const old = h.url;
   h.url = null;
-  h.pending = fetchPicture(src, true).then((url) => {
+  h.pending = fetchPicture(src, true).then((got) => {
+    const url = got === NO_PICTURE ? null : got;
     h.pending = null;
     h.url = url;
     if (old) URL.revokeObjectURL(old);
-    if (!url) reportBrokenPicture(src, "it would not load again");
+    if (!url && got !== NO_PICTURE) reportBrokenPicture(src, "it would not load again");
     for (const l of h.listeners) l(url);
     return url;
   });

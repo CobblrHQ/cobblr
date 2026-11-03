@@ -185,8 +185,17 @@
       if ((attr.charAt(0) === "/" && attr.charAt(1) !== "/") || abs.indexOf(location.origin + "/") === 0) bootFailure();
     }
   }, true);
+  // The app's code that did not arrive, with nobody waiting on it (the shell's
+  // own import at the start, or a load nothing caught later) is this file's to
+  // answer, so it is handled here and never left as an uncaught page error
+  // (#9151: the shell's stylesheet missed once at the start of a console page).
+  // At the start the page loads again; later the next page opens on a fresh
+  // load, as for a stylesheet a deploy moved.
   window.addEventListener("unhandledrejection", function (e) {
-    if (!started && window.__cobblrIsChunkError(e && e.reason)) bootFailure();
+    if (!window.__cobblrIsChunkError(e && e.reason)) return;
+    if (e.preventDefault) e.preventDefault();
+    if (!started) bootFailure();
+    else window.__cobblrBuildMoved = true;
   });
   // Nothing failed loudly and the app still has not started: say so rather
   // than leave the page blank. The app removes the message if it starts later.

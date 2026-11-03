@@ -16,9 +16,9 @@
 // never kept while viewing as someone else, and signing out forgets it.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { dehydrate, hydrate, useIsFetching, useQueryClient } from "@tanstack/react-query";
-import { holdPrimedReads, primeReads, primeTicket, releasePrimedReads } from "@cobblr/platform-web";
+import { browserOffline, holdPrimedReads, primeReads, primeTicket, releasePrimedReads } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { getImpersonationToken } from "../lib/impersonation";
 import { getShareViewToken } from "../lib/share-view";
 import { COPY_PREFIX, isPlainJson, readCopy, writeCopy } from "./device-copy";
@@ -26,6 +26,18 @@ import { upNextWindow } from "../lib/up-next";
 
 /** A snapshot that has not come by then is given up on: each section asks for itself. */
 export const SNAPSHOT_WAIT_MS = 8_000;
+/** How long after a snapshot that never arrived it is asked once more. */
+export const SNAPSHOT_AGAIN_MS = 250;
+
+/** The request never got an answer from the api: nothing it said, so worth one
+ *  more ask. A browser that is offline waits for the connection instead; one
+ *  that is online and told "offline" met the service worker's answer to a
+ *  request the network dropped. */
+function neverArrived(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false;
+  if (browserOffline()) return false;
+  return e.code === "network_error" || e.code === "offline" || (e.status >= 502 && e.status <= 504);
+}
 /** The first visit's whole page is shown by then, settled or not. */
 export const REVEAL_CAP_MS = 2_500;
 /** A copy is taken once the page has been still this long. */
@@ -80,7 +92,14 @@ let asking: { slug: string; at: number; primed: Promise<void> } | null = null;
 function askSnapshot(slug: string): Promise<void> {
   if (asking && asking.slug === slug && Date.now() - asking.at < 1_000) return asking.primed;
   const ticket = primeTicket();
-  const ask = api.getDashboardSnapshot(slug, { today: dayHere(), ...upNextWindow(new Date()) });
+  const at = { today: dayHere(), ...upNextWindow(new Date()) };
+  // One that missed asks once more while the sections wait: without it, one
+  // dropped request sent every section to ask for itself (#9047).
+  const ask = api.getDashboardSnapshot(slug, at).catch(async (e: unknown) => {
+    if (!neverArrived(e)) throw e;
+    await new Promise((r) => setTimeout(r, SNAPSHOT_AGAIN_MS));
+    return api.getDashboardSnapshot(slug, at);
+  });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error("snapshot late")), SNAPSHOT_WAIT_MS);

@@ -667,7 +667,21 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           <BrandHomeLink
             className={`relative flex items-center gap-2 hover:opacity-80 transition ${appMode && navSuffix ? "min-w-0" : "shrink-0"}`}
           >
-            <CobblestoneMark size={26} dot={envDot} />
+            {/* The mark and the phone's env chip share one grid cell: the chip
+                sits on the mark and adds no width while it fits, and the link
+                is as wide as the chip when it does not, so the chip never
+                spills out of its box to the left, under the screen's edge
+                ("Test" ran 3 px past it, "Staging" ~30 px; #9153). */}
+            <span className="grid items-center shrink-0">
+              <span className="[grid-area:1/1] flex"><CobblestoneMark size={26} dot={envDot} /></span>
+              {envBanner && (
+                <span
+                  className={`xl:hidden [grid-area:1/1] justify-self-end rounded px-[4px] py-[2px] text-[9px] font-bold uppercase tracking-widest ${envBanner.chip}`}
+                >
+                  {envBanner.label}
+                </span>
+              )}
+            </span>
             <span className="hidden xl:inline font-display font-extrabold text-content dark:text-mortar-100">
               {productName()}
             </span>
@@ -676,18 +690,6 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             {appMode && navSuffix && (
               <span className="min-w-0 font-display font-extrabold text-content dark:text-mortar-100 truncate" title={navSuffix}>
                 {navSuffix}
-              </span>
-            )}
-            {/* Mobile: overlay the env chip ON the wordmark (right-aligned) so
-                it adds ZERO width — the navbar fits exactly as it does in prod,
-                the chip can't push the right menu off-screen. Its padding is in
-                px like its text: in rem it doubled with larger text (200%) and
-                the chip ran past the wordmark it sits on (#7853). */}
-            {envBanner && (
-              <span
-                className={`xl:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-[4px] py-[2px] text-[9px] font-bold uppercase tracking-widest ${envBanner.chip}`}
-              >
-                {envBanner.label}
               </span>
             )}
           </BrandHomeLink>

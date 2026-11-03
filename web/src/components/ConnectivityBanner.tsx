@@ -8,7 +8,8 @@
 // service worker answers with the reads this device kept, each marked with
 // when it was fetched, and the earliest of those is "as of" here, so a kept
 // copy is never taken for live. Back online, everything is fetched again at
-// once rather than waiting for each query's own timer.
+// once rather than waiting for each query's own timer; after a blip, only what
+// failed in it (lib/back-online.ts).
 //
 // What waits to be sent is counted, never just promised (#7928): "Waiting to
 // send (2)" is the edits and creates kept on this device plus any of this
@@ -21,13 +22,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { FloatingChrome } from "@cobblr/platform-web";
 import { getToken, subscribeConnectivity, subscribeOfflineCopies, pingHealth } from "../lib/api";
 import { asOfWords } from "../lib/offline";
+import { readAgainWhenBack } from "../lib/back-online";
 
 export function ConnectivityBanner() {
   const qc = useQueryClient();
   const [down, setDown] = useState(false);
   const [asOf, setAsOf] = useState<string | null>(null);
   const [offline, setOffline] = useState(() => typeof navigator !== "undefined" && navigator.onLine === false);
-  const wasDown = useRef(false);
+  const downSince = useRef<number | null>(null);
+  const keptCopies = useRef(false);
   const [waiting, setWaiting] = useState(0);
   useEffect(() => subscribeConnectivity(setDown), []);
   useEffect(() => {
@@ -61,10 +64,20 @@ export function ConnectivityBanner() {
     };
   }, []);
 
-  // Back: everything on screen was fetched before, or kept; fetch it again.
   useEffect(() => {
-    if (wasDown.current && !down) void qc.invalidateQueries();
-    wasDown.current = down;
+    if (offline || asOf !== null) keptCopies.current = true;
+  }, [offline, asOf]);
+
+  // Back: what is on screen was fetched before, or kept; fetch it again. What
+  // a read on its way will answer anyway is left to land.
+  useEffect(() => {
+    if (down) {
+      downSince.current ??= Date.now();
+    } else if (downSince.current !== null) {
+      void qc.invalidateQueries(readAgainWhenBack({ lastedMs: Date.now() - downSince.current, keptCopies: keptCopies.current }), { cancelRefetch: false });
+      downSince.current = null;
+      keptCopies.current = false;
+    }
   }, [down, qc]);
 
   useEffect(() => {

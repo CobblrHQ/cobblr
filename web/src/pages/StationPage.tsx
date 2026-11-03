@@ -829,6 +829,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
   // to the inbox) but never touches the card: a slow lookup put the earlier
   // thing back over the one just scanned, and +1 moved its stock (#7859).
   const scanSeq = useRef(0);
+  const cameraHeld = useRef<string | null>(null);
   const onScan = useCallback(
     async (raw: string) => {
       touchedAt.current = Date.now();
@@ -1027,7 +1028,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
             <Ready label={props.label} last={last} onUndo={undo} camera={lens !== null}>
               {lens === "ask" && <StationLensChoice onPick={pickLens} />}
               {(lens === "front" || lens === "rear") && !keypad && !settingsOpen && !asking && (
-                <StationCamera lens={lens} onCode={(c) => void onScan(c)} onFlip={() => pickLens(lens === "front" ? "rear" : "front")} />
+                <StationCamera lens={lens} held={cameraHeld} onCode={(c) => void onScan(c)} onFlip={() => pickLens(lens === "front" ? "rear" : "front")} />
               )}
             </Ready>
           )}

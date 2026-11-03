@@ -10,13 +10,15 @@
 // seconds) left Ready showing a live viewfinder that read nothing more until
 // the page was reloaded (#7865). A code it handed over is not handed over
 // again while it stays in view; one taken away and shown again, or any other
-// code, is.
+// code, is. That holds across Ready and back: the station closes the camera
+// on a read, and the one it opens on Ready again starts from the code still
+// held, so a jar still in hand when Done is pressed is not opened again.
 //
 // Same camera and decode as the Scan page and ScanOneSheet (barcodeScanner.ts,
 // barcodeDecode.ts). The lens is the device's own: the station's setting
 // starts it, the flip button changes it on this device only.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { SwitchCamera } from "lucide-react";
 import type { StationLens } from "@cobblr/platform-contract/station-screen";
 import { acquireScannerStream, NoCameraHere, SCAN_ATTEMPT_DELAY_MS } from "../lib/barcodeScanner";
@@ -51,11 +53,14 @@ export function rememberDeviceLens(slug: string, address: string, lens: StationL
   }
 }
 
-export function StationCamera({ lens, onCode, onFlip }: { lens: StationLens; onCode: (code: string) => void; onFlip: () => void }) {
+/** `held`: the code last handed over, kept by the station across the camera's mounts. */
+export function StationCamera({ lens, onCode, onFlip, held: kept }: { lens: StationLens; onCode: (code: string) => void; onFlip: () => void; held?: MutableRefObject<string | null> }) {
   const video = useRef<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const done = useRef(onCode);
   done.current = onCode;
+  const own = useRef<string | null>(null);
+  const heldRef = kept ?? own;
 
   useEffect(() => {
     setError(null);
@@ -66,7 +71,7 @@ export function StationCamera({ lens, onCode, onFlip }: { lens: StationLens; onC
     const rotated = document.createElement("canvas");
     let quietUntil = 0;
     // The code last handed over, for as long as it stays in view.
-    let held: string | null = null;
+    const held = heldRef;
     const onKey = () => {
       quietUntil = performance.now() + CAMERA_QUIET_AFTER_KEY_MS;
     };
@@ -93,9 +98,9 @@ export function StationCamera({ lens, onCode, onFlip }: { lens: StationLens; onC
             if (ctx) {
               ctx.drawImage(v, 0, 0, frame.width, frame.height);
               const text = decodeCanvasSmart(reader, frame, rotated).text;
-              if (!text) held = null;
-              else if (text !== held) {
-                held = text;
+              if (!text) held.current = null;
+              else if (text !== held.current) {
+                held.current = text;
                 done.current(text);
                 if (stopped) return;
               }

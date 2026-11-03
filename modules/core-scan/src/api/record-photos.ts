@@ -110,12 +110,14 @@ recordPhotosRouter.get(
   asyncHandler(async (req, res) => {
     const t = Target.safeParse(req.params);
     if (!t.success) return badBody(res, t.error);
-    const pic = await heldPicture(tenantDb(req), t.data.kind, t.data.id, async (url) => (await fetchImage(url)).image);
+    const pic = await heldPicture(tenantDb(req), t.data.kind, t.data.id, fetchImage);
     // A picture fetched again is held again, and its lifetime needs the
     // sweep, which may have let this workspace rest (#9013).
     if (pic) wakeRecordPhotos(tenantContext(req).org.id);
+    // No picture now is an answer, not a fault: the card keeps its
+    // placeholder, and a page is not logged as failing for it (#9138).
     if (!pic) {
-      res.status(404).json({ error: { code: "no_picture", message: "This suggestion holds no picture now." } });
+      res.status(204).end();
       return;
     }
     res.setHeader("Content-Type", pic.mimeType || "image/jpeg");

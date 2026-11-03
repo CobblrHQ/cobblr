@@ -50,6 +50,48 @@ export async function readEntryBounded(
   return Buffer.concat(out);
 }
 
+/** A .jsonl entry's rows, parsed as its bytes come, under the same limits as
+ *  readEntryBounded. The entry can be longer than one string can hold, though
+ *  no line of it is (#7704), and only the unfinished line is ever held. A
+ *  newline byte never sits inside a multi-byte UTF-8 character, so each line
+ *  decodes whole. */
+export async function readJsonlRowsBounded(
+  chunks: AsyncIterable<Uint8Array>,
+  opts: { maxEntryBytes: number; remainingTotalBytes: number },
+): Promise<{ rows: Array<Record<string, unknown>>; bytes: number }> {
+  const rows: Array<Record<string, unknown>> = [];
+  const take = (line: Buffer) => {
+    const text = line.toString("utf8");
+    if (text.trim()) rows.push(JSON.parse(text) as Record<string, unknown>);
+  };
+  let unfinished: Buffer[] = [];
+  let n = 0;
+  for await (const chunk of chunks) {
+    n += chunk.byteLength;
+    if (n > opts.maxEntryBytes) {
+      throw new BackupTooLargeError(
+        `A backup entry exceeds the ${opts.maxEntryBytes}-byte uncompressed limit.`,
+      );
+    }
+    if (n > opts.remainingTotalBytes) {
+      throw new BackupTooLargeError(
+        `Backup exceeds the ${RESTORE_MAX_TOTAL_UNCOMPRESSED}-byte total uncompressed ceiling.`,
+      );
+    }
+    const bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    let at = 0;
+    for (let nl = bytes.indexOf(10, at); nl !== -1; nl = bytes.indexOf(10, at)) {
+      const end = bytes.subarray(at, nl);
+      take(unfinished.length ? Buffer.concat([...unfinished, end]) : end);
+      unfinished = [];
+      at = nl + 1;
+    }
+    if (at < bytes.length) unfinished.push(Buffer.from(bytes.subarray(at)));
+  }
+  if (unfinished.length) take(Buffer.concat(unfinished));
+  return { rows, bytes: n };
+}
+
 /** Running uncompressed-byte budget across all entries of one archive. */
 export function makeUncompressedBudget(
   maxTotalBytes = RESTORE_MAX_TOTAL_UNCOMPRESSED,

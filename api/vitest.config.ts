@@ -18,7 +18,7 @@ import { suiteForks } from "../scripts/lib/job-budget.mjs";
 const ATTRIBUTION = Boolean(process.env.COBBLR_TEST_ATTRIBUTION_OUT);
 // One fork is the point there, and fits: suiteForks refuses one because one fork runs the WHOLE suite
 // past the job's time limit, and an attribution job runs a sixth of it.
-const budget = ATTRIBUTION ? { ok: true as const, forks: 1, message: "" } : suiteForks({ max: 12 });
+const budget = ATTRIBUTION ? { ok: true as const, forks: 1, message: "" } : suiteForks();
 if (!budget.ok) throw new Error(budget.message);
 const VITEST_FORKS = budget.forks;
 // check-test-balance.mjs reads this line for the packing floor.

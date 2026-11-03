@@ -2258,4 +2258,16 @@ export const CAPABILITIES: Capability[] = [
       "packages/platform-web/src/EntityThumb.tsx": "a suggested photo not yet accepted, drawn dashed so it never reads as chosen",
     },
   },
+  {
+    kind: "owns",
+    id: "files:a-zip-read-from-disk",
+    what: "opening a zip that lies on disk (an upload, a stored file): zipOnDisk in packages/platform-contract/src/zip-on-disk.ts, read with unzipper.Open.custom",
+    why:
+      "unzipper's Open.file opens the file again for every entry on a stream with no error listener; a backup restore whose " +
+      "temporary upload was removed mid-read threw an unhandled ENOENT and took the whole api down mid-suite (#8957)",
+    owner: "packages/platform-contract/src/zip-on-disk.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts", "packages/*/src/**/*.ts"],
+    detect: /\bOpen\.file\s*\(/,
+    use: "const zip = await zipOnDisk(path); try { await unzipper.Open.custom(zip.source) … } finally { await zip.close(); }",
+  },
 ];

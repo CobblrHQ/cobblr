@@ -130,6 +130,11 @@ export const SUITE_MIN_FORKS = 2;
  *  job memory peaks, 2026-09-30: 3.3 to 4.0 GiB at six forks, the 2 GiB cap at one. */
 export const SUITE_FULL_WIDTH_MIB = 4096;
 
+/** The most forks the integration suite runs on, whatever the box. Every fork queues on the job's one api: on the
+ *  same box, cap and code, twelve took 2.3 times the test time of six and a longer suite, ran a backup restore past
+ *  its 60 s and failed, with no more memory, cpu or io stall and no wait on the database (runs 61979, 61980). */
+export const SUITE_MAX_FORKS = 6;
+
 /**
  * The forks the api integration suite runs on, or why it must not run: under a
  * job limit that leaves room for fewer than SUITE_MIN_FORKS, the suite went
@@ -138,7 +143,7 @@ export const SUITE_FULL_WIDTH_MIB = 4096;
  * @param {{ max?: number, cores?: number, memMib?: number | null, capped?: boolean, limitMib?: number | null, env?: Record<string, string | undefined> }} [o]
  */
 export function suiteForks(o = {}) {
-  const forks = width("vitest", o);
+  const forks = width("vitest", { max: SUITE_MAX_FORKS, ...o });
   const env = o.env ?? process.env;
   const pinned = Number(env[PIN.vitest]);
   const capped = o.capped ?? memoryRoom().capped;

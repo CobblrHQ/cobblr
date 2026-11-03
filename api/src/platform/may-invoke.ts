@@ -14,6 +14,7 @@ import { effectNeedsAPerson } from "@cobblr/platform-contract/action-consent";
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
 import { platform } from "@cobblr/platform-contract";
 import { roleRefusal, roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 import { appTokenInvokeRefusal } from "../auth/middleware.js";
 import { accessMessage } from "../auth/token-access.js";
 import { actionRefusal, actionSafety } from "./ai-action-door.js";
@@ -127,7 +128,15 @@ function undoOnlyRefusal(actionId: string, ownUndo: boolean, asker: InvokeAsker)
  *  assets' Lend it out) runs for whoever may run that kind's own: the same
  *  act on the same record never needs two permissions (#7897). */
 async function holdsIt(asker: InvokeAsker, actionId: string, target: InvokeTarget, listing = false): Promise<boolean> {
-  const has = (id: string) => once(asker, `cap:${id}`, () => platform().auth.userHasCapability({ orgId: asker.orgId, userId: asker.userId, role: asker.role, actionId: id }));
+  // A list asks of every action, and each refusal was two reads of the meta
+  // database: a member's list was hundreds of round trips, seconds on a quiet
+  // box. Everything this person holds is read once, and every action answered
+  // from it; the door asks the one question it has.
+  const has = async (id: string) => {
+    if (!listing) return once(asker, `cap:${id}`, () => platform().auth.userHasCapability({ orgId: asker.orgId, userId: asker.userId, role: asker.role, actionId: id }));
+    const held = await once(asker, "held", () => effectiveCapabilities(asker.orgId, asker.userId, asker.role));
+    return held.all || held.caps.has(id);
+  };
   if (await has(actionId)) return true;
   const face = platformActionStandsFor(actionId);
   const kind = target.entityKind ?? (typeof target.args?.entity_kind === "string" ? target.args.entity_kind : null);
