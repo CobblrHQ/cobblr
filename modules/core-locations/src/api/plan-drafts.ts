@@ -18,7 +18,7 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { platform } from "@cobblr/platform-contract";
 import { bodyAsApplied, placesUnderDraft, plannedRack, renamePlannedRack } from "@cobblr/platform-contract/plan-draft";
-import { isRotation, ownSize, planFlags, readCloset, roomWalls, rotated, type PlanBox, type PlanFlag, type PlanWall } from "@cobblr/platform-contract/plan-clearance";
+import { drawableWalls, isRotation, ownSize, planFlags, readCloset, roomWalls, rotated, type PlanBox, type PlanFlag, type PlanWall } from "@cobblr/platform-contract/plan-clearance";
 import { OUTER_SIZE_ROLE, parseOuterSize, type OuterSize } from "@cobblr/platform-contract/outer-size";
 import type { Kysely } from "kysely";
 import { Router, type Response } from "express";
@@ -628,7 +628,7 @@ function floorOf(
     if (![b.x_mm, b.y_mm].every(Number.isFinite) || !(b.w_mm > 0) || !(b.d_mm > 0)) return null;
     return isRotation(f.rot) ? { ...b, rot: f.rot } : b;
   };
-  const ownWalls = (Array.isArray(fp.walls) ? fp.walls : []) as PlanWall[];
+  const ownWalls = drawableWalls(fp.walls);
   const walls = roomWalls({ w_mm: w, d_mm: d, walls: ownWalls }, kids.filter((k) => k.kind === "area").map((k) => ({ id: k.id, box: boxOf(k.metadata), closet: readCloset(floorplanOf(k.metadata)) })));
   const racks = kids
     .filter((k) => k.kind !== "area" && boxOf(k.metadata) && floorplanOf(k.metadata).wall_mounted !== true)

@@ -37,7 +37,7 @@
 // and camera quality) and are asserted by tests/receipt-shape-check.test.ts;
 // change one, re-run that test.
 
-import { ENDS_ITEMS, NOISE, QTY_AT, STRUCTURAL, detectDate, detectVendor, readTrailingAmount } from "./receipt-text.js";
+import { ENDS_ITEMS, NOISE, QTY_AT, STRUCTURAL, detectDate, detectVendor, parseTextReceipt, readTrailingAmount } from "./receipt-text.js";
 
 export type ReceiptShapeVerdict = "receipt" | "maybe" | "not";
 
@@ -132,6 +132,12 @@ export function scoreReceiptShape(text: string): ReceiptShape {
   score = Math.round(Math.min(1, score) * 100) / 100;
   const verdict: ReceiptShapeVerdict = score >= RECEIPT_THRESHOLD ? "receipt" : score >= MAYBE_THRESHOLD ? "maybe" : "not";
   return { verdict, score, signals: s };
+}
+
+/** How many lines to say were found: the parser's own count when its lines add
+ *  up, otherwise the priced lines the shape check counted. */
+export function receiptLinesFound(text: string): number {
+  return parseTextReceipt(text)?.receipt.items.length ?? receiptShapeSignals(text).priced_items;
 }
 
 /** The empty shape, for an image with no readable text (a product photo, a

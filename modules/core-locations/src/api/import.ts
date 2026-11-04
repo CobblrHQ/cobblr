@@ -2,8 +2,10 @@
 // happen (create vs update vs skip, parent resolution), then commit. Generic:
 //   - Known columns map to fields: name, short_name, kind ('area'|'container'),
 //     parent (references another row by the chosen match key).
-//   - EVERY other column drops into metadata[column] verbatim — nothing is
-//     special-cased (no app/migration concepts baked into the platform).
+//   - EVERY other column drops into metadata[column], nothing special-cased
+//     (no app/migration concepts baked into the platform). A plan or a list
+//     the export wrote comes back whole, and a cell that cannot stand in for
+//     what a place holds refuses the file (metadataFromCell).
 //   - `match_on` is a column YOU choose (default 'name'); a row whose match value
 //     already exists is an UPDATE, otherwise a CREATE. `parent` resolves against
 //     the same key, so hierarchy imports in one pass.
@@ -18,7 +20,7 @@ import { platform } from "@cobblr/platform-contract";
 import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { csvCell, parseCsv, unguardCsvText } from "@cobblr/platform-contract/csv";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody, hasSomethingToRead, requireRole } from "./util.js";
 import { planByKey, planByName, PATH_SEPARATOR } from "./import-plan.js";
 import { lockTree, placesOffTheTree } from "./place-move.js";
 
@@ -32,16 +34,20 @@ class ImportLoop extends Error {
 
 export const locationsImportRouter = Router({ mergeParams: true });
 
-const KNOWN = new Set(["name", "short_name", "kind", "parent"]);
+const KNOWN = new Set(["name", "short_name", "kind", "parent", "description", "notes"]);
 
 interface ParsedRow {
   row_number: number;
   name: string;
   short_name: string | null;
-  kind: "area" | "container";
+  short_name_absent: boolean;
+  kind: "area" | "container" | null;
   parent_key: string | null; // the parent's match-key value
   match_value: string | null; // this row's match-key value
   metadata: Record<string, string>;
+  name_is_literal: boolean;
+  description?: string | null;
+  notes?: string | null;
 }
 
 export function parseLocations(csv: string, matchOn: string): { headers: string[]; rows: ParsedRow[]; errors: { row_number: number; message: string }[] } {
@@ -61,9 +67,9 @@ export function parseLocations(csv: string, matchOn: string): { headers: string[
     const cells = raw[r]!;
     const get = (i: number) => (i >= 0 && i < cells.length ? unguardCsvText(cells[i]!.trim()) : "");
     const name = nameI >= 0 ? get(nameI) : "";
-    if (!name) { errors.push({ row_number: r, message: "Missing name, skipped" }); continue; }
+    if (!hasSomethingToRead(name)) { errors.push({ row_number: r, message: "Missing name, skipped" }); continue; }
     const kindRaw = get(idx("kind")).toLowerCase();
-    const kind = kindRaw === "container" ? "container" : "area";
+    const kind = kindRaw === "container" ? "container" : kindRaw ? "area" : null;
     const metadata: Record<string, string> = {};
     headers.forEach((h, ci) => {
       if (!KNOWN.has(h.toLowerCase())) {
@@ -76,6 +82,10 @@ export function parseLocations(csv: string, matchOn: string): { headers: string[
       row_number: r,
       name,
       short_name: get(idx("short_name")) || null,
+      short_name_absent: idx("short_name") < 0,
+      name_is_literal: idx("parent") >= 0,
+      ...(idx("description") >= 0 ? { description: get(idx("description")) || null } : {}),
+      ...(idx("notes") >= 0 ? { notes: get(idx("notes")) || null } : {}),
       kind,
       parent_key: get(idx("parent")) || null,
       match_value: matchCell || null,
@@ -92,6 +102,10 @@ const ImportBody = z.object({
 });
 
 // Build the existing-location lookup keyed by the chosen match column.
+const written = (p: { description?: string | null; notes?: string | null }) => ({
+  ...(p.description !== undefined ? { description: p.description } : {}),
+  ...(p.notes !== undefined ? { notes: p.notes } : {}),
+});
 
 // AI-REACH: exempt — a bulk import of up to 5 MB of CSV; as an action
 // argument the whole file would be ledgered and put on a confirm card. The
@@ -106,7 +120,7 @@ locationsImportRouter.post(
     const db = tenantDb(req);
 
     const { headers, rows, errors } = parseLocations(csv, match_on);
-    const existing = (await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "metadata"]).execute()).map((l) => ({
+    const existing = (await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "metadata", "kind", "short_name"]).execute()).map((l) => ({
       ...l,
       metadata: (l.metadata as Record<string, unknown> | null) ?? null,
     }));
@@ -170,7 +184,7 @@ locationsImportRouter.post(
         if (p.action === "update" && p.id) {
           await trx
             .updateTable("core_locations_locations")
-            .set({ name: p.name, short_name: p.short_name, kind: p.kind, ...setParent, metadata: sql`metadata || ${JSON.stringify(p.metadata)}::jsonb` })
+            .set({ name: p.name, short_name: p.short_name, kind: p.kind, ...setParent, ...written(p), metadata: sql`metadata || ${JSON.stringify(p.metadata)}::jsonb` })
             .where("id", "=", p.id)
             .execute();
           idOfRow.set(i, p.id);
@@ -178,7 +192,7 @@ locationsImportRouter.post(
         } else {
           const ins = await trx
             .insertInto("core_locations_locations")
-            .values({ name: p.name, short_name: p.short_name, kind: p.kind, parent_id: parentId, metadata: sql`${JSON.stringify(p.metadata)}::jsonb` })
+            .values({ name: p.name, short_name: p.short_name, kind: p.kind, parent_id: parentId, ...written(p), metadata: sql`${JSON.stringify(p.metadata)}::jsonb` })
             .returning("id")
             .executeTakeFirstOrThrow();
           idOfRow.set(i, ins.id);
@@ -219,7 +233,7 @@ locationsImportRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const db = tenantDb(req);
-    const locs = await db.selectFrom("core_locations_locations").select(["id", "name", "short_name", "kind", "parent_id", "metadata"]).orderBy("depth").orderBy("name").execute();
+    const locs = await db.selectFrom("core_locations_locations").select(["id", "name", "short_name", "kind", "parent_id", "metadata", "description", "notes"]).orderBy("depth").orderBy("name").execute();
     const byId = new Map(locs.map((l) => [l.id, l]));
     // Gather all metadata keys present, so they each get a column.
     const metaKeys = new Set<string>();
@@ -228,7 +242,10 @@ locationsImportRouter.get(
     const ctx = tenantContext(req);
     const hidden = await platform().entities.hiddenFields(ctx.org.id, "core-locations:location", { userId: sessionUser(req)?.id, role: ctx.role });
     for (const k of hidden) metaKeys.delete(k);
-    const headers = ["name", "short_name", "kind", "parent", ...metaKeys];
+    // An older import kept these two in metadata; they are one column now.
+    metaKeys.delete("description");
+    metaKeys.delete("notes");
+    const headers = ["name", "short_name", "kind", "parent", "description", "notes", ...metaKeys];
     const lines = [headers.map(csvCell).join(",")];
     // A parent is written by name, or by its path when its name is not unique,
     // so the file imports back into the same tree (import-plan.ts).
@@ -247,7 +264,7 @@ locationsImportRouter.get(
       const p = l.parent_id ? byId.get(l.parent_id) : undefined;
       const parent = !p ? "" : (nameCount.get(p.name.toLowerCase()) ?? 0) > 1 ? pathOf(p.id) : p.name;
       const meta = (l.metadata as Record<string, unknown>) ?? {};
-      lines.push([l.name, l.short_name ?? "", l.kind, parent, ...[...metaKeys].map((k) => meta[k])].map(csvCell).join(","));
+      lines.push([l.name, l.short_name ?? "", l.kind, parent, hidden.has("description") ? "" : l.description ?? meta.description ?? "", hidden.has("notes") ? "" : l.notes ?? meta.notes ?? "", ...[...metaKeys].map((k) => meta[k])].map(csvCell).join(","));
     }
     res.setHeader("content-type", "text/csv");
     res.setHeader("content-disposition", 'attachment; filename="locations.csv"');

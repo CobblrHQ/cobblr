@@ -1,0 +1,10 @@
+{
+  "lint": "lint:ai-output-is-not-capped",
+  "run": "node scripts/lint-ai-output-is-not-capped.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 876,
+  "recorded": "2026-11-04",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

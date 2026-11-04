@@ -22,6 +22,7 @@ import { PlaceLights } from "./PlaceLights";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { ContributedDetailPanels } from "../panels/registry";
 import { FloorPlan } from "../components/FloorPlan";
+import { DamagedPlanNotice } from "../components/DamagedPlanNotice";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { DuplicatePlaceNotice, duplicatePlaceOf } from "../components/DuplicatePlaceNotice";
 import { hasOwnLayout, readRect } from "../lib/floorplanGeometry";
@@ -380,6 +381,7 @@ export function LocationDetailPage() {
           (the plan's drawers and things, the fields, what other modules add,
           the files): shown together once the page stops asking, so none of
           them pushes Add, Move everything or Delete under a finger (#7791). */}
+      <DamagedPlanNotice slug={activeSlug} place={l} />
       <OnceQuiet key={l.id} className="space-y-5">
       {(l.kind === "area" || children.length > 0 || hasOwnLayout(l.metadata) || !readRect(l.metadata)) && <FloorPlan room={l} slug={activeSlug} />}
 

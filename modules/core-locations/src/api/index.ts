@@ -11,6 +11,8 @@ import { registerLocationsWriter } from "./sync-writer.js";
 import { registerLocationsHandlers } from "./handlers.js";
 import { registerPlaceParent } from "./place-parent.js";
 import { registerPlacesOffTheTreeHeal } from "../heal-places-off-the-tree.js";
+import { registerUnreadablePlacesHeal } from "../heal-unreadable-places.js";
+import { registerPlansWrittenAsTextHeal } from "../heal-plans-written-as-text.js";
 import { lightsRouter } from "./lights.js";
 import { planDraftsRouter, registerPlanDraftHandlers } from "./plan-drafts.js";
 import { floorplanFileRouter, registerFloorplanFileHandlers } from "./floorplan-file.js";
@@ -47,5 +49,7 @@ registerFloorplanFileHandlers();
 registerPlaceParent();
 // Side-effect: a place a crossed move left in a loop goes back to the top.
 registerPlacesOffTheTreeHeal();
+registerUnreadablePlacesHeal();
+registerPlansWrittenAsTextHeal();
 
 export default router;

@@ -1041,6 +1041,38 @@ testSupportRouter.get("/test-support/heal-passes", async (_req, res, next) => {
 // plants the old shape through the real doors, then dates it here. Test-only,
 // mounted under the same flag. Body: { org_id, table, ids, at, column? }
 // (column defaults to created_at; db: "meta" for a platform table).
+// A place as an older build could leave it, which the routes now refuse.
+testSupportRouter.post("/test-support/place-as-it-was", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as { org_id?: string; id?: string; name?: string; metadata?: unknown };
+    if (!b.org_id || !b.id) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id and id required" } });
+      return;
+    }
+    const db = await getTenantDb(b.org_id);
+    const r = await sql`update core_locations_locations set name = coalesce(${b.name ?? null}, name), metadata = coalesce(${b.metadata === undefined ? null : JSON.stringify(b.metadata)}::jsonb, metadata) where id = ${b.id}`.execute(db);
+    res.json({ ok: true, rows: Number(r.numAffectedRows ?? 0) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A saved view as an older build could leave it, which the routes now refuse.
+testSupportRouter.post("/test-support/view-as-it-was", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as { org_id?: string; id?: string; config?: unknown };
+    if (!b.org_id || !b.id) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id and id required" } });
+      return;
+    }
+    const db = await getTenantDb(b.org_id);
+    const r = await sql`update core_views_views set config = ${JSON.stringify(b.config ?? {})}::jsonb where id = ${b.id}`.execute(db);
+    res.json({ ok: true, rows: Number(r.numAffectedRows ?? 0) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 testSupportRouter.post("/test-support/made-before", async (req, res, next) => {
   try {
     const b = (req.body ?? {}) as { org_id?: string; table?: string; ids?: string[]; at?: string; column?: string; db?: "meta" };

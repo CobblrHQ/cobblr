@@ -21,7 +21,7 @@ import type { ScanInboxItem } from "../lib/api";
 import { NumberStepper, OverlayLayer, useEscapeToClose, useMenuFocus, useLockPageScroll } from "@cobblr/platform-web";
 import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
 import { DestinationPicker } from "../components/DestinationPicker";
-import { RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
+import { RECEIPT_READING_TITLE, RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
 
 export interface ScanPhoneRowAction {
   label: string;
@@ -68,6 +68,9 @@ export interface ScanPhoneRowProps {
    *  scanReceiptReadFailed): the row says so with Read again, never "Name
    *  this item" (#3581). */
   receipt?: Omit<ScanReceiptUnreadProps, "compact"> | null;
+  /** Known to be a receipt, its lines still being read: the row is titled so,
+   *  and never asks for a name, a count or a table. */
+  readingReceipt?: boolean;
   /** The pulse while the AI works. */
   working: string | null;
   /** The last AI run's failure, in words, with Retry beside it. */
@@ -206,7 +209,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             Details <ChevronRight size={14} />
           </button>
           <span data-name className={"mr-2 text-[15px] " + (nameless ? "text-muted dark:text-slate-400" : "font-medium text-content dark:text-mortar-100")}>
-            {name ?? (p.working ? "Reading…" : p.receipt ? RECEIPT_UNREAD_TITLE : "Name this item")}
+            {name ?? (p.readingReceipt ? RECEIPT_READING_TITLE : p.working ? "Reading…" : p.receipt ? RECEIPT_UNREAD_TITLE : "Name this item")}
           </span>
           {p.subtitle && (
             <span data-testid="scan-card-meta" className="mr-2 text-[11px] text-faint dark:text-slate-500">

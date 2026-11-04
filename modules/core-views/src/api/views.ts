@@ -1,4 +1,6 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { hasSomethingToRead } from "@cobblr/platform-contract/readable-text";
+import { viewConfigProblem } from "@cobblr/platform-contract/view-config";
 import { GroupingError, readGroupKeys } from "@cobblr/platform-contract/grouped-list";
 // /views — saved view CRUD + the /data passthrough that delegates
 // to platform.entities.list() for the kind the view targets.
@@ -20,7 +22,7 @@ export const viewsRouter = Router({ mergeParams: true });
  *  person saves one and another when the assistant does. */
 export const ViewCreate = z.object({
   entity_kind: z.string().min(1).max(120),
-  name: z.string().min(1).max(160),
+  name: z.string().trim().min(1).max(160).refine(hasSomethingToRead, "A view's name needs something to read."),
   view_type: z.string().min(1).max(40),
   // A view's inputs (#6897) are checked here, the one door a view is saved
   // through: a page cannot render, nor a template read, an input that is not
@@ -28,6 +30,8 @@ export const ViewCreate = z.object({
   config: z
     .record(z.unknown())
     .superRefine((c, ctx) => {
+      const problem = viewConfigProblem(c);
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
       if (c.inputs === undefined) return;
       const r = ViewInputsSchema.safeParse(c.inputs);
       if (!r.success) ctx.addIssue({ code: "custom", path: ["inputs"], message: r.error.issues[0]?.message ?? "the inputs are not valid" });

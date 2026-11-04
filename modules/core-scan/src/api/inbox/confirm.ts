@@ -54,7 +54,10 @@ import { apiFetch } from "@cobblr/platform-contract/self-api";
 import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 import { bindToCatalogEntry } from "../../services/catalog-match.js";
 import { wordsOf } from "../../services/open-facts-allergens.js";
-import { INTERNAL_API, INTO_BIN, NEW_BIN, filedIntoFor, liveTablesFor, matchItem, served, storedCandidateList, tableCategoryWord } from "./shared.js";
+import { bulkDoubt } from "../../services/bulk-doubt.js";
+import { filingDestination } from "../../services/destination.js";
+import { withPersonName } from "../../services/user-name.js";
+import { INTERNAL_API, INTO_BIN, NEW_BIN, destinationTablesFor, filedIntoFor, liveTablesFor, matchItem, served, storedCandidateList, tableCategoryWord } from "./shared.js";
 import { FILED_SINCE_ASKED_KEY, filedSinceMatched } from "../../services/filed-since.js";
 
 export const confirmRouter = Router({ mergeParams: true });
@@ -151,6 +154,9 @@ export const ConfirmBody = z.object({
    *  all, file_inbox_items): a record one of them just made is theirs, never
    *  "you already have it". */
   filed_with: z.array(z.string().uuid()).max(500).optional(),
+  /** A person saw that this row doesn't look like the table and said file it
+   *  anyway. Without it, a row filed as one of many is held (bulkDoubt, #9179). */
+  file_doubted: z.boolean().optional(),
   /** Module-specific extras forwarded verbatim to the create endpoint. */
   extras: z.record(z.unknown()).optional(),
   /** The category to file under, by NAME, whatever store the table keeps its
@@ -269,6 +275,19 @@ confirmRouter.post(
     if (scanPurpose(row) !== "arrival" && !(ranOutAsked && scanPurpose(row) === "count")) {
       res.status(409).json({ error: { code: "not_an_arrival", message: purposeHold } });
       return;
+    }
+
+    // Filed as one of many, this is a bulk door whichever button sent it (a
+    // session's File all files row by row, #9179). The person's own selection
+    // asks them, and comes back with file_doubted.
+    if ((parsed.data.filed_with?.length ?? 0) > 1 && !parsed.data.file_doubted) {
+      const tables = await destinationTablesFor(req);
+      const going = parsed.data.instance ? { module: parsed.data.target_module, instance: parsed.data.instance } : filingDestination(row as never, tables);
+      const doubt = bulkDoubt(withPersonName(row as never) as never, going, tables);
+      if (doubt) {
+        res.status(409).json({ error: { code: "doubts_the_table", message: doubt } });
+        return;
+      }
     }
 
     // ATOMIC CLAIM — two confirms racing (File-all vs a manual tap, or two

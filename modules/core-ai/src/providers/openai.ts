@@ -5,7 +5,7 @@
 // EGRESS-FILE: vendor-fixed - the provider's API address, written in the code
 import { sendDroppingRefused } from "./refused-params.js";
 import { platform, type AiCapability, isChatTurn } from "@cobblr/platform-contract";
-import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
+import { providerError, providerSentence, refuseCutOff, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, openAiToolsOf, openAiMessagesOf, parseOpenAiToolCalls } from "./tool-wire.js";
@@ -123,6 +123,7 @@ export function register(): void {
           if (!res.ok) throw failed(res.status, await res.text());
           const out = (await res.json()) as {
             choices: Array<{
+              finish_reason?: string | null;
               message: {
                 role: string;
                 content: string | null;
@@ -133,6 +134,7 @@ export function register(): void {
             model?: unknown;
           };
           const served = servedModelOf(out.model);
+          refuseCutOff("openai", out.choices[0]?.finish_reason === "length", ctx);
           const msg = out.choices[0]?.message ?? { role: "assistant", content: "" };
           const calls = parseOpenAiToolCalls(msg);
           return {

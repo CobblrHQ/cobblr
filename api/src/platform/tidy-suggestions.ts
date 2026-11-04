@@ -26,7 +26,7 @@ const CLASSIFY_SCHEMA = objectWith(["collection", "confidence"], { collection: {
 const RANK_SCHEMA = { type: "array", items: objectWith(["id"], { id: { type: "string" }, line: TEXT_OR_NULL }) };
 
 async function smallModel(orgId: string, prompt: string, schema: Record<string, unknown>): Promise<unknown> {
-  const answer = await platform().ai.invoke({ orgId, userId: null, capability: "organise", costPolicy: "free", input: { output_schema: schema, messages: [{ role: "system", content: "Return only the requested JSON. Never call tools." }, { role: "user", content: prompt }] }, config: { max_tokens: 1200, temperature: 0 } });
+  const answer = await platform().ai.invoke({ orgId, userId: null, capability: "organise", costPolicy: "free", input: { output_schema: schema, messages: [{ role: "system", content: "Return only the requested JSON. Never call tools." }, { role: "user", content: prompt }] }, config: { temperature: 0 } });
   return JSON.parse(answer.text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
 }
 

@@ -19,6 +19,7 @@ import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { enrichPhotoItem, knownCategories } from "../services/enrich-photo.js";
+import { receiptFirstLook } from "../services/receipt-first.js";
 import { answerWindow, claimGlanceAnswer, glanceItem, readContextFor, readGlanceEnabled, shouldGlance } from "../services/glance.js";
 import { finishPhotoRead } from "../services/photo-read-finish.js";
 import { scanReader } from "../services/scan-reader.js";
@@ -146,7 +147,12 @@ export function registerScanHandlers(): void {
     // read the way they chose, so this run stands down. See services/glance.ts.
     let readCtx: { confirmedName?: string; rejectedNames?: string[]; hint?: string } = {};
     const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    // A receipt gets no first look: a model asked "what is this" answers with an
+    // item, and the card would ask the person about it. The door usually knows
+    // already; a look it ran out of time for is asked here, the text memoised.
+    const isReceipt = !!meta.reading_receipt || !!(await receiptFirstLook(ctx.orgId, row.image_file_id));
     if (
+      !isReceipt &&
       shouldGlance({
         enabled: await readGlanceEnabled(db),
         barcodeText: row.barcode_text,

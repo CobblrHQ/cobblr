@@ -66,6 +66,9 @@ interface AttentionEntry {
   record?: { kind: string; id: string; name: string };
   /** For a dated entry: when, in the reader's words ("3d ago", "in 2d"). */
   when?: string;
+  /** For an overdue entry: whole days past its date, so a surface can say how
+   *  late it is and stop offering what only makes sense when it is barely late. */
+  days_late?: number;
   /** A page to read on the card itself (a pinned house rule) and the tip it is put away under. */
   body?: string;
   tip?: string;
@@ -401,7 +404,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             route: dueRoute,
             collection,
             all_ids: overdue.map((d) => d.id),
-            entries: overdue.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ago(d.day)}`, when: ago(d.day), action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
+            entries: overdue.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ago(d.day)}`, when: ago(d.day), days_late: -daysUntil(d.day, today), action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
           });
         if (dueToday.length > 0)
           rows.push({

@@ -8,6 +8,7 @@ import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan — the inbox review queue, photo-inbox-grade.
 import { createPortal } from "react-dom";
 import { FileEverythingSheet } from "../components/FileEverythingSheet";
+import { ScanDoubtAsk } from "../components/ScanDoubtAsk";
 import { ScanSessionTheme } from "../components/ScanSessionTheme";
 import { SessionMetaLine, SessionOrderRef } from "./SessionOrderLine";
 import { SessionPlaceChip } from "../components/SessionPlaceChip";
@@ -115,7 +116,7 @@ import { displayName } from "@cobblr/platform-contract/display-identity";
 import { sessionVerdict, type SessionVerdict } from "@cobblr/platform-contract/scan-session";
 import { splitParentName } from "@cobblr/platform-contract/split-line";
 import { itemEnriching } from "./scan-status";
-import { attachBodyFor, confirmBodyFor, destinationCandidateOf, duplicateSummary, filedLine, isReadyToFile, placementPreview } from "./scanFileAll";
+import { attachBodyFor, confirmBodyFor, destinationCandidateOf, duplicateSummary, filedLine, isReadyToFile, placementPreview, type DoubtedRow } from "./scanFileAll";
 import { useScanViewer } from "./scanViewer";
 import { resolveInstanceForFiling } from "./scanInstall";
 import { arrivalLabel, arrivalOf } from "./scanArrival";
@@ -2177,37 +2178,63 @@ export function ScanPage() {
   // "Add all to …" — commit the whole selection into ONE explicit table
   // (overriding each item's own routing). The bulk form of picking a target.
   const [bulkTargetOpen, setBulkTargetOpen] = useState(false);
+  // Ticked rows the server held: the person chose them, so they are asked once.
+  const [doubted, setDoubted] = useState<{ rows: DoubtedRow[]; filedWith: string[] } | null>(null);
+  const fileDoubted = async () => {
+    const ask = doubted;
+    setDoubted(null);
+    if (!ask) return;
+    const byId = new Map(items.map((i) => [i.id, i]));
+    let ok = 0;
+    let lastErr: string | null = null;
+    for (const r of ask.rows) {
+      const it = byId.get(r.id);
+      if (!it) continue;
+      try {
+        await api.confirmScanItem(activeSlug, it, { ...r.body, filed_with: ask.filedWith, file_doubted: true });
+        ok++;
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
+    }
+    void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+    if (lastErr) toast.error(`${countOf(ok, "item")} added. ${lastErr}`);
+    else toast.success(`Added ${countOf(ok, "item")}.`);
+  };
   const bulkAddAllTo = async (entry: ScanMenuEntry) => {
     setBulkBusy(true);
     setBulkTargetOpen(false);
     const byId = new Map(items.map((i) => [i.id, i]));
     let ok = 0;
     let skipped = 0;
+    const held: DoubtedRow[] = [];
     for (const id of selected) {
       const it = byId.get(id);
       if (!it || !displayName(it)) {
         skipped++;
         continue;
       }
+      const body = {
+        target_module: entry.module,
+        target_kind: entry.kind.includes(":") ? entry.kind.split(":")[1] : entry.kind,
+        instance: entry.instance ?? undefined,
+        name: displayName(it) ?? undefined,
+        quantity: it.quantity ?? undefined,
+        location_id: it.target_location_id ?? undefined,
+      };
       try {
-        await api.confirmScanItem(activeSlug, it, {
-          filed_with: [...selected],
-          target_module: entry.module,
-          target_kind: entry.kind.includes(":") ? entry.kind.split(":")[1] : entry.kind,
-          instance: entry.instance ?? undefined,
-          name: displayName(it) ?? undefined,
-          quantity: it.quantity ?? undefined,
-          location_id: it.target_location_id ?? undefined,
-        });
+        await api.confirmScanItem(activeSlug, it, { ...body, filed_with: [...selected] });
         ok++;
-      } catch {
-        skipped++;
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "doubts_the_table") held.push({ id, name: displayName(it) ?? "This", table: entry.label, body });
+        else skipped++;
       }
     }
+    if (held.length) setDoubted({ rows: held, filedWith: [...selected] });
     setBulkBusy(false);
     clearSelected();
     void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-    toast.success(`Added ${ok} to ${entry.label}${skipped ? `, ${skipped} skipped (no name / failed)` : ""}`);
+    if (ok || skipped || !held.length) toast.success(`Added ${ok} to ${entry.label}${skipped ? `, ${skipped} skipped (no name / failed)` : ""}`);
   };
   // Commit each item to its OWN top candidate — the destination the matchmaker
   // already picked ("as-is" routing). Shared by the selection bulk-confirm and
@@ -2218,6 +2245,7 @@ export function ScanPage() {
     ids: Iterable<string>,
     agreedCategory?: string | null,
     agreedLocationId?: string | null,
+    askAboutDoubts = false,
   ) => {
     const byId = new Map(items.map((i) => [i.id, i]));
 
@@ -2226,7 +2254,10 @@ export function ScanPage() {
     // belong somewhere else" modal could only propose the table the row
     // already had: File 1 on a settled Spices item asked "1 -> Spices" (#4584).
     // A person's disagreement is theirs to make on the card, where the better
-    // table is a chip; filing says where it went and offers the way back.
+    // table is a chip; filing says where it went and offers the way back. A row
+    // the server won't file as one of many (doubts_the_table) is held: a session's
+    // File all reports it as needing a look, and only a person's own ticked rows
+    // ask, after the rest have filed.
     const idList = [...ids];
 
     // INSTALL what these items are routed to, before confirming any of them.
@@ -2278,6 +2309,9 @@ export function ScanPage() {
     let failed = 0;
     let lastErr: string | null = null;
     let n = 0;
+    const held: DoubtedRow[] = [];
+    /** Why the server left a row, in its words, so the toast can say. */
+    const left: string[] = [];
     /** What filed, and where, for the done-toast and its Undo. */
     const filed: Array<{ id: string; label: string; locationId: string | null }> = [];
     for (const id of idList) {
@@ -2331,6 +2365,11 @@ export function ScanPage() {
         ok++;
         filed.push({ id, label: scanRowState(it!, viewer).destination?.label ?? "Inventory", locationId: body.location_id ?? null });
       } catch (e) {
+        if (e instanceof ApiError && e.code === "doubts_the_table") {
+          if (askAboutDoubts) held.push({ id, name: displayName(it!) ?? "This", table: scanRowState(it!, viewer).destination?.label ?? "that table", body });
+          else left.push(e.message);
+          continue;
+        }
         failed++;
         // The endpoint's message is actionable ("Enable Inventory in
         // Configuration") - throwing it away turned every total failure into
@@ -2340,11 +2379,16 @@ export function ScanPage() {
     }
     setBulkProgress(null);
     void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+    if (held.length) {
+      setDoubted({ rows: held, filedWith: idList });
+      if (!ok && !merged && !skipped && !failed) return { ok, merged, skipped, failed };
+    }
     const places = new Set(filed.map((f) => f.locationId));
     const place = places.size === 1 ? (locsQ.data?.items ?? []).find((l) => l.id === [...places][0]) : undefined;
     const parts = [ok ? filedLine(filed, place ? filingLabel(place) : null) : "0 filed"];
     if (merged) parts.push(`${merged} added to what you already had`);
     if (skipped) parts.push(`${skipped} need a manual look`);
+    if (left.length) parts.push(`Left for you: ${left[0]}${left.length > 1 ? ` (and ${left.length - 1} more like it)` : ""}`);
     if (failed) parts.push(`${failed} failed${lastErr ? ` - ${lastErr}` : ""}`);
     if (ok === 0 && failed > 0) toast.error(parts.join(" · "));
     else if (failed > 0) toast.info(parts.join(" · "));
@@ -2360,7 +2404,7 @@ export function ScanPage() {
     // The standing bin covers selected items that carry no location of their
     // own (scanned before it was set) — same rule as the header's File all.
     // An item's own location still wins inside confirmBodyFor.
-    await confirmItemsToTheirCandidate(selected, null, fileBin || null);
+    await confirmItemsToTheirCandidate(selected, null, fileBin || null, true);
     setBulkBusy(false);
     clearSelected();
   };
@@ -3147,6 +3191,7 @@ export function ScanPage() {
       )}
 
       {intake.sheet}
+      {doubted && <ScanDoubtAsk rows={doubted.rows} onFile={() => void fileDoubted()} onLeave={() => setDoubted(null)} />}
       {fileEverything && (
         <FileEverythingSheet
           slug={activeSlug}
@@ -3533,6 +3578,10 @@ export function ScanPage() {
             // Drawing some of them first moved them under a finger when File
             // came in beside them (#7789).
             const routing = busy > 0 && readyIds.length === 0;
+            // Every row still working is a receipt being read: the row says how
+            // far it has got, so the header says the same thing, not "finishing".
+            const receiptsReading = g.items.filter((it) => it.status === "pending" && (it.suggested_metadata as { reading_receipt?: boolean } | null)?.reading_receipt).length;
+            const onlyReadingReceipts = busy > 0 && receiptsReading >= busy;
             // Tables these items are routed to that the workspace does not have
             // yet. Filing installs them (see confirmItemsToTheirCandidate); the
             // tooltip says so, because installing a table is not something to
@@ -4448,9 +4497,9 @@ export function ScanPage() {
                   {busy > 0 && readyIds.length === 0 ? (
                     <span
                       className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
-                      title="The AI is still finalizing some items - names, covers and routing may still change"
+                      title={onlyReadingReceipts ? "Its lines become items here when they are read" : "The AI is still finalizing some items - names, covers and routing may still change"}
                     >
-                      <Loader2 size={9} className="animate-spin" /> {busy} finishing…
+                      <Loader2 size={9} className="animate-spin" /> {onlyReadingReceipts ? "Reading receipt…" : `${busy} finishing…`}
                     </span>
                   ) : readyIds.length > 0 ? (
                     <button
@@ -4633,7 +4682,7 @@ export function ScanPage() {
                     // While the read finishes, the line says what the
                     // "finishing" chip's tooltip says, and holds the place the
                     // caption arrives in (#7789).
-                    const caption = readyIds.length > 0 ? sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems))) : busy > 0 ? "Names, covers and where they go may still change" : null;
+                    const caption = readyIds.length > 0 ? sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems))) : busy > 0 && !onlyReadingReceipts ? "Names, covers and where they go may still change" : null;
                     return (
                       <SessionMetaLine
                         parts={[

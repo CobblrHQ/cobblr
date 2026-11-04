@@ -6,6 +6,7 @@
 // status goes through the same step here.
 
 import type { Kysely } from "kysely";
+import { hasSomethingToRead } from "@cobblr/platform-contract/readable-text";
 import { z } from "zod";
 import { platform, type EntityUpdateContext, type EntityUpdateResult } from "@cobblr/platform-contract";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
@@ -18,7 +19,7 @@ const Day = z.string().nullable().refine((v) => !v || fieldDay(v) !== null, { me
 
 const EditableNative = z
   .object({
-    name: z.string().min(1).max(160),
+    name: z.string().trim().min(1).max(160).refine(hasSomethingToRead, "A project's name needs something to read."),
     description: z.string().max(8_000).nullable(),
     status: z.enum(PROJECT_STATUSES),
     priority: z.enum(PRIORITIES).nullable(),

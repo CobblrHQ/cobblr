@@ -164,9 +164,17 @@ export function Dashboard() {
   // One request for the whole page, drawn at once from this device's last
   // copy (dashboard/snapshot.tsx). Keyed by workspace: switching starts over.
   return (
-    <DashboardSnapshotGate key={activeSlug} slug={activeSlug} userId={user?.id ?? null} code={dashboardCode} className="space-y-6">
-      <DashboardBody />
-    </DashboardSnapshotGate>
+    <>
+      {/* The page's name for a screen reader's heading list; the workspace is
+          already named in the header, so it is not drawn twice. Outside the
+          stack below: first in it, it takes no room and still gives the card
+          after it the stack's margin, a second 24 px at the top of the page
+          (#9174). */}
+      <h1 className="sr-only">{activeOrg.name}</h1>
+      <DashboardSnapshotGate key={activeSlug} slug={activeSlug} userId={user?.id ?? null} code={dashboardCode} className="space-y-6">
+        <DashboardBody />
+      </DashboardSnapshotGate>
+    </>
   );
 }
 
@@ -197,9 +205,6 @@ function DashboardBody() {
 
   return (
     <>
-      {/* The page's name for a screen reader's heading list; the workspace is
-          already named in the header, so it is not drawn twice. */}
-      <h1 className="sr-only">{activeOrg.name}</h1>
       <WorkspaceHeader
         orgName={activeOrg.name}
         slug={activeSlug}
@@ -760,11 +765,16 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
               <ChevronDown size={13} className={"text-faint transition-transform " + (open ? "rotate-180" : "")} />
             </button>
           )}
-          <Link to={it.route} className="shrink-0" title="Open the page" aria-label="Open the page">
-            <ArrowRight size={14} className="text-faint group-hover:text-accent transition" />
-          </Link>
+          {/* A card that opens has one control on its line; its page is a link
+              at the foot of what it opens (#9174). */}
+          {!expandable && (
+            <Link to={it.route} className="shrink-0 grid place-items-center" title="Open the page" aria-label="Open the page">
+              <ArrowRight size={14} className="text-faint group-hover:text-accent transition" />
+            </Link>
+          )}
         </div>
         {open && expandable && (
+          <>
           <ul className="border-t border-line/60 dark:border-slate-700/60 divide-y divide-line/40 dark:divide-slate-800/40">
             {entries.map((e) => (
               <li key={e.id} className="flex items-center gap-2.5 pl-9 pr-3 py-1.5 text-[13px]">
@@ -843,6 +853,10 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
               </li>
             )}
           </ul>
+          <Link to={it.route} className="flex items-center gap-1 pl-9 pr-3 py-1 text-xs text-accent hover:underline">
+            Open the page <ArrowRight size={12} aria-hidden />
+          </Link>
+          </>
         )}
       </div>
     </li>

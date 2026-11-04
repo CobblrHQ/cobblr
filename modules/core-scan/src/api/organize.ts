@@ -24,7 +24,8 @@ import { platform } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { BundleInstaller, fileThroughConfirm, type FilingOutcome } from "../services/file-through-confirm.js";
+import { bulkDoubt } from "../services/bulk-doubt.js";
+import { BundleInstaller, fileThroughConfirm, topCandidate, type FilingOutcome } from "../services/file-through-confirm.js";
 import { liveTablesOf, withResolvedOffers } from "../services/resolve-offers.js";
 import { destinationTables } from "../services/destination.js";
 import { assembleScanMenu } from "../services/matchmaker.js";
@@ -622,6 +623,10 @@ organizeRouter.post(
       { location_id: string; location_name: string; location_path: string; item_ids: string[] }
     >();
 
+    // Accept all is one press however the plan grouped them, so the rule counts
+    // what this press files, never one group's size (#9179).
+    const filesMany = groups.filter((g) => body.group_ids.includes(g.id)).reduce((n, g) => n + g.item_ids.length, 0) > 1;
+
     for (const gid of body.group_ids) {
       const group = groups.find((g) => g.id === gid);
       if (!group) {
@@ -742,6 +747,11 @@ organizeRouter.post(
           for (const id of stampedIds) {
             const r = rows.find((x) => x.id === id);
             if (!r) continue;
+            const doubt = filesMany ? bulkDoubt(r, topCandidate(r, door.tables), door.tables ?? []) : null;
+            if (doubt) {
+              assignedOnly.push({ ok: false, item_id: id, name: r.suggested_name ?? null, reason: doubt });
+              continue;
+            }
             const outcome = await fileThroughConfirm(door, installer!, r, locationId);
             if (outcome.ok) {
               filedItemIds.push(id);

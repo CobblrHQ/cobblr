@@ -1,3 +1,4 @@
+import { planProblem } from "@cobblr/platform-contract/plan-clearance";
 import { countOf } from "@cobblr/platform-contract/plural";
 // The plan an import follows: which row creates, which updates, and under
 // which parent, decided once and used by both the preview and the commit.
@@ -24,16 +25,49 @@ export function pathSegments(written: string): string[] {
     .filter(Boolean);
 }
 
+/** What a cell means for one metadata key, given what the place holds there.
+ *  The export writes a plan or a list as JSON and a number as digits; written
+ *  back as text they replaced the real thing, and every floor plan went blank.
+ *  A cell that cannot stand in for a richer value refuses the file. */
+export function metadataFromCell(key: string, cell: string, held: unknown): { value: unknown } | { refused: string } {
+  let structured: unknown;
+  if (/^[{[]/.test(cell)) {
+    try {
+      structured = JSON.parse(cell);
+    } catch {
+      structured = undefined;
+    }
+  }
+  const isObject = (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v);
+  if (key === "floorplan" && !isObject(structured)) return { refused: `its floorplan column is not a whole floor plan, as the export writes one` };
+  if (key === "floorplan") {
+    const problem = planProblem(structured);
+    if (problem) return { refused: `its floorplan column can't be used: ${problem}` };
+  }
+  if (structured !== undefined) return { value: structured };
+  if (typeof held === "object" && held !== null) return { refused: `its "${key}" column is plain text, and would replace the list or set of values this place holds` };
+  if (typeof held === "number" && cell.trim() !== "" && Number.isFinite(Number(cell))) return { value: Number(cell) };
+  if (typeof held === "boolean" && (cell === "true" || cell === "false")) return { value: cell === "true" };
+  return { value: cell };
+}
+
 const keyOf = (segs: string[]) => segs.map((s) => s.toLowerCase()).join("\u0000");
 
 export interface ImportRow {
   row_number: number;
   name: string;
   short_name: string | null;
-  kind: "area" | "container";
+  /** Null when the file does not say: a new place is an area, an existing one stays what it is. */
+  kind: "area" | "container" | null;
   parent_key: string | null;
   match_value: string | null;
   metadata: Record<string, string>;
+  /** The file has a parent column, so this name is a name, even with a > in it. */
+  name_is_literal?: boolean;
+  /** Undefined when the file has no such column: an existing place keeps its own. */
+  description?: string | null;
+  notes?: string | null;
+  short_name_absent?: boolean;
 }
 
 export interface ExistingPlace {
@@ -41,6 +75,8 @@ export interface ExistingPlace {
   name: string;
   parent_id: string | null;
   metadata: Record<string, unknown> | null;
+  kind?: "area" | "container";
+  short_name?: string | null;
 }
 
 /** Where a row's parent is: an existing place, an earlier row of this file, or
@@ -54,7 +90,9 @@ export interface PlannedRow {
   short_name: string | null;
   kind: "area" | "container";
   match_value: string | null;
-  metadata: Record<string, string>;
+  metadata: Record<string, unknown>;
+  description?: string | null;
+  notes?: string | null;
   action: "create" | "update";
   /** The existing place an update writes to. */
   id: string | null;
@@ -95,10 +133,14 @@ export function planByName(rows: ImportRow[], existing: ExistingPlace[]): Import
 
   // Each row: its own name, and where its parent is written (the parent
   // column, else the path prefix of a name written as a path).
+  // A place's own name may hold a >, and the export writes such a parent as
+  // that name, so a parent cell naming a place whole is that place.
+  const namedWhole = new Set([...rows.map((r) => r.name.trim().toLowerCase()), ...existing.map((e) => e.name.trim().toLowerCase())]);
   const drafts = rows.map((r) => {
-    const own = pathSegments(r.name);
+    const own = r.name_is_literal ? [r.name.trim()] : pathSegments(r.name);
     const name = own[own.length - 1] ?? r.name.trim();
-    const parentSegs = r.parent_key ? pathSegments(r.parent_key) : own.slice(0, -1);
+    const parentCell = r.parent_key?.trim() ?? "";
+    const parentSegs = parentCell ? (r.name_is_literal && namedWhole.has(parentCell.toLowerCase()) ? [parentCell] : pathSegments(parentCell)) : own.slice(0, -1);
     return { r, name, parentSegs, path: null as string[] | null, parentRef: undefined as ParentRef | undefined, error: null as string | null };
   });
   const rowsNamed = new Map<string, number[]>();
@@ -210,9 +252,11 @@ export function planByName(rows: ImportRow[], existing: ExistingPlace[]): Import
       row_number: d.r.row_number,
       name: d.name,
       short_name: d.r.short_name,
-      kind: d.r.kind,
+      kind: d.r.kind ?? "area",
       match_value: d.r.match_value,
       metadata: d.r.metadata,
+      description: d.r.description,
+      notes: d.r.notes,
       action: id ? "update" : "create",
       id,
       parent: parentWritten
@@ -224,7 +268,7 @@ export function planByName(rows: ImportRow[], existing: ExistingPlace[]): Import
     };
   });
 
-  return finish(planned, drafts.map((d) => d.parentRef ?? null));
+  return finish(planned, drafts.map((d) => d.parentRef ?? null), rows, existing);
 }
 
 /** Plan an import matched on the person's own key column (an external id). */
@@ -245,7 +289,8 @@ export function planByKey(rows: ImportRow[], existing: ExistingPlace[], matchOn:
     }
     const id = k ? existingByKey.get(k) ?? null : null;
     return {
-      row_number: r.row_number, name: r.name, short_name: r.short_name, kind: r.kind, match_value: r.match_value, metadata: r.metadata,
+      row_number: r.row_number, name: r.name, short_name: r.short_name, kind: r.kind ?? "area", match_value: r.match_value, metadata: r.metadata,
+      description: r.description, notes: r.notes,
       action: id ? "update" : "create", id, parent: null, parentRef: null, path: null, error,
     };
   });
@@ -259,11 +304,27 @@ export function planByKey(rows: ImportRow[], existing: ExistingPlace[], matchOn:
     return ref;
   });
   planned.forEach((p, i) => (p.parentRef = refs[i] ?? null));
-  return finish(planned, refs);
+  return finish(planned, refs, rows, existing);
 }
 
 /** Order parents before children, and gather what blocks the commit. */
-function finish(planned: PlannedRow[], refs: ParentRef[]): ImportPlan {
+function finish(planned: PlannedRow[], refs: ParentRef[], rows: ImportRow[], existing: ExistingPlace[]): ImportPlan {
+  const holding = new Map(existing.map((e) => [e.id, e]));
+  planned.forEach((p, i) => {
+    const r = rows[i]!;
+    const held = p.id ? holding.get(p.id) : undefined;
+    if (held) {
+      if (r.kind === null) p.kind = held.kind ?? "area";
+      if (r.short_name_absent) p.short_name = held.short_name ?? null;
+    }
+    const metadata: Record<string, unknown> = {};
+    for (const [key, cell] of Object.entries(r.metadata)) {
+      const read = metadataFromCell(key, cell, held?.metadata?.[key]);
+      if ("refused" in read) p.error ??= read.refused;
+      else metadata[key] = read.value;
+    }
+    p.metadata = metadata;
+  });
   const order: number[] = [];
   const state = new Map<number, "doing" | "done">();
   const visit = (i: number) => {

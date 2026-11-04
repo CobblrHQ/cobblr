@@ -759,6 +759,62 @@ listRouter.patch(
   }),
 );
 
+/** The sentence that holds a row from being filed as a new record, read now
+ *  against what the workspace keeps now; null when nothing it keeps is the
+ *  same thing. A check that cannot be made holds the row: a second record is
+ *  the costlier mistake. */
+async function restampAndHold(req: Request, id: string, tables: Awaited<ReturnType<typeof destinationTablesFor>>): Promise<string | null> {
+  const db = tenantDb(req);
+  const fresh = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst();
+  if (!fresh) return null;
+  const row0 = withPersonName(fresh as never) as unknown as ScanTriageRow & { suggested_candidates?: unknown };
+  try {
+    await restampTrackedMatch(tenantContext(req).org.id, db as never, id, row0 as never, null, topCandidateCategory(row0.suggested_candidates));
+  } catch {
+    return "could not check what you already have; left in the inbox";
+  }
+  const again = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst();
+  if (!again) return null;
+  const row = withPersonName(again as never) as unknown as ScanTriageRow;
+  const rebuy = scanRebuy(row, { tables });
+  if (rebuy.kind === "none") return null;
+  const match = scanTrackedMatch(row)?.title ?? null;
+  if (match && !isTheSameWordsReordered(row.suggested_name ?? "", match)) return null;
+  return rebuy.kind === "hold" && "sentence" in rebuy && rebuy.sentence ? rebuy.sentence : `already tracked as "${match ?? "something you have"}"; add to it from its card`;
+}
+
+/** Is this name the match's own words, only reordered or pluralised? The
+ *  matcher also pairs things that merely share words ("Royal Doulton Toby jug"
+ *  and "Royal Doulton character jug Old Charley" are two jugs), so a row the
+ *  stamp missed at intake is held only on the case that is certain: the same
+ *  words in another order ("Roma Tomatoes", "Tomatoes Roma"). A name spelled
+ *  the same is another of a group filed together (two identical captures are
+ *  two units), and a different number is another one ("Character jug 1", "2"). */
+function isTheSameWordsReordered(name: string, matchTitle: string): boolean {
+  const stem = (w: string) => w.replace(/(ie)?s$/, (m) => (m === "ies" ? "y" : ""));
+  const words = (v: string) => (v.toLowerCase().match(/[a-z0-9]+/g) ?? []).map(stem);
+  const a = words(name);
+  const b = words(matchTitle);
+  if (a.length === 0 || a.join(" ") === b.join(" ") || name.trim().toLowerCase() === matchTitle.trim().toLowerCase()) return false;
+  return a.length === b.length && [...a].sort().join(" ") === [...b].sort().join(" ");
+}
+
+/** A name as the words it is spelled with, for "spelled the same". */
+const sameWordsKey = (name: string): string => (name.toLowerCase().match(/[a-z0-9]+/g) ?? []).join(" ");
+
+/** Does this table count what it holds (the stock face), so that more of the
+ *  same is a bigger count? Asked of the platform; when it cannot be asked the
+ *  rows stay separate, as they always were. */
+async function keepsACount(baseUrl: string, slug: string, token: string, kind: string): Promise<boolean> {
+  try {
+    const r = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/faces?kind=${encodeURIComponent(kind)}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) return false;
+    return ((await r.json()) as { faces?: string[] }).faces?.includes("stock") === true;
+  } catch {
+    return false;
+  }
+}
+
 const FileSelectedBody = z.object({
   ids: z.array(z.string().uuid()).min(1).max(200),
   target_module: optionalField(z.string().min(1)),
@@ -799,14 +855,41 @@ listRouter.post("/inbox/file-selected", asyncHandler(async (req, res) => {
     }
   }
   const { fileSelected } = await import("../../services/file-selected.js");
-  const result = await fileSelected(ids, target.instance ? `${target.instance}:item` : target.target_kind ?? "", async (id) => {
+  const kind = target.instance ? `${target.instance}:item` : target.target_kind ?? "";
+  // A stocked table (a pantry) counts what it holds: a second row spelled the
+  // same as one filed a moment ago is more of it, not another record (#9176).
+  // A collection (jugs, machines) keeps each as its own.
+  const counted = kind && !allow_duplicate ? await keepsACount(baseUrl, ctx.org.slug, token, kind) : false;
+  const nameOf = new Map(rows.map((r) => [r.id, sameWordsKey((withPersonName(r as never) as { suggested_name?: string | null }).suggested_name ?? "")]));
+  const madeHere = new Map<string, { id: string; name: string }>();
+  const result = await fileSelected(ids, kind, async (id) => {
+    const key = nameOf.get(id) ?? "";
+    const first = counted && key ? madeHere.get(key) : undefined;
+    if (first) {
+      const response = await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${encodeURIComponent(id)}/attach`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "add-qty", kind, entity_id: first.id, ...(target.instance ? { instance: target.instance } : {}) }),
+      });
+      const body = await response.json() as { error?: { message?: string }; item?: { target_kind?: string | null } };
+      if (!response.ok) throw new Error(body.error?.message || "It could not be added");
+      return { item: body.item, created: { id: first.id, name: first.name } };
+    }
     const held = already.get(id);
     if (held) throw new Error(held);
+    if (!allow_duplicate) {
+      // The stamp above is from intake. Two rows for one product, waiting
+      // together, were each stamped with nothing to match and Add all made
+      // two records ("Roma Tomatoes" and "Tomatoes Roma", #9176): read again
+      // now, after the ones filed before this one in the same call.
+      const later = await restampAndHold(req, id, tables);
+      if (later) throw new Error(later);
+    }
     const response = await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
       method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...target, filed_with: ids, ...(catalog_entries?.[id] ? { catalog_entry_id: catalog_entries[id] } : {}) }),
     });
     const body = await response.json() as { error?: { message?: string }; item?: { target_kind?: string | null }; created?: { id?: string; name?: unknown; title?: unknown } };
     if (!response.ok) throw new Error(body.error?.message || "It could not be added");
+    if (counted && key && body.created?.id) madeHere.set(key, { id: body.created.id, name: String(body.created.name ?? body.created.title ?? "") });
     return body;
   });
   res.json(result);

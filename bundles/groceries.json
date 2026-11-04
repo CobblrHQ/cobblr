@@ -1,8 +1,13 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.14.0",
+    "version": "0.15.0",
     "releases": [
+      {
+        "version": "0.15.0",
+        "released_at": "2026-11-04",
+        "notes": "A scan of sugar, syrup, honey, flour, cornstarch, cacao or vinegar now reads as a grocery."
+      },
       {
         "version": "0.13.8",
         "released_at": "2026-10-17",
@@ -199,10 +204,21 @@
       "mixed nuts",
       "almonds",
       "cashews",
-      "peanuts"
+      "peanuts",
+      "sugar",
+      "sugar cubes",
+      "sweetener",
+      "syrup",
+      "honey",
+      "flour",
+      "cornstarch",
+      "corn starch",
+      "cacao",
+      "cacao powder",
+      "vinegar"
     ],
     "released_at": "2026-09-28",
-    "changelog": "Where a grocery is kept is its Location now, the same place its shelf label lists: the separate Storage field is gone, a scan that reads Pantry files the item into your Pantry, and the Storage you had already set moves over on this update. Earlier: Wine has its own collection now, so a scanned bottle files there when both are installed; Groceries no longer claims the word wine. Earlier: Call them what you call them: items, groceries or pantry items. Pick the word when you install, or change it later in the table's settings, and every label says it.",
+    "changelog": "A scan of sugar, syrup, honey, flour, cornstarch, cacao or vinegar now reads as a grocery.",
     "name": "Groceries",
     "description": "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
     "author": "Cobblr",

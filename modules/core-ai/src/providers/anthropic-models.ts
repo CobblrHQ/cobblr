@@ -46,6 +46,21 @@ export function anthropicTakesTemperature(model: string): boolean {
   return !m || Number(m[2]) < 5;
 }
 
+/** The most a model will write in one reply, as the models listing reports it
+ *  (`max_tokens`), per alias. A limit is a ceiling, not a price: only what is
+ *  written is paid for, so a reply stopped short is money spent on nothing
+ *  (#9175). A model not named here is taken at the newest ceiling; one that holds
+ *  less refuses the call unpaid and says what it holds (anthropic.ts). */
+const NEWEST_MAX_OUTPUT = 128_000;
+const ANTHROPIC_MAX_OUTPUT: Readonly<Record<string, number>> = {
+  "claude-opus-4-5": 64_000,
+  "claude-haiku-4-5": 64_000,
+  "claude-sonnet-4-5": 64_000,
+};
+export function anthropicMaxOutput(model: string): number {
+  return ANTHROPIC_MAX_OUTPUT[anthropicAlias(model)] ?? NEWEST_MAX_OUTPUT;
+}
+
 /** Lighter first: haiku, sonnet, opus, then anything newer by name. */
 export const ANTHROPIC_FAMILY_ORDER = ["haiku", "sonnet", "opus"] as const;
 

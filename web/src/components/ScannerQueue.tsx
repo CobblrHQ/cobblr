@@ -95,8 +95,30 @@ export function useScannerQueue(slug: string): ScannerQueueState {
   return useMemo(() => queueFromServer(summary.data ?? EMPTY, page.data?.items ?? []), [summary.data, page.data]);
 }
 
+/** The group's thumbnails, less a scan the parcels box above already names: a
+ *  tracked receipt with one line is a row there, under that item's name, and
+ *  one thing pictured twice on a screen reads as two (#9174). It is still in the
+ *  group's count and in what Add all files; only its picture steps aside. */
+export function thumbnailsBesideParcels(
+  preview: readonly ScanInboxItem[],
+  receipts: ReadonlyArray<{ groupId: string; trackingNumber: string | null; onlyItemName: string | null }>,
+): ScanInboxItem[] {
+  const named = new Set(receipts.filter((r) => r.trackingNumber && r.onlyItemName?.trim()).map((r) => r.groupId));
+  return preview.filter((i) => {
+    const group = (i.suggested_metadata as { receipt_group_id?: unknown } | null)?.receipt_group_id;
+    return !(typeof group === "string" && named.has(group));
+  });
+}
+
 export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: ScannerQueueState; cap?: number }) {
   const qc = useQueryClient();
+  // The parcels box's own read, so this asks nothing new.
+  const receipts = useQuery({
+    queryKey: ["scan-receipt-groups", slug],
+    queryFn: () => api.getPendingReceiptGroups(slug),
+    staleTime: 60_000,
+    enabled: !!slug,
+  });
   const toast = useToast();
   const navigate = useNavigate();
   const materialize = useMaterializeCapture(slug);
@@ -137,6 +159,7 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
       <ul className="space-y-1.5">
         {shown.map((g) => {
           const busy = g.bundleId ? materialize.busy(g.bundleId) : confirmGroup.isPending && confirmGroup.variables?.label === g.label;
+          const pictures = thumbnailsBesideParcels(g.preview, receipts.data?.groups ?? []);
           return (
             <li key={g.key} data-testid="scanner-queue-group" className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/15 px-3 py-2.5 space-y-1.5">
               {/* Header row: count/label + a compact inline CTA; the tile strip
@@ -178,12 +201,12 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
               {/* Full-width tile strip: the person's own scans, so they know it is
                   their thing being offered a home. */}
               <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                {g.preview.slice(0, 12).map((i) => (
+                {pictures.slice(0, 12).map((i) => (
                   <CaptureTile key={i.id} slug={slug} it={i} />
                 ))}
-                {g.ids.length > Math.min(12, g.preview.length) && (
+                {g.ids.length > Math.min(12, pictures.length) && (
                   <Link to="/scan" className="flex-1 min-w-14 max-w-24 aspect-square rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 grid place-items-center text-xs font-medium text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition">
-                    +{g.ids.length - Math.min(12, g.preview.length)}
+                    +{g.ids.length - Math.min(12, pictures.length)}
                   </Link>
                 )}
               </div>

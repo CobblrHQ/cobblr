@@ -169,6 +169,12 @@ async function read(): Promise<void> {
     const cause = e instanceof Error && e.cause instanceof Error ? e.cause : null;
     fail(`GET ${url} failed: ${cause ? `${(cause as NodeJS.ErrnoException).code ?? ""} ${cause.message}`.trim() : (e as Error).message}`, 3);
   }
+  // A stored file is bytes: as text, an image comes back ruined. --binary answers
+  // in base64, and the operator's side decodes it (#9175).
+  if (res.ok && process.argv.includes("--binary")) {
+    out(`${Buffer.from(await res.arrayBuffer()).toString("base64")}\n`);
+    return;
+  }
   const body = await res.text();
   if (!res.ok) fail(`GET ${path} -> ${res.status}\n${body}`, 3);
   out(body.endsWith("\n") ? body : body + "\n");

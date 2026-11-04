@@ -8,7 +8,7 @@ import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, anthropicToolsOf, anthropicMessagesOf, parseAnthropicContent } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 import { pricedModel, servedModelOf } from "@cobblr/platform-contract/ai-models";
-import { anthropicCapabilities, anthropicCatalog, anthropicCostCents, anthropicTakesTemperature } from "./anthropic-models.js";
+import { anthropicMaxOutput, anthropicCapabilities, anthropicCatalog, anthropicCostCents, anthropicTakesTemperature } from "./anthropic-models.js";
 import { sendDroppingRefused } from "./refused-params.js";
 
 // Which models each job may use is no longer a list here: the key's own
@@ -228,7 +228,8 @@ export function anthropicRequestBody(args: { model: string; capability: AiCapabi
   const { messages, system } = buildMessages(capability, input);
   const body: Record<string, unknown> = {
     model,
-    max_tokens: typeof config.max_tokens === "number" ? config.max_tokens : 1024,
+    // max-tokens-ok: sets no limit of its own: the caller's, else the model's maximum.
+    max_tokens: typeof config.max_tokens === "number" ? config.max_tokens : anthropicMaxOutput(model),
     // Every capability this adapter serves is extraction/routing-shaped
     // (the matchmaker literally instructs "identical items must route the
     // same way") — sampling variance is pure downside, so temperature
@@ -307,27 +308,40 @@ export interface AnthropicAnswer {
 export async function callAnthropic(args: { apiKey: string; model: string; capability: AiCapability; input: Record<string, unknown>; config: Record<string, unknown> }): Promise<AnthropicAnswer> {
   const { apiKey, model, capability } = args;
   if (!apiKey) throw new Error("anthropic: missing api_key");
-  const body = anthropicRequestBody(args);
-  const res = await sendDroppingRefused("anthropic", model, body, (b) =>
-    fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(b),
-    }),
-  );
-  if (!res.ok) {
-    const text = await res.text();
-    throw providerError("anthropic", reasonFromResponse(res.status, text), redactSecrets(`anthropic: ${res.status} ${text}`, [apiKey]), res.status, retryAfterSecOf(text));
-  }
-  const out = (await res.json()) as {
+  type Reply = {
     content: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
     usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null };
     model?: unknown;
+    stop_reason?: string | null;
   };
+  const send = async (body: Record<string, unknown>): Promise<Reply> => {
+    const res = await sendDroppingRefused("anthropic", model, body, (b) =>
+      fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(b),
+      }),
+    );
+    if (res.ok) return (await res.json()) as Reply;
+    const text = await res.text();
+    // An older model has a lower ceiling than the room asked for, and says what it is.
+    const ceiling = res.status === 400 ? text.match(/max_tokens: \d+ > (\d+)/)?.[1] : undefined;
+    // max-tokens-ok: the model's own ceiling, as it just stated it.
+    if (ceiling) return send({ ...body, max_tokens: Number(ceiling) });
+    throw providerError("anthropic", reasonFromResponse(res.status, text), redactSecrets(`anthropic: ${res.status} ${text}`, [apiKey]), res.status, retryAfterSecOf(text));
+  };
+  const out = await send(anthropicRequestBody(args));
+  // A reply that stopped at its limit is not whole, and a part of one read as an
+  // answer is how a 25-line receipt became "no line items" and a plan "no JSON"
+  // (#9175). Said by name, never parsed. Not asked again: that would pay twice.
+  if (out.stop_reason === "max_tokens" && args.config.cut_off_ok !== true) {
+    console.warn(`[core-ai] anthropic: ${capability} on ${model} was cut off at ${out.usage.output_tokens} tokens`);
+    throw providerError("anthropic", "cut_off", `anthropic: reply cut off at ${out.usage.output_tokens} tokens (${capability}, ${model})`);
+  }
   // Priced as the model that answered: a redirected call is billed as
   // the model it was served by, not the one it asked for.
   const served = servedModelOf(out.model);

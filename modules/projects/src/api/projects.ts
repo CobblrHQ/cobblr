@@ -1,6 +1,7 @@
 // /projects — CRUD + a task list endpoint scoped to a project.
 
 import { Router } from "express";
+import { hasSomethingToRead } from "@cobblr/platform-contract/readable-text";
 import { sql } from "kysely";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { z } from "zod";
@@ -39,7 +40,7 @@ projectsRouter.use((req, res, next) => {
 const Day = z.string().nullable().optional().refine((v) => !v || fieldDay(v) !== null, { message: "Give a day (YYYY-MM-DD)." });
 
 const ProjectCreate = z.object({
-  name: z.string().min(1).max(160),
+  name: z.string().trim().min(1).max(160).refine(hasSomethingToRead, "A project's name needs something to read."),
   description: z.string().max(8_000).nullable().optional(),
   status: z
     .enum(PROJECT_STATUSES)
@@ -167,7 +168,7 @@ projectsRouter.post(
   }),
 );
 
-const CopyBody = z.object({ name: z.string().trim().min(1).max(200) });
+const CopyBody = z.object({ name: z.string().trim().min(1).max(200).refine(hasSomethingToRead, "A project's name needs something to read.") });
 // AI-ACTION: projects:copy-project
 // UI-SCREEN: /projects/{id} (the record bar offers Do it again from this project)
 projectsRouter.post(

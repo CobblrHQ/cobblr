@@ -233,7 +233,7 @@ export function viewQuery(config: Record<string, unknown> | null | undefined, to
   if (cfg.filter && typeof cfg.filter === "object" && !Array.isArray(cfg.filter)) {
     out.filter = cfg.filter as Record<string, unknown>;
   }
-  if (Array.isArray(cfg.where)) out.where = (cfg.where as FilterPredicate[]).map(p => {
+  if (Array.isArray(cfg.where)) out.where = (cfg.where as FilterPredicate[]).filter((p) => p && typeof p === "object").map(p => {
     const value = p.value;
     if (typeof value !== "string") return p;
     const offset = /^today([+-][0-9]{1,4})?$/.exec(value);

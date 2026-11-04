@@ -58,6 +58,7 @@ function boundFrom(fp: Record<string, unknown>): FpBound | null {
   const walls: FpWall[] = [];
   if (Array.isArray(fp.walls)) {
     for (const raw of fp.walls) {
+      if (!raw || typeof raw !== "object") continue;
       const wl = raw as Record<string, unknown>;
       const x1 = num(wl.x1), y1 = num(wl.y1), x2 = num(wl.x2), y2 = num(wl.y2);
       if (x1 === null || y1 === null || x2 === null || y2 === null) continue;
@@ -65,6 +66,7 @@ function boundFrom(fp: Record<string, unknown>): FpBound | null {
       const openings: FpOpening[] = [];
       if (Array.isArray(wl.openings)) {
         for (const raw of wl.openings) {
+          if (!raw || typeof raw !== "object") continue;
           const o = raw as Record<string, unknown>;
           const at = num(o.at_mm);
           const ow = num(o.w_mm);

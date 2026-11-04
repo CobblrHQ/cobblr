@@ -28,6 +28,13 @@ const DateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => {
   const d = new Date(v + "T12:00:00Z");
   return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === v;
 }, "Enter a valid date");
+const FUTURE_SLACK_MS = 24 * 60 * 60_000;
+const doneAtReads = (v: string | null | undefined) => {
+  if (!v) return true;
+  const at = instantFromInput(v);
+  const year = /^\s*(\d{1,4})-/.exec(v)?.[1];
+  return !!at && (!year || Number(year) >= 1900) && at.getTime() <= Date.now() + FUTURE_SLACK_MS;
+};
 const Anchor = z.union([
   z.string().regex(/^\d{2}-\d{2}$/).refine((v) => DateOnly.safeParse("2000-" + v).success, "Enter a month and day"),
   z.object({ month: z.number().int().min(1).max(12), last_day: z.literal(true) }),
@@ -51,7 +58,7 @@ const Rule = {
   counter_field: z.string().min(1).max(80).nullable().optional(),
   counter_every: z.number().positive().max(10_000_000).nullable().optional(),
   /** When it was last done, if before today: the first due date counts from it. */
-  last_done_at: z.string().nullable().optional(),
+  last_done_at: z.string().nullable().optional().refine(doneAtReads, { message: "Give the day it was last done: a real day, not in the future." }),
 };
 
 const ScheduleCreate = z

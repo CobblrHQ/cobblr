@@ -58,10 +58,12 @@ const redirects = new Map<string, Map<string, string>>();
 // single-flight: one load per connection key from the workspace's store
 const redirectLoads = new Map<string, Promise<void>>();
 
-/** The workspace a connection key belongs to, and the connection within it. */
-function splitKey(key: string): { orgId: string; conn: string } {
+/** The workspace a connection key belongs to, and the connection within it.
+ *  A person's own connection (`user:<credential id>`) belongs to no workspace,
+ *  so it has nowhere to store anything: its orgId is null. */
+function splitKey(key: string): { orgId: string | null; conn: string } {
   const i = key.indexOf("|");
-  return { orgId: key.slice(0, i), conn: key.slice(i + 1) };
+  return i < 0 ? { orgId: null, conn: key } : { orgId: key.slice(0, i), conn: key.slice(i + 1) };
 }
 
 /** Where a learned redirect is kept: one row per connection and requested
@@ -79,6 +81,10 @@ export function loadRedirects(key: string): Promise<void> {
   const inFlight = redirectLoads.get(key);
   if (inFlight) return inFlight;
   const { orgId, conn } = splitKey(key);
+  if (orgId === null) {
+    redirects.set(key, redirects.get(key) ?? new Map<string, string>());
+    return Promise.resolve();
+  }
   const prefix = redirectStateKey(conn);
   const p = (async () => {
     const rows = await store.list(orgId, prefix);
@@ -128,11 +134,12 @@ export async function noteServedModel(key: string, requested: string, served: st
   const { orgId, conn } = splitKey(key);
   const stateKey = redirectStateKey(conn, requested);
   if (same) {
-    if (learned.delete(requested)) await store.take(orgId, stateKey);
+    if (learned.delete(requested) && orgId !== null) await store.take(orgId, stateKey);
     return false;
   }
   if (learned.get(requested) === bare) return false;
   learned.set(requested, bare);
+  if (orgId === null) return true;
   const value = JSON.stringify({ served: bare, learned_at: new Date(now()).toISOString() });
   const was = await store.get(orgId, stateKey);
   await store.swap(orgId, stateKey, was, value);

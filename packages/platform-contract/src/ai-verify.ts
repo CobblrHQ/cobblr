@@ -84,7 +84,9 @@ async function generateOnce(def: AiProviderDef, credentials: Record<string, unkn
     credentials,
     input: { messages: [{ role: "user", content: VERIFY_PROMPT }] },
     // No temperature: some models refuse it outright (Haiku 5.5, barcode #55).
-    config: { max_tokens: VERIFY_MAX_TOKENS },
+    // max-tokens-ok: a connection probe only asks whether the model answers, and
+    // runs on every save; a reply it stops short is still one, so no "cut off".
+    config: { max_tokens: VERIFY_MAX_TOKENS, cut_off_ok: true },
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

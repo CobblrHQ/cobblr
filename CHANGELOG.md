@@ -2,6 +2,19 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-04
+
+### Improvements
+- A big file reaches its import: a places CSV up to 5 MB, a catalog CSV up to 20 MB and an emailed receipt with a large attachment now arrive, and anything too big says how big it can be
+- Adding two identical items to a table that counts its stock now makes one record with a count of two, and the same words in another order are held as the one you already have instead of a second record
+- A long-overdue item on the dashboard now says how late it is and leads with Used up, the overdue card can mark everything used up as well as tossed, and two rows for one product are offered to put together at the top of the card
+
+### Fixes
+- A receipt photo or screenshot now says it is a receipt from the moment it is added, and never shows a name box, a quantity or a table. Receipts that print a plain "Discount" under an item now read without AI.
+- An "Add all" on the dashboard now takes only scans whose own name or category ties them to that table; the rest wait for a look in the Scan Inbox. Sugar, syrup, honey, flour, cornstarch, cacao and vinegar now read as groceries.
+- File all, accepting a put-away plan and the assistant's filing of several items now leave a row whose name and category say nothing about the table, the same as the dashboard's Add all, and say why. One row named on its own still files.
+- A session's File all now leaves a row whose name and category say nothing about the table. When you tick rows yourself and some don't look like their table, Cobblr files the rest and asks once whether to file those anyway or leave them.
+
 ## 2026-11-01
 
 ### Improvements

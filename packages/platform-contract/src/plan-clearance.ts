@@ -48,6 +48,50 @@ export interface PlanWall {
   closet?: string;
 }
 
+const isNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const isWall = (w: unknown): w is PlanWall => {
+  if (!w || typeof w !== "object") return false;
+  const o = w as Record<string, unknown>;
+  if (![o.x1, o.y1, o.x2, o.y2].every(isNumber)) return false;
+  if (o.openings === undefined || o.openings === null) return true;
+  return Array.isArray(o.openings) && o.openings.every((p) => !!p && typeof p === "object" && isNumber((p as { at_mm?: unknown }).at_mm) && isNumber((p as { w_mm?: unknown }).w_mm));
+};
+
+/** The walls of a stored plan that can be drawn; anything else in the list is dropped. */
+export function drawableWalls(walls: unknown): PlanWall[] {
+  return Array.isArray(walls) ? walls.filter(isWall) : [];
+}
+
+/** Why a value can't be stored as a place's floor plan, in words, or null when
+ *  it can. Every page reading a plan trusts this shape, and one wall that isn't
+ *  a wall took the room's page and its plan page down to the error screen. */
+export function planProblem(fp: unknown): string | null {
+  if (fp === null || fp === undefined) return null;
+  if (typeof fp !== "object" || Array.isArray(fp)) return "a floor plan has to be a set of sizes and walls";
+  const o = fp as Record<string, unknown>;
+  for (const k of ["x_mm", "y_mm"]) if (o[k] !== undefined && o[k] !== null && !isNumber(o[k])) return `a floor plan's ${k} has to be a number`;
+  for (const k of ["w_mm", "d_mm"]) {
+    if (o[k] === undefined || o[k] === null) continue;
+    if (!isNumber(o[k]) || (o[k] as number) < 0 || (o[k] as number) > 10_000_000) return `a floor plan's ${k} has to be a size in millimetres`;
+  }
+  if (o.walls !== undefined && o.walls !== null) {
+    if (!Array.isArray(o.walls)) return "a floor plan's walls have to be a list";
+    const bad = o.walls.findIndex((w) => !isWall(w));
+    if (bad >= 0) return `wall ${bad + 1} of this floor plan needs x1, y1, x2 and y2 as numbers, and any openings as a list with at_mm and w_mm`;
+  }
+  return null;
+}
+
+/** What is left of a stored plan once what can't be read is gone: it always
+ *  passes planProblem, and what could be drawn is still there. */
+export function repairedPlan(fp: unknown): Record<string, unknown> | null {
+  if (!fp || typeof fp !== "object" || Array.isArray(fp)) return null;
+  const out: Record<string, unknown> = { ...(fp as Record<string, unknown>) };
+  for (const k of ["x_mm", "y_mm", "w_mm", "d_mm"]) if (planProblem({ [k]: out[k] })) delete out[k];
+  if (out.walls !== undefined) out.walls = drawableWalls(out.walls);
+  return out;
+}
+
 export interface PlanRoom {
   w_mm: number;
   d_mm: number;

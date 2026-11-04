@@ -143,21 +143,13 @@ export function ParcelsInFlight({
 
   if (parcels.length === 0) return null;
 
-  return (
-    // Deliberately spare. A dashboard box earns its space by being scannable,
-    // and an early version with card padding and a nested bordered list ate a
-    // whole band of the page to say three short things. No outer card: a header
-    // line and the rows.
-    <div className="space-y-1">
-      <div className="flex items-baseline justify-between gap-2 px-0.5">
-        {/* No count beside this. Every row already says its own state, and a
-            box that self-hides is never long enough for a tally to tell you
-            something the rows do not. */}
-        <div className="text-[10px] uppercase tracking-widest text-accent">on its way</div>
-      </div>
-
-      <div className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded-lg overflow-hidden bg-surface dark:bg-slate-900">
-        {parcels.map((p) => {
+  // A delivered parcel is not on its way: it has its own heading, first, since
+  // it is the one with something to do (#9174).
+  const arrived = parcels.filter((p) => p.state === "delivered");
+  const coming = parcels.filter((p) => p.state !== "delivered");
+  const rows = (list: Parcel[]) => (
+    <div className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded-lg overflow-hidden bg-surface dark:bg-slate-900">
+      {list.map((p) => {
           const delivered = p.state === "delivered";
           return (
             <Link
@@ -166,7 +158,7 @@ export function ParcelsInFlight({
               // One row per order, always: min-w-0 + truncate on the flexible
               // parts, nowrap on the rest. A parcel that wrapped to two lines
               // would make the box grow exactly when there is most to show.
-              className="flex items-start sm:items-center gap-2 px-2.5 py-1.5 text-[13px] sm:whitespace-nowrap hover:bg-subtle dark:hover:bg-slate-800/60"
+              className="flex items-center gap-2 px-2.5 py-1.5 text-[13px] sm:whitespace-nowrap hover:bg-subtle dark:hover:bg-slate-800/60"
             >
               {delivered ? (
                 <PackageCheck size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" aria-hidden />
@@ -195,13 +187,10 @@ export function ParcelsInFlight({
               {p.count != null && p.count > 1 && (
                 <span className="text-[11px] text-faint shrink-0 hidden sm:inline">{countOf(p.count, "item")}</span>
               )}
-              <span
-                className={`text-xs shrink-0 ${
-                  delivered ? "text-emerald-600 dark:text-emerald-400 font-medium" : "text-muted"
-                }`}
-              >
-                {p.state ? (LABEL[p.state] ?? p.state) : "Not checked yet"}
-              </span>
+              {/* Under its own heading a delivered parcel does not say so again. */}
+              {!delivered && (
+                <span className="text-xs shrink-0 text-muted">{p.state ? (LABEL[p.state] ?? p.state) : "Not checked yet"}</span>
+              )}
               {/* The carrier's sentence, then the place. These are what the row
                   was missing: "Delivered" alone does not tell you it is sitting
                   in the garage. Truncated so the row stays one line. */}
@@ -235,8 +224,30 @@ export function ParcelsInFlight({
               )}
             </Link>
           );
-        })}
-      </div>
+      })}
+    </div>
+  );
+
+  return (
+    // Deliberately spare. A dashboard box earns its space by being scannable,
+    // and an early version with card padding and a nested bordered list ate a
+    // whole band of the page to say three short things. No outer card: a header
+    // line and the rows. No count beside a heading: every row says its own
+    // state, and a box that self-hides is never long enough for a tally to tell
+    // you something the rows do not.
+    <div className="space-y-3">
+      {arrived.length > 0 && (
+        <div className="space-y-1" data-testid="parcels-delivered">
+          <div className="px-0.5 text-[10px] uppercase tracking-widest text-accent">delivered</div>
+          {rows(arrived)}
+        </div>
+      )}
+      {coming.length > 0 && (
+        <div className="space-y-1" data-testid="parcels-on-its-way">
+          <div className="px-0.5 text-[10px] uppercase tracking-widest text-accent">on its way</div>
+          {rows(coming)}
+        </div>
+      )}
     </div>
   );
 }

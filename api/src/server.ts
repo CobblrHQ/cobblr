@@ -94,6 +94,7 @@ import { notificationAudiencesRouter } from "./routes/notification-audiences.js"
 import { notificationDefaultsRouter } from "./routes/notification-defaults.js";
 import { pairingsRouter } from "./routes/pairings.js";
 import { portalRouter } from "./routes/portal.js";
+import { DEFAULT_BODY_LIMIT, LARGE_BODIES, unreadableBody } from "./platform/large-bodies.js";
 import { diagnosticsRouter } from "./routes/diagnostics.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { adminUsersRouter } from "./routes/admin-users.js";
@@ -160,58 +161,19 @@ export function createApp(): AppHandles {
       credentials: true,
     }),
   );
-  // The edge relay's /respond carries base64 image/file bytes a bridge pulled
-  // from a LAN source (sync image import) — larger than the default 1mb API cap.
-  // Parse that ONE path at a higher limit BEFORE the global parser, which then
-  // sees req._body already set and skips it. Every other path stays at 1mb.
-  const relayRespondJson = express.json({ limit: "20mb" });
-  app.use((req, res, next) =>
-    req.method === "POST" && req.path.endsWith("/modules/digifab/edge/respond")
-      ? relayRespondJson(req, res, next)
-      : next(),
-  );
-  // A Homebox export or a spreadsheet (core-import) is a whole inventory's
-  // worth of rows in one body (a CSV, or a workbook as base64) — routinely
-  // bigger than the 1mb default. Parse those core-import POST paths higher
-  // BEFORE the global parser (same req._body-skip trick as the relay above);
-  // every other path stays at 1mb.
-  const importJson = express.json({ limit: "24mb" });
-  app.use((req, res, next) =>
-    req.method === "POST" && /\/modules\/core-import\/(homebox|sheets)/.test(req.path)
-      ? importJson(req, res, next)
-      : next(),
-  );
-  // A scan-inbox export with embedded photos is one JSON envelope carrying a
-  // whole inbox's images as base64 (a real 69-item export is 5.4MB). Same
-  // pre-mount pattern as above - and it MUST live here: a limit raised on the
-  // module router is dead code, because this file's global 1mb parser has
-  // already consumed and rejected the body before the router ever runs. That
-  // exact mistake shipped once (#1534 claimed the route-level raise fixed it;
-  // the live path still 500'd with PayloadTooLargeError until this).
-  const scanImportJson = express.json({ limit: "32mb" });
-  app.use((req, res, next) =>
-    req.method === "POST" && /\/modules\/core-scan\/import(\/preview)?$/.test(req.path)
-      ? scanImportJson(req, res, next)
-      : next(),
-  );
-  // What another Cobblr sends over a share: changes (and a View as request)
-  // signed over their exact bytes (so the raw body is kept), photos inline (so
-  // the limit is high).
-  // Same pre-mount pattern as above, for that one path.
-  const shareOpsJson = express.json({
-    limit: "64mb",
-    verify: (req, _res, buf) => {
-      (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
-    },
-  });
-  app.use((req, res, next) =>
-    req.method === "POST" && /^\/api\/v1\/share-links\/[^/]+\/[a-z-]+$/.test(req.path) ? shareOpsJson(req, res, next) : next(),
-  );
-  const sendFileJson = express.json({limit: "64mb"});
-  app.use((req,res,next) => req.method === "POST" && /^\/api\/v1\/orgs\/[^/]+\/records\/send\/file\/(import|confirm|restore)$/.test(req.path) ? sendFileJson(req,res,next) : next());
+  // Routes that take more than the default body, read here because the parser
+  // below has consumed or refused a body before any router runs. A limit further
+  // along never applies (lint:dead-route-parsers).
+  for (const large of LARGE_BODIES) {
+    const parser = express.json({
+      limit: large.limit,
+      verify: large.keepRaw ? (req, _res, buf) => { (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8"); } : undefined,
+    });
+    app.use((req, res, next) => (large.methods.includes(req.method) && large.path.test(req.path) ? parser(req, res, next) : next()));
+  }
   app.use(
     express.json({
-      limit: "1mb",
+      limit: DEFAULT_BODY_LIMIT,
       // Capture raw body bytes on inbound webhook paths so the receivers can
       // verify provider signatures (HMAC / Stripe) against the exact bytes that
       // were transmitted. Cheap (one toString per request, kept only on the
@@ -687,6 +649,12 @@ export function completeApp(app: Application): void {
           res.status(204).end();
           return;
         }
+        return;
+      }
+      // A body the parser could not take is the caller's to fix, and no route ran.
+      const unreadable = unreadableBody(err);
+      if (unreadable) {
+        res.status(unreadable.status).json({ error: { code: unreadable.code, message: unreadable.message } });
         return;
       }
       // Postgres 22P02 (invalid_text_representation) means a malformed

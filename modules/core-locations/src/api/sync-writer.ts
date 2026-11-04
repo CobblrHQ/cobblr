@@ -5,6 +5,8 @@
 // user token. Depth is recomputed from the parent and the same module events
 // fire, so hierarchy + wires + views stay consistent with the HTTP path.
 
+import { planProblem } from "@cobblr/platform-contract/plan-clearance";
+import { hasSomethingToRead } from "./util.js";
 import { duplicateSiblingMessage, siblingNamed } from "./siblings.js";
 import { DuplicateRecordError, findRowIdByKey, imageId, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
@@ -13,6 +15,13 @@ import { deletePlace, restoreDeletedPlace } from "./place-delete.js";
 import { movePlace } from "./place-move.js";
 
 let registered = false;
+
+/** The same refusals as the REST route's body, thrown so the assistant hears why. */
+function refuseUnreadable(fields: Record<string, unknown>): void {
+  if (fields.name !== undefined && !hasSomethingToRead(String(fields.name))) throw new Error("A place needs a name you can read.");
+  const problem = planProblem((fields.metadata as { floorplan?: unknown } | null | undefined)?.floorplan);
+  if (problem) throw new Error(problem);
+}
 
 export function registerLocationsWriter(): void {
   if (registered) return;
@@ -25,6 +34,7 @@ export function registerLocationsWriter(): void {
     findByKey: async (orgId, key, value) => findRowIdByKey(await platform().tenants.getDb(orgId), "core_locations_locations", key, value),
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
+      refuseUnreadable(fields);
       // Same rule as the REST route, because this is the door an assistant
       // comes through. The THROW is the point: the agent loop feeds a failed
       // write back to the model, so it learns the shelf is already there and
@@ -83,8 +93,9 @@ export function registerLocationsWriter(): void {
           `can't set ${refused.join(", ")} on a location — ${refused.map((k) => SERVER_OWNED[k]).join("; ")}`,
         );
       }
+      refuseUnreadable(fields);
       const patch: Record<string, unknown> = { updated_at: new Date() };
-      if (fields.name !== undefined) patch.name = String(fields.name);
+      if (fields.name !== undefined) patch.name = String(fields.name).trim();
       if (fields.short_name !== undefined) patch.short_name = asStr(fields.short_name);
       if (fields.kind !== undefined) patch.kind = normalizeKind(fields.kind);
       if (fields.description !== undefined) patch.description = asStr(fields.description);

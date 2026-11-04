@@ -149,6 +149,13 @@ export const NO_NAME_SENTENCE = "No name yet. Name it to file it.";
 /** A receipt whose lines could not be read (#3581): the row is a receipt,
  *  not an unnamed item, so the card says so and offers Read again first. */
 export const RECEIPT_UNREAD_TITLE = "Receipt not read";
+/** A row known to be a receipt, while its lines are read: one state from the
+ *  moment it is known until the lines land or the read fails. */
+export const RECEIPT_READING_TITLE = "Receipt";
+export function receiptReadingWords(linesFound: number | null | undefined): string {
+  const n = Number(linesFound);
+  return n > 0 ? `Reading receipt: ${n} line${n === 1 ? "" : "s"} found…` : "Reading receipt…";
+}
 export const RECEIPT_UNREAD_SENTENCE = "Its lines could not be read yet. Read it again.";
 export const RECEIPT_READ_AGAIN = "Read again";
 export const RECEIPT_AS_ITEM = "Treat it as one item";

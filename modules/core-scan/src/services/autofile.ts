@@ -23,6 +23,7 @@
 // plan lists it under "left for you" with the reason, never as "filed as new"
 // (#2980).
 
+import { bulkDoubt } from "./bulk-doubt.js";
 import { filedQuantityOf } from "./filed-quantity.js";
 import { scanRebuy, scanRowState, type ScanRebuy, type ScanResolverTable, type ScanTriageRow } from "@cobblr/platform-contract/scan-triage";
 
@@ -72,6 +73,8 @@ export interface AutofileItem {
    *  matched record: what its card says instead (a keyword-only route, a
    *  doubt). The plan never adds what the card would not (#5905). */
   cardSays?: string | null;
+  /** Why a bulk door leaves a new record of this row for a person (bulkDoubt). */
+  doubt?: string | null;
 }
 
 /** One line of the plan a person reads before confirming. `name` is the
@@ -135,6 +138,7 @@ export async function planInbox<T extends ScanTriageRow & { id: string; suggeste
         canInstall: deps.canInstall,
         review: deps.review(row),
         cardSays: cardSaysOtherwise(judged, deps.tables, deps.canInstall),
+        doubt: bulkDoubt(judged, deps.candidate(judged), deps.tables),
       }),
     );
   }
@@ -186,6 +190,7 @@ export function planItem(item: AutofileItem): AutofilePlan {
   if (!item.candidate?.module || !item.candidate?.kind) {
     return { action: "skip", itemId: item.id, name, why: "nowhere obvious to put it" };
   }
+  if (item.doubt) return { action: "skip", itemId: item.id, name, why: item.doubt };
   const destination = item.candidate.label?.trim() || item.candidate.instance || null;
   // The route can point at a table this workspace does not have yet (a fresh
   // workspace's first receipt routes to Groceries before Groceries exists).

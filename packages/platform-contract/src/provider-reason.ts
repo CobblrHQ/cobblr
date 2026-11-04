@@ -32,6 +32,9 @@ export const PROVIDER_REASONS = [
    *  output schema): a local model ignoring a JSON layout (#5790). Another
    *  model may well keep to it, so the call moves on. */
   "wrong_shape",
+  /** The provider stopped at its token limit: the reply is not whole, so it is
+   *  not an answer. Another model may well fit (#9175). */
+  "cut_off",
   /** The provider failed for a reason none of the above names. */
   "unknown",
 ] as const;
@@ -57,10 +60,20 @@ export function providerError(provider: string, reason: ProviderReason, message:
   return new ProviderError(provider, reason, message, status, retryAfterSec);
 }
 
+/** A reply that stopped at its token limit, said by name: every adapter refuses
+ *  one rather than hand part of an answer to a parser that reads it as empty
+ *  (#9175). `allowed` is the connection probe's `cut_off_ok`, which only asks
+ *  whether the model answers. */
+export function refuseCutOff(provider: string, stoppedAtLimit: boolean, ctx: { capability: string; model: string; config?: Record<string, unknown> }): void {
+  if (!stoppedAtLimit || ctx.config?.cut_off_ok === true) return;
+  console.warn(`[core-ai] ${provider}: ${ctx.capability} on ${ctx.model} was cut off at its token limit`);
+  throw providerError(provider, "cut_off", `${provider}: reply cut off at its token limit (${ctx.capability}, ${ctx.model})`);
+}
+
 /** Reasons that say nothing about the request itself, only about this
  *  provider right now: another provider may well answer. A refusal of the
  *  content ("unknown" covers a malformed or refused request) is not one. */
-export const REASONS_ANOTHER_PROVIDER_MAY_ANSWER: readonly ProviderReason[] = ["busy", "unreachable", "quota", "invalid_key", "model_unavailable", "wrong_shape"];
+export const REASONS_ANOTHER_PROVIDER_MAY_ANSWER: readonly ProviderReason[] = ["busy", "unreachable", "quota", "invalid_key", "model_unavailable", "wrong_shape", "cut_off"];
 
 /** The reason on an error, or null for one that carries none (a ProviderError,
  *  or a refusal the router built from one). */
@@ -152,6 +165,8 @@ export function providerSentence(
       return `${who} is busy right now: it answered, and is turning calls away for the moment. Try again in a minute. Nothing was changed.`;
     case "wrong_shape":
       return `${who} answered, but not in the shape this job needs${opts.model ? ` (${opts.model})` : ""}, so nothing it said was kept. A stronger model, or another connection, may keep to it. Nothing was changed.`;
+    case "cut_off":
+      return `${who} ran out of room before finishing its answer${opts.model ? ` (${opts.model})` : ""}, so nothing it said was kept. Try again, or pick a stronger model under ${whereToFix(opts.door)}. Nothing was changed.`;
     case "unknown":
       return `${who} could not answer. Try again, or check the connection under ${whereToFix(opts.door)}. Nothing was changed.`;
   }
@@ -174,6 +189,8 @@ export function whyItDidNotAnswer(reason: string): string {
       return "no longer serves its model";
     case "wrong_shape":
       return "answered in the wrong shape";
+    case "cut_off":
+      return "ran out of room before finishing";
     default:
       return "failed";
   }

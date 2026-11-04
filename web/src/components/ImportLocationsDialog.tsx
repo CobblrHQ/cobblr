@@ -68,7 +68,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
             <div className="text-xs text-muted dark:text-slate-400">
               Columns: <code>name</code> (required), <code>short_name</code>, <code>kind</code> (area/container),
               <code> parent</code> (the parent's value in the match column). Any other column is stored on the
-              location's metadata as-is.
+              location's metadata. A floor plan or list exported from here comes back whole; a file that would replace one with plain text is refused.
             </div>
             <label className="block">
               <span className="text-[10px] uppercase tracking-widest text-faint block mb-1">CSV</span>

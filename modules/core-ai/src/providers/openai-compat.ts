@@ -16,7 +16,7 @@
 // presets (OpenRouter) register the same machinery with a fixed base URL.
 
 import { platform, type AiCapability, type AiProviderDef, isChatTurn } from "@cobblr/platform-contract";
-import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
+import { providerError, providerSentence, refuseCutOff, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { servedModelOf } from "@cobblr/platform-contract/ai-models";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { sendDroppingRefused } from "./refused-params.js";
@@ -359,6 +359,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           // Every frame names the model answering; the first one that does is kept.
           let streamedModel: string | null = null;
           let streamedUsage: unknown = null;
+          let streamedCutOff = false;
           const onChunk = streamText
             ? (chunk: string) => {
                 sseTail += chunk;
@@ -371,12 +372,13 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
                   if (!payload || payload === "[DONE]") continue;
                   try {
                     const frame = JSON.parse(payload) as {
-                      choices?: Array<{ delta?: { content?: string } }>;
+                      choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
                       model?: unknown;
                       usage?: unknown;
                     };
                     streamedModel ??= servedModelOf(frame.model);
                     if (frame.usage) streamedUsage = frame.usage;
+                    if (frame.choices?.[0]?.finish_reason === "length") streamedCutOff = true;
                     const piece = frame.choices?.[0]?.delta?.content;
                     if (typeof piece === "string" && piece) {
                       streamedText += piece;
@@ -419,6 +421,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           if (streamText) {
             // A streamed body is SSE frames, not one JSON object. Everything
             // needed was collected on the way past.
+            refuseCutOff(id, streamedCutOff, ctx);
             if (!streamedText.trim()) throw new Error(`${id}: the stream carried no text`);
             // No usage frame (a server that ignores stream_options): the count is
             // unknown, so none is logged rather than a zero nobody claimed.
@@ -426,6 +429,8 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           }
           const out = (await res.json()) as {
             choices: Array<{
+              // Google's endpoint says its MAX_TOKENS here as "length" too.
+              finish_reason?: string | null;
               message: {
                 role: string;
                 content: string | null;
@@ -439,6 +444,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
              *  for the one asked (Google redirects a deprecated Gemini). */
             model?: unknown;
           };
+          refuseCutOff(id, out.choices[0]?.finish_reason === "length", ctx);
           const msg = out.choices[0]?.message ?? { role: "assistant", content: "" };
           const calls = parseOpenAiToolCalls(msg);
           return {

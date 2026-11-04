@@ -6,7 +6,7 @@
 // set-dep-satisfied wire). The `satisfied` column therefore only ever speaks
 // for record dependencies.
 
-import { sql, type Kysely, type RawBuilder } from "kysely";
+import { sql, type Kysely, type RawBuilder, type Selectable } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { ProjectsDB } from "../db.js";
 import { assigneeOf, tellTurn } from "./assignee.js";
@@ -91,7 +91,28 @@ export async function releaseDependentsOf(orgId: string, db: Kysely<ProjectsDB>,
  *  it can. Both doors (the route and the assistant's action) ask this, so a
  *  loop cannot be made through one that the other refuses: a loop is two tasks
  *  each waiting on the other, and neither can ever start. */
-export async function refuseNewTaskDependency(
+/** Link two tasks, or say why not. The check and the write are held under one lock for the workspace, so two
+ *  people linking two tasks to each other at once can't both pass the check. */
+export async function addTaskDependency(
+  db: Kysely<ProjectsDB>,
+  taskId: string,
+  dependsOnId: string,
+  note: string | null = null,
+): Promise<{ refused: string } | { row: Selectable<ProjectsDB["projects_task_dependencies"]> }> {
+  return db.transaction().execute(async (trx) => {
+    await sql`select pg_advisory_xact_lock(hashtext('projects_task_dependencies.depends_on_task_id'))`.execute(trx);
+    const refused = await refuseNewTaskDependency(trx, taskId, dependsOnId);
+    if (refused) return { refused };
+    const row = await trx
+      .insertInto("projects_task_dependencies")
+      .values({ task_id: taskId, depends_on_task_id: dependsOnId, note })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    return { row };
+  });
+}
+
+async function refuseNewTaskDependency(
   db: Kysely<ProjectsDB>,
   taskId: string,
   dependsOnId: string,

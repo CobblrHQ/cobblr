@@ -3,6 +3,7 @@
 // completed_at can be stamped server-side.
 
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { hasSomethingToRead } from "@cobblr/platform-contract/readable-text";
 import { Router } from "express";
 import { instantFromInput } from "@cobblr/platform-contract/day";
 import { z } from "zod";
@@ -11,7 +12,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { dependenciesOf, openBlockerCount, refuseNewTaskDependency, releaseDependentsOf } from "./deps.js";
+import { addTaskDependency, dependenciesOf, openBlockerCount, releaseDependentsOf } from "./deps.js";
 import { assigneeOf, tellAssignee } from "./assignee.js";
 import { makeNextOccurrence } from "./repeat.js";
 import { writeTaskOrder } from "./order.js";
@@ -31,7 +32,7 @@ tasksRouter.use((req, res, next) => {
 
 const TaskCreate = z.object({
   project_id: z.string().uuid().nullable().optional(),
-  title: z.string().min(1).max(320),
+  title: z.string().trim().min(1).max(320).refine(hasSomethingToRead, "A task's title needs something to read."),
   description: z.string().max(8_000).nullable().optional(),
   status: z.enum(TASK_STATUSES).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   priority: z.enum(PRIORITIES).nullable().optional(),
@@ -384,12 +385,15 @@ tasksRouter.post(
 
     const db = tenantDb(req);
     if (parsed.data.depends_on_task_id) {
-      const refused = await refuseNewTaskDependency(db, id, parsed.data.depends_on_task_id);
-      if (refused) {
-        res.status(400).json({ error: { code: "invalid_dep", message: refused } });
+      const added = await addTaskDependency(db, id, parsed.data.depends_on_task_id, parsed.data.note ?? null);
+      if ("refused" in added) {
+        res.status(400).json({ error: { code: "invalid_dep", message: added.refused } });
         return;
       }
-    } else if (!(await db.selectFrom("projects_tasks").select("id").where("id", "=", id).executeTakeFirst())) {
+      res.status(201).json(added.row);
+      return;
+    }
+    if (!(await db.selectFrom("projects_tasks").select("id").where("id", "=", id).executeTakeFirst())) {
       res.status(404).json({ error: { code: "not_found", message: "task not found" } });
       return;
     }
@@ -397,7 +401,7 @@ tasksRouter.post(
       .insertInto("projects_task_dependencies")
       .values({
         task_id: id,
-        depends_on_task_id: parsed.data.depends_on_task_id ?? null,
+        depends_on_task_id: null,
         target_module: parsed.data.target_module ?? null,
         target_entity_type: parsed.data.target_entity_type ?? null,
         target_entity_id: parsed.data.target_entity_id ?? null,

@@ -128,6 +128,7 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
     setUploading(true);
     if (multi) setUploadProgress({ done: 0, total: files.length });
     let ok = 0;
+    let receipts = 0;
     let sessionBatch: string | null = null;
     // On screen before the upload is, with its stage (#3852): a picture that
     // shows nothing for a few seconds gets pasted again.
@@ -183,6 +184,7 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
           updatePending(slug, key, { rowId: scanned.id });
           expirePending(slug, key, 30_000);
           ok++;
+          if ((scanned.suggested_metadata as { reading_receipt?: boolean } | null)?.reading_receipt) receipts++;
           // Reveal each as it lands, so a long selection fills in progressively.
           invalidate();
         } catch (e) {
@@ -201,7 +203,10 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
       // Only a workspace that has said it cannot look at an image is told so;
       // a status still loading reads as "on its way to be looked at".
       const looking = opts.identifyAvailable !== false;
-      if (ok === 1) toast.success(looking ? "Photo added - AI is identifying it" : "Photo added - name it in the inbox");
+      // A picture the read already knows is a receipt is never announced as a
+      // photo being identified: the toast and the row say one thing.
+      if (ok === 1 && receipts === 1) toast.success("Receipt added - reading its lines");
+      else if (ok === 1) toast.success(looking ? "Photo added - AI is identifying it" : "Photo added - name it in the inbox");
       else if (ok > 1) toast.success(looking ? `${ok} photos added as one batch - AI is identifying them` : `${ok} photos added as one batch - name them in the inbox`);
     } finally {
       setUploading(false);

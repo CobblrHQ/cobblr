@@ -5,12 +5,14 @@
 import { Router } from "express";
 import { viewsRouter } from "./views.js";
 import { registerViewsHandlers } from "./handlers.js";
+import { registerUnreadableViewNamesHeal } from "./heal-unreadable-view-names.js";
 import { registerWireViewReader } from "./saved-view-reader.js";
 import { registerEditViewAction } from "./edit-view-action.js";
 import { registerRestoreViewAction } from "./restore-view-action.js";
 import { registerResetViewAction } from "./reset-view-action.js";
 
 registerResetViewAction();
+registerUnreadableViewNamesHeal();
 
 registerEditViewAction();
 registerRestoreViewAction();

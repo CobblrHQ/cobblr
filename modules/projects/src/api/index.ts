@@ -9,11 +9,15 @@ import { platform } from "@cobblr/platform-contract";
 import { projectsRouter } from "./projects.js";
 import { tasksRouter } from "./tasks.js";
 import { registerProjectsHandlers } from "./handlers.js";
+import { registerUnreadableNamesHeal } from "./heal-unreadable-names.js";
+import { registerTaskLoopsHeal } from "./heal-task-loops.js";
 import { registerProjectsNotificationMappers } from "./notification-mapper.js";
 import { registerProjectsCalendarSource, registerProjectsOverdueSource } from "./calendar-source.js";
 import { registerPatternPhotoSubscriber } from "./pattern-photo.js";
 import { registerPatternNeedsSubscriber } from "./pattern-needs.js";
 
+registerUnreadableNamesHeal();
+registerTaskLoopsHeal();
 registerProjectsCalendarSource();
 registerProjectsOverdueSource();
 registerProjectsHandlers();

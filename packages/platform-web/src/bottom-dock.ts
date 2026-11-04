@@ -28,15 +28,15 @@ export function stackBottomChrome(heights: readonly number[]): { offsets: number
 }
 
 /** What the page's end must clear: the dock's bars, plus the tallest corner
- *  piece sitting above them (its lift and its own height). A corner piece
- *  goes translucent over a control it covers (yield-to-content.ts), but a
- *  page whose last row can never scroll clear of the Live pill and the
- *  bubble still has actions nobody can read whole (#3069). A hidden corner
- *  piece (height 0) costs nothing. */
+ *  piece sitting above them (its lift and its own height), plus the gap the
+ *  stack keeps. A corner piece goes translucent over a control it covers
+ *  (yield-to-content.ts), but a page whose last row can never scroll clear of
+ *  the Live pill and the bubble still has actions nobody can read whole
+ *  (#3069, #9174). A hidden corner piece (height 0) costs nothing. */
 export function bottomClearance(barTotal: number, corners: readonly { height: number; lift: number }[]): number {
   let tallest = 0;
   for (const c of corners) if (c.height > 0) tallest = Math.max(tallest, c.height + c.lift);
-  return barTotal + tallest;
+  return barTotal + (tallest > 0 ? tallest + CORNER_GAP : 0);
 }
 
 /** Where each corner piece sits in its corner's stack, bottom first. Declared

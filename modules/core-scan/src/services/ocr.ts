@@ -19,7 +19,13 @@
 // Page segmentation mode 4 ("a single column of text of variable sizes") is
 // deliberate. The default mode reads a receipt as two columns and returns the
 // descriptions and then the prices as separate blocks, which loses the one
-// thing the line parser keys on: the amount at the END of its line.
+// thing the line parser keys on: the amount at the END of its line. Mode 4
+// still does it to a screenshot with a wide gap before the prices: a phone's
+// receipt screen came back as every name, then every price, and scored 0.1 on
+// a receipt it had read perfectly (#9175). Prices standing alone on their own
+// lines are that split, and those pictures are read again as one block (mode
+// 6), which keeps each price on its line. A column of prices costs that second
+// run; every other picture costs nothing.
 //
 // TWO PASSES, because a render and a photograph are different problems. A
 // render or a scan (the review pack, an emailed image, a screenshot) reads
@@ -272,6 +278,17 @@ function readLines(text: string): number {
   return text.split(/\r?\n/).filter((l) => /[a-z0-9]/i.test(l)).length;
 }
 
+/** A price and nothing else on the line, with a till's one-letter tax flag if
+ *  it printed one, as "53 .29" and "5.92 F" come out of the engine. */
+const LONE_PRICE = /^\W*\d{0,5}\s?[.,]\s?\d{2}(\s+[A-Za-z])?\s*$/;
+/** Fewer than this is a label's one price or a total below a table, not a
+ *  column the engine pulled away from its names. */
+const SPLIT_COLUMN_PRICES = 3;
+
+function lonePrices(text: string): number {
+  return text.split(/\r?\n/).filter((l) => LONE_PRICE.test(l.trim())).length;
+}
+
 /**
  * Read the text off an image. Null when there is no engine, when it failed,
  * or when it read nothing at all; the caller treats every null the same way
@@ -349,7 +366,12 @@ async function readImageText(bytes: Buffer | Uint8Array, framePassOnly = false):
   const frame = await run(["stdin", "stdout", "--psm", "4", "-l", "eng"], await preprocessForOcr(bytes));
   if (framePassOnly) return frame.trim() ? { text: frame, ms: Math.round(performance.now() - t0), engine: "tesseract", pass: "frame" } : null;
   if (readLines(frame) >= FRAME_ENOUGH_LINES) {
-    return { text: frame, ms: Math.round(performance.now() - t0), engine: "tesseract", pass: "frame" };
+    let text = frame;
+    if (lonePrices(frame) >= SPLIT_COLUMN_PRICES) {
+      const block = await run(["stdin", "stdout", "--psm", "6", "-l", "eng"], await preprocessForOcr(bytes));
+      if (lonePrices(block) < lonePrices(frame)) text = block;
+    }
+    return { text, ms: Math.round(performance.now() - t0), engine: "tesseract", pass: "frame" };
   }
   const paper = await preprocessPaperForOcr(bytes);
   const cropped = paper ? await run(["stdin", "stdout", "--psm", "6", "-l", "eng"], paper) : "";

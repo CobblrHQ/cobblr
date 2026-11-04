@@ -2,6 +2,7 @@
 // The assistant's form of PATCH /views/:id, minus taking a shared view private
 // (an owner's or admin's call there) and changing which kind it shows.
 import { platform, readJsonArg } from "@cobblr/platform-contract";
+import { viewConfigProblem } from "@cobblr/platform-contract/view-config";
 import type { Kysely } from "kysely";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import type { CoreViewsDB } from "../db.js";
@@ -26,6 +27,8 @@ export function registerEditViewAction(): void {
     const config = readJsonArg<Record<string, unknown>>(args, "config");
     if (config !== undefined) {
       if (!config || typeof config !== "object" || Array.isArray(config)) return { ok: false, error: "The configuration is an object of columns, grouping and filters." };
+      const problem = viewConfigProblem(config);
+      if (problem) return { ok: false, error: `That configuration can't be saved: ${problem}.` };
       patch.config = config;
     }
     const pinned = args.pinned === true || args.pinned === "true" ? true : args.pinned === false || args.pinned === "false" ? false : undefined;

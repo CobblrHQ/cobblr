@@ -11,6 +11,7 @@
 
 import { scanRebuy, scanReviewReason, type ScanResolverTable } from "@cobblr/platform-contract/scan-triage";
 import { cardSaysOtherwise, planItem } from "./autofile.js";
+import { bulkDoubt } from "./bulk-doubt.js";
 import { filingDestination, type DestinationRow } from "./destination.js";
 import type { LiveTable } from "./resolve-offers.js";
 
@@ -73,6 +74,7 @@ export function scannerQueue(rows: readonly QueueRow[], tables: readonly ScanRes
       canInstall,
       review: scanReviewReason(r),
       cardSays: cardSaysOtherwise(r, tables, canInstall),
+      doubt: bulkDoubt(r, c, tables),
     });
     if (plan.action === "skip") {
       held++;

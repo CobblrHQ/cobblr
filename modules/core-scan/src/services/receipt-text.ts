@@ -23,6 +23,7 @@ import {
   buildReceipt,
   cleanOrderRef,
   enrichReceiptFromText,
+  weightUnit,
   isMailTitle,
   isoDate,
   type ParsedReceipt,
@@ -91,14 +92,43 @@ export function readTrailingAmount(line: string): { label: string; amount: numbe
  *  quantity-times-unit-price form, wherever it appears. */
 export const QTY_AT = /(\d+(?:[.,]\d+)?)\s*([a-z]{1,6})?\s*@\s*[$€£¥]?\s*(\d+(?:[.,]\d+)?)/i;
 
-function parseQtyAt(s: string): { qty: number; unit_price: number } | null {
-  const m = s.match(QTY_AT);
+/** The engine reads "lb" as "1b" or "b" often enough that "2.40 1b @ 3.10" would
+ *  otherwise be a quantity of 1 (the "1" of "1b" beside the "@"). */
+const OCR_LB = /(\d)\s+[1I|]?b\b/g;
+/** The same "1b" run up against its number: "3.321b @ 1.29" is 3.32 lb. */
+const OCR_LB_GLUED = /(\d[.,]\d{2})[1I|]b\b/g;
+/** A leading zero read as a copyright mark, or lost: "@ $ ©.99", "@ .79". */
+const OCR_ZERO = /(@\s*[$€£¥]?\s*)[©®]?(?=[.,]\d)/g;
+
+function parseQtyAt(s: string): { qty: number; unit_price: number; unit: string | null } | null {
+  const m = s.replace(OCR_ZERO, "$10").replace(OCR_LB_GLUED, "$1 lb").replace(OCR_LB, "$1 lb").match(QTY_AT);
   if (!m) return null;
   const qty = Number((m[1] ?? "").replace(",", "."));
   const unit = Number((m[3] ?? "").replace(",", "."));
   if (!Number.isFinite(qty) || !Number.isFinite(unit) || qty <= 0) return null;
-  return { qty, unit_price: unit };
+  return { qty, unit_price: unit, unit: m[2] ?? null };
 }
+
+/** "2.0 @ 3.49" alone on a line: the count and rate of the item above, the rate
+ *  sitting where the money reader looks for an amount. The engine reads the "@"
+ *  as "0", "@0" or a stray mark, so the separator is loose here; what makes that
+ *  safe is that count times rate has to equal the item's own price. A misread
+ *  count ("2.6 @ 3.99" under 7.98) gives way to the price when the price divides
+ *  by the rate exactly. */
+const RATE_DETAIL = /^(\d+(?:[.,]\d+)?)\s*[@0©®e]+\s*[$€£¥]?\s*(\d+[.,]\d{2})\s*$/i;
+
+/** A row of a date and nothing else, where a shop's name would be: an app's
+ *  order screen is headed by the day. */
+const DATE_ONLY = /^(?:[a-z]{3,9}\.?\s+\d{1,2},?\s+\d{2,4}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})$/i;
+/** The column headings of a receipt's table, not a shop. */
+const COLUMN_HEADING = /^(?:description|item|items|qty|quantity|price|amount)(?:\s+(?:\$|€|£|¥|s|qty|quantity|price|amount|total))*$/i;
+
+/** A screenshot's first line is the phone's clock and icons, whatever the engine
+ *  makes of them ("9:12 mm R |"), not a shop. */
+const PHONE_STATUS_BAR = /^\d{1,2}:\d{2}\b/;
+
+/** A discount row with no name of its own, printed under the item it comes off. */
+const BARE_DISCOUNT = /^discount\b/i;
 
 /** Strip a leading SKU / item number (6+ digits) — a warehouse club prints one
  *  on every line and it is not part of the product's name.
@@ -128,11 +158,19 @@ function detectCurrency(text: string): string | null {
   return CURRENCY[m[0]] ?? m[0].toUpperCase();
 }
 
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const NAMED_DATE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s*(\d{4})\b/i;
+
 export function detectDate(text: string): string | null {
   // OCR turns a leading 0 into @ or 9 often enough that anchoring on the
   // separators beats anchoring on the digits.
   const m = text.match(/\b(\d{4}-\d{2}-\d{2})\b/) ?? text.match(/\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/);
-  return m ? isoDate(m[1]!) : null;
+  if (m) return isoDate(m[1]!);
+  // An app's order screen is headed by the day, spelled out: "Mar 14, 2026".
+  const named = text.match(NAMED_DATE);
+  if (!named) return null;
+  const month = MONTHS.indexOf(named[1]!.toLowerCase()) + 1;
+  return `${named[3]}-${String(month).padStart(2, "0")}-${named[2]!.padStart(2, "0")}`;
 }
 
 /** The reference a receipt prints for itself: "ORDER #77142", "Invoice
@@ -162,6 +200,7 @@ export function detectVendor(lines: string[]): string | null {
     if (isMailTitle(s)) continue;
     if (/^\d+\s/.test(s)) continue; // street address
     if (/\b(tel|phone|fax|www\.|http|store\s*#)\b/i.test(s)) continue;
+    if (DATE_ONLY.test(s) || NAMED_DATE.test(s) || COLUMN_HEADING.test(s) || PHONE_STATUS_BAR.test(s)) continue;
     if (readTrailingAmount(s)) continue;
     return s;
   }
@@ -194,7 +233,7 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
     .filter((l) => l && !NOISE.test(l));
   if (lines.length < 4) return null;
 
-  const items: Array<{ description: string; qty: number; unit_price: number | null; line_total: number; discount: number }> = [];
+  const items: Array<{ description: string; qty: number; unit_price: number | null; line_total: number; discount: number; bare_discount: number; weight?: number; weight_unit?: string }> = [];
   let subtotal: number | null = null;
   let total: number | null = null;
   let grandTotal: number | null = null;
@@ -219,7 +258,7 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
       if (wrapped && wrapped.label === WRAP_LABEL && wrapped.amount > 0) {
         const description = pendingDescription!.replace(WEIGHED_DETAIL, "").trim();
         if (/[a-z]/i.test(description)) {
-          items.push({ description, qty: 1, unit_price: wrapped.amount, line_total: wrapped.amount, discount: 0 });
+          items.push({ description, qty: 1, unit_price: wrapped.amount, line_total: wrapped.amount, discount: 0, bare_discount: 0 });
           pendingDescription = null;
           continue;
         }
@@ -231,6 +270,11 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
       if (qa && last && !itemsClosed) {
         last.qty = qa.qty;
         last.unit_price = qa.unit_price;
+        // Sold by weight: 1.60 lb is one squash, not "2 of the same".
+        if (weightUnit(qa.unit)) {
+          last.weight = qa.qty;
+          last.weight_unit = qa.unit!;
+        }
         continue;
       }
       const bare = stripSku(line).replace(/[\s.:-]+$/, "").trim();
@@ -251,6 +295,32 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
       continue;
     }
     if (itemsClosed) continue;
+    // The vocabulary below calls "Discount" bookkeeping, which it is at the foot
+    // of a receipt. Above the totals, with money coming off, it belongs to the
+    // item over it: "Discount -0.40" dropped here left an app's receipt dollars over
+    // its own subtotal, and the whole read went to a model that was not answering.
+    const previous = items[items.length - 1];
+    if (hit.amount < 0 && BARE_DISCOUNT.test(label) && previous) {
+      previous.discount += Math.abs(hit.amount);
+      previous.bare_discount += Math.abs(hit.amount);
+      continue;
+    }
+    const rate = line.match(RATE_DETAIL);
+    if (rate && previous) {
+      const qty = Number((rate[1] ?? "").replace(",", "."));
+      const unit = Number((rate[2] ?? "").replace(",", "."));
+      const counted = unit > 0 ? Math.round(previous.line_total / unit) : 0;
+      if (qty > 0 && Math.abs(qty * unit - previous.line_total) <= 0.01) {
+        previous.qty = qty;
+        previous.unit_price = unit;
+        continue;
+      }
+      if (counted >= 2 && Math.abs(counted * unit - previous.line_total) <= 0.01) {
+        previous.qty = counted;
+        previous.unit_price = unit;
+        continue;
+      }
+    }
     if (STRUCTURAL.test(label)) continue;
 
     // An item. Its own line may carry the qty-times-unit form, in which case
@@ -289,7 +359,7 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
       if (prev) prev.discount += Math.abs(hit.amount);
       continue;
     }
-    items.push({ description, qty, unit_price, line_total: hit.amount, discount: 0 });
+    items.push({ description, qty, unit_price, line_total: hit.amount, discount: 0, bare_discount: 0 });
   }
 
   if (items.length < 2) return null;
@@ -300,9 +370,18 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
   const expectedAgainst: "subtotal" | "total" = subtotal !== null ? "subtotal" : "total";
   const expected = subtotal ?? grandTotal ?? total;
   if (expected === null || expected === undefined) return null;
-  const sum = Math.round(items.reduce((s, i) => s + i.line_total - i.discount, 0) * 100) / 100;
-  const delta = Math.round((sum - expected) * 100) / 100;
   const tolerance = Math.max(0.02, items.length * 0.01);
+  const sumOf = (rows: typeof items) => Math.round(rows.reduce((s, i) => s + i.line_total - i.discount, 0) * 100) / 100;
+  let sum = sumOf(items);
+  let delta = Math.round((sum - expected) * 100) / 100;
+  // A till can print a bare discount and still subtotal before it. The arithmetic
+  // says which this receipt is: if the items only add up without those rows, they
+  // were not taken off yet, so they are not on the lines.
+  if (Math.abs(delta) > tolerance && items.some((i) => i.bare_discount > 0)) {
+    for (const i of items) i.discount -= i.bare_discount;
+    sum = sumOf(items);
+    delta = Math.round((sum - expected) * 100) / 100;
+  }
   if (Math.abs(delta) > tolerance) return null;
 
   const receipt = buildReceipt({
@@ -317,6 +396,7 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
       unit_price: i.unit_price,
       line_total: i.line_total,
       discount: i.discount || null,
+      ...(i.weight ? { weight: i.weight, weight_unit: i.weight_unit } : {}),
     })),
   });
   if (!receipt) return null;

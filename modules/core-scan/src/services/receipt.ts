@@ -247,7 +247,7 @@ async function visionExtract(
   }
 }
 
-async function tenantVisionExtract(orgId: string, imageB64: string, mediaType: string, sourceId: string, userId?: string | null): Promise<string> {
+async function tenantVisionExtract(orgId: string, imageB64: string, mediaType: string, sourceId: string, userId?: string | null, bypassCache = false): Promise<string> {
   const r = await platform().ai.invoke({
     orgId,
     userId: userId ?? undefined,
@@ -259,6 +259,7 @@ async function tenantVisionExtract(orgId: string, imageB64: string, mediaType: s
       output_schema: RECEIPT_OUTPUT_SCHEMA,
     },
     source: { kind: "core-scan:receipt", id: sourceId },
+    ...(bypassCache ? { bypass_cache: true } : {}),
   });
   return r.text;
 }
@@ -501,10 +502,14 @@ async function readReceiptBytes(
     if (!mayAsk(read?.text)) return failed({ ok: false, reason: "It does not read as a sale.", code: "no_line_items" }, source);
     try {
       const receipt = shapeReceipt(await visionExtract(orgId, img.toString("base64"), imgMime, sourceId, userId, visitorIp, { hostedJobId: opts.hostedJobId, queueIfBusy: opts.queueIfBusy }));
-      if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, source);
+      // A reply with no lines may be a stored one, and a cut-off reply was stored
+      // like any other (#9175): Read again would be handed it for ever. Asked
+      // afresh once before saying the receipt has no lines.
+      const afresh = receipt ?? shapeReceipt(await tenantVisionExtract(orgId, img.toString("base64"), imgMime, sourceId, userId, true));
+      if (!afresh) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, source);
       // The engine's text, when it read any, is the evidence for the date
       // even though the lines came from the model.
-      return done(receipt, "ai-vision", read?.text ?? null, source);
+      return done(afresh, "ai-vision", read?.text ?? null, source);
     } catch (e) {
       if (e instanceof HostedReadQueued) return { ok: false, code: "ai_unavailable", reason: HOSTED_RECEIPT_QUEUED_WORDS, hosted_job: e.jobId, source };
       return failed(aiFailed(e, userId), source);

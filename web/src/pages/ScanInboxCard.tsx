@@ -113,7 +113,7 @@ import { SCAN_UNDO_ACTIONS, scanCombinedCount } from "@cobblr/platform-contract/
 import { ScanReceiptUnread } from "../components/ScanReceiptUnread";
 import { scanAssertedFields, fieldStandingsOf } from "@cobblr/platform-contract/scan-evidence";
 import { provenanceHeadline, provenanceLines } from "@cobblr/platform-contract/field-contributions";
-import { KEYWORD_ROUTE_SENTENCE, ACTION_ADD, actionInstallAdd, PHOTO_CHECK_NOTE, photoCheckIsLive, confidenceInWords } from "@cobblr/platform-contract/scan-copy";
+import { receiptReadingWords, KEYWORD_ROUTE_SENTENCE, ACTION_ADD, actionInstallAdd, PHOTO_CHECK_NOTE, photoCheckIsLive, confidenceInWords } from "@cobblr/platform-contract/scan-copy";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight } from "./scan-status";
 import { baseKind } from "./scanFileAll";
@@ -653,7 +653,10 @@ export function InboxCard({
   // contract resolves it to no destination), so no pill, commit or quantity:
   // those are controls for filing a thing nobody can file yet.
   const receiptUnread = scanReceiptReadFailed(item);
-  const dest = receiptUnread
+  const readingReceipt =
+    item.status === "pending" &&
+    !!(item.suggested_metadata as { reading_receipt?: boolean } | null)?.reading_receipt;
+  const dest = receiptUnread || readingReceipt
     ? null
     : // A pick made a moment ago, until the row comes back served with it.
     destOptions.find((c) => entryKey(c.module, c.instance) === destKey) ??
@@ -733,11 +736,10 @@ export function InboxCard({
   // Reading a receipt is WORK, not failure. Without this the row - a photo,
   // no name, enrichment finished - reads as "couldn't identify" for the
   // seconds it takes to become line items (reported 2026-08-31).
-  const readingReceipt =
-    item.status === "pending" &&
-    !!(item.suggested_metadata as { reading_receipt?: boolean } | null)?.reading_receipt;
   // Whatever the router gave it, a settled row with no name shows the name
   // field and gets no one-tap Add (lib/namelessCard.ts, #2918).
+  const receiptLinesFound = (item.suggested_metadata as { receipt_shape?: { lines?: number } } | null)?.receipt_shape?.lines;
+  const readingReceiptWords = receiptReadingWords(receiptLinesFound);
   const nameless = namelessCard({ status: item.status, suggested_name: item.suggested_name, barcode_text: item.barcode_text, ai_suggested_at: item.ai_suggested_at, readingReceipt });
   const needsName = nameless.nameField;
   // How long ago enrichment finished — the matchmaker runs detached AFTER that
@@ -803,7 +805,7 @@ export function InboxCard({
   // Once the matchmaker has run, a tentative table exists, or we're rate-limited,
   // the lookup has SETTLED; an unnamed row then prompts to name, not "awaiting".
   const awaitingFresh =
-    !item.suggested_name && !item.ai_suggested_at && candidates.length === 0 && !rateLimited;
+    !item.suggested_name && !item.ai_suggested_at && candidates.length === 0 && !rateLimited && !readingReceipt;
   // A doubt the pipeline raised (a short barcode the catalogs may have
   // mis-matched, a split piece read from the group) that no person has
   // retired: the contract's one answer (scanDoubt), which already folds in
@@ -2387,7 +2389,7 @@ export function InboxCard({
   );
   const confirmForm = (
     <>
-          {!planContext && formOpen && !receiptUnread && scanPurpose(item) === "arrival" && <ConfirmForm
+          {!planContext && formOpen && !receiptUnread && !readingReceipt && scanPurpose(item) === "arrival" && <ConfirmForm
             // The row and the chosen table ONLY. This key once carried the name,
             // the maker, the AI timestamp and the top route's fields, so every
             // refetch that moved one of them remounted the whole form and every
@@ -2467,9 +2469,9 @@ export function InboxCard({
     null;
   const phoneWorking = rerunning
     ? replayNoAi ? "Replaying the latest processing…" : "Re-running the lookup…"
+    : readingReceipt ? readingReceiptWords
     : serverMatching ? "AI is reading the details…"
     : rlActive ? "Rate-limited, retrying…"
-    : readingReceipt ? "Reading the receipt's lines…"
     : split.isPending ? "Splitting the photo…"
     : null;
   const phoneAddLabel = dest && !isUnidentified(item.suggested_name) ? `Add to ${dest.label}…` : "Add to a table…";
@@ -2496,7 +2498,7 @@ export function InboxCard({
           photo={thumb}
           name={shownName ?? ""}
           working={phoneWorking}
-          quantity={receiptUnread || restockMatch || item.status !== "pending" ? null : { value: isOwnCopy(item.suggested_metadata) ? (item.quantity ?? 1) : Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }}
+          quantity={receiptUnread || readingReceipt || restockMatch || item.status !== "pending" ? null : { value: isOwnCopy(item.suggested_metadata) ? (item.quantity ?? 1) : Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }}
           commit={
             dest && item.status === "pending" && oneTap && !restockMatch
               ? {
@@ -2822,15 +2824,16 @@ export function InboxCard({
                       : null
             }
             quantity={
-              receiptUnread || scanPurpose(item) !== "arrival"
+              receiptUnread || readingReceipt || scanPurpose(item) !== "arrival"
                 ? null
                 : restockMatch
                   ? { value: rowChange, busy: rowCount.isPending, onChange: (n) => setRowChange(Math.max(-rowHave, n)), signed: { floor: -rowHave }, decimal: rowAmount.measured }
                   : { value: isOwnCopy(item.suggested_metadata) ? (item.quantity ?? 1) : Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }
             }
             chips={chips}
+            readingReceipt={readingReceipt}
             commit={
-              !dest || item.status !== "pending"
+              !dest || readingReceipt || item.status !== "pending"
                 ? null
                 : {
                     kind:
@@ -3030,7 +3033,7 @@ export function InboxCard({
                 Rate-limited - retrying…
               </span>
             ) : readingReceipt ? (
-              <span className="text-muted">That’s a receipt - reading its line items…</span>
+              <span className="text-muted" data-testid="receipt-reading">{readingReceiptWords}</span>
             ) : cantIdentify && namelessWhy === "receipt-unread" && receiptBlock ? (
               <ScanReceiptUnread {...receiptBlock} compact />
             ) : cantIdentify ? (
@@ -3124,7 +3127,7 @@ export function InboxCard({
             {/* The count is shown at every value, one included: a card that hid
                 it until it passed one gave no way to raise it without opening
                 the form (#4552). */}
-            {!receiptUnread && typeof (item.suggested_metadata as { weight?: unknown } | null)?.weight !== "number" && (
+            {!receiptUnread && !readingReceipt && typeof (item.suggested_metadata as { weight?: unknown } | null)?.weight !== "number" && (
               <NumberStepper
                 className="shrink-0 inline-flex items-center rounded-full bg-cobble-600 text-white text-[11px] font-semibold overflow-hidden"
                 value={item.quantity ?? 1}

@@ -98,6 +98,8 @@ export interface AttentionFeedItem {
     action?: Record<string, string>;
     record?: { kind: string; id: string; name: string };
     when?: string;
+    /** Whole days past its date, for an overdue entry. */
+    days_late?: number;
     /** A page read on the card itself (a pinned house rule) and the tip it is put away under. */
     body?: string;
     tip?: string;

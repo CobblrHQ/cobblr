@@ -420,6 +420,12 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
   :where(button, a[href], [role="button"], summary) {
     min-height: 44px !important;
   }
+  /* A button centres what it holds and a link does not: in its 44 px box an
+     icon or a line of words sat at the top, above the row it belongs to (#9174).
+     An inline link has no such box, so this does not touch one. */
+  :where(a[href]) {
+    align-content: center;
+  }
   /* A control that asks to be as wide as its words (min-w-min, min-w-fit,
      min-w-max) keeps that floor: 44 px in its place let the scan row's
      "+1 more" shrink to 44 px and draw "more" past its edge (#7338). CSS

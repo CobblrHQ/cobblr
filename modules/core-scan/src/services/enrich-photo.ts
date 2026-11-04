@@ -53,7 +53,7 @@ import { LISTING_KEY, parseListing, type ListingRead } from "./listing-evidence.
 import { seedHistory, pushStep, type CatalogSource } from "./catalog-history.js";
 import { looksLikeReceiptPhoto } from "./receipt-photo.js";
 import { ocrImageText } from "./ocr.js";
-import { noReceiptShape, scoreReceiptShape, type ReceiptShape } from "./receipt-shape.js";
+import { noReceiptShape, receiptLinesFound, scoreReceiptShape, type ReceiptShape } from "./receipt-shape.js";
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
@@ -1616,10 +1616,10 @@ export async function knownCategories(
 /** The image's own text, scored for receipt shape (receipt-shape.ts). The
  *  OCR engine is optional; without it, or on a photo it can read nothing off,
  *  this is the empty shape and the model decides as before. */
-export async function receiptShapeOf(bytes: Buffer | Uint8Array): Promise<{ shape: ReceiptShape; ocr_ms: number | null }> {
+export async function receiptShapeOf(bytes: Buffer | Uint8Array): Promise<{ shape: ReceiptShape; ocr_ms: number | null; lines_found: number | null }> {
   const read = await ocrImageText(bytes);
-  if (!read) return { shape: noReceiptShape(), ocr_ms: null };
-  return { shape: scoreReceiptShape(read.text), ocr_ms: read.ms };
+  if (!read) return { shape: noReceiptShape(), ocr_ms: null, lines_found: null };
+  return { shape: scoreReceiptShape(read.text), ocr_ms: read.ms, lines_found: receiptLinesFound(read.text) };
 }
 
 /** What the general door does with an image, as one rule the pipeline and
@@ -1645,7 +1645,7 @@ export function intakeVerdict(shape: ReceiptShape, outcome: IdentifyOutcome | nu
  *  morphed into the line items", 2026-08-31). Prose in ai_notes cannot be
  *  branched on without matching a sentence; this can. The shape verdict rides
  *  along so a session can say which step decided. */
-async function markReadingReceipt(ctx: PhotoEnrichContext, note: string, decided: "shape" | "model", shape: ReceiptShape): Promise<void> {
+async function markReadingReceipt(ctx: PhotoEnrichContext, note: string, decided: "shape" | "model", shape: ReceiptShape, linesFound: number | null = null): Promise<void> {
   // ONE statement (#4890, torn status writes): the note and its finish time
   // used to land first and "reading a receipt" a statement later, so a card
   // polled in between read "finished, no name, not a receipt" and flashed
@@ -1659,7 +1659,7 @@ async function markReadingReceipt(ctx: PhotoEnrichContext, note: string, decided
       suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
         reading_receipt: true,
         receipt_decided_by: decided,
-        receipt_shape: { verdict: shape.verdict, score: shape.score },
+        receipt_shape: { verdict: shape.verdict, score: shape.score, ...(linesFound ? { lines: linesFound } : {}) },
       })}::jsonb` as never,
     })
     .where("id", "=", ctx.itemId)
@@ -1713,7 +1713,7 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // answered the first look said what the thing is; the shape check must not
   // send their item to the receipt parser over their head.
   const answered = !!ctx.hint || !!ctx.confirmedName || !!ctx.rejectedNames?.length;
-  const { shape } = answered ? { shape: noReceiptShape() } : await receiptShapeOf((original ?? file).bytes);
+  const { shape, lines_found: linesFound = null } = answered ? { shape: noReceiptShape() } : await receiptShapeOf((original ?? file).bytes);
   ctx.db = (await platform().tenants.getDb(ctx.orgId)) as unknown as typeof ctx.db;
   if (intakeVerdict(shape, null).verdict === "receipt") {
     const s = shape.signals;
@@ -1722,6 +1722,7 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
       `That is a receipt (${s.priced_items} priced line${s.priced_items === 1 ? "" : "s"}${s.totals_row ? " and a total" : ""}): reading its line items.`,
       "shape",
       shape,
+      linesFound,
     );
     return "is-receipt";
   }
@@ -1814,7 +1815,7 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // so and returning is all this layer should do - a service that reached for the
   // API's orchestration would own two jobs and be testable at neither.
   if (intakeVerdict(shape, { identity }).verdict === "receipt") {
-    await markReadingReceipt(ctx, "That looks like a receipt — reading its line items.", "model", shape);
+    await markReadingReceipt(ctx, "That looks like a receipt — reading its line items.", "model", shape, linesFound);
     return "is-receipt";
   }
 

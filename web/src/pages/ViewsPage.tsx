@@ -1,6 +1,7 @@
 import { loanOfFields } from "@cobblr/platform-contract/loan";
 import { totalLabel } from "@cobblr/platform-contract/field-aggregate";
 import { normalizeGrouping, type GroupBy } from "@cobblr/platform-contract/grouped-list";
+import { readableViewConfig } from "@cobblr/platform-contract/view-config";
 import { centsFromAmount, formatMoney, formatStoredMoney, fieldCurrency, type MoneyStorage } from "@cobblr/platform-contract/money";
 // /views — list every saved view, open one to render its data
 // through the list resolver. Lets users see what their workspace
@@ -324,7 +325,7 @@ export function SavedViewBody({
   data: ViewData;
 }) {
   const { items, isLoading, collectionEmpty, unapplied, ungrouped, total } = data;
-  const cfg = (view.config ?? {}) as ViewConfig;
+  const cfg = readableViewConfig(view.config) as ViewConfig;
   // Count reads in the collection's own noun ("5 books"), not DB-speak "5
   // rows" and not the kind's literal suffix ("5 items" about books).
   const { activeSlug } = useActiveOrg();
@@ -532,7 +533,7 @@ function TableGrouping({ fields, value, onChange }: { fields: import("../compone
 // not "Table": beside a "By weight" tab, "Table" read as the other tab (#5079).
 // One the server could not apply is not what the rows are.
 function ViewKindWord({ slug, view, fallback, ungrouped }: { slug: string; view: SavedView; fallback: string; ungrouped?: boolean }) {
-  const by = ungrouped ? [] : normalizeGrouping(view.config?.group_by);
+  const by = ungrouped ? [] : normalizeGrouping(readableViewConfig(view.config).group_by);
   return by.length ? <GroupedByWord slug={slug} kind={view.entity_kind} fields={by.map((g) => g.field)} /> : <>{fallback}</>;
 }
 
@@ -556,8 +557,8 @@ function GroupedTableRenderer({ view, data, slug, selection }: { view: SavedView
   // A phone's row steps its count the way the desktop table does, so "2 balls"
   // reads the same at both widths (#5079).
   const stock = useRowStock();
-  const by = normalizeGrouping(view.config?.group_by);
-  const columns = (view.config?.visible_fields as string[] | undefined) ?? ["title", "subtitle"];
+  const by = normalizeGrouping(readableViewConfig(view.config).group_by);
+  const columns = (readableViewConfig(view.config).visible_fields as string[] | undefined) ?? ["title", "subtitle"];
   const groups = data.groups ?? [];
   const rowsById = new Map(data.items.map((r) => [r.id, r]));
   const title = (g: (typeof groups)[number]) => {
@@ -2249,7 +2250,7 @@ export function EditViewModal({
   const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap" | "vending">(
     (view.view_type as "list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap" | "vending") ?? "list",
   );
-  const cfg = (view.config ?? {}) as ViewConfig;
+  const cfg = readableViewConfig(view.config) as ViewConfig;
   const fields = useKindFields(slug, view.entity_kind);
   const [groupBy, setGroupBy] = useState(typeof cfg.group_by === "string" ? cfg.group_by : "");
   const [tableGroups, setTableGroups] = useState<GroupBy[]>(() => normalizeGrouping(cfg.group_by));

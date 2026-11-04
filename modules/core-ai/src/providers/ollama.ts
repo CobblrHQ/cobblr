@@ -9,7 +9,7 @@
 
 import { assertLocalAiEndpoint, assertLocalAiPin, assertLocalModelName } from "./local-endpoint.js";
 import { platform, type AiCapability } from "@cobblr/platform-contract";
-import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets } from "@cobblr/platform-contract/provider-reason";
+import { providerError, providerSentence, refuseCutOff, reasonFromResponse, reasonFromTransportError, redactSecrets } from "@cobblr/platform-contract/provider-reason";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
 import {
@@ -314,6 +314,7 @@ export function register(): void {
           // exfil channel; the status alone is enough to diagnose.
           if (!res.ok) throw await failed(res);
           const body = (await res.json()) as {
+            done_reason?: string;
             message: {
               role: string;
               content: string;
@@ -323,6 +324,7 @@ export function register(): void {
             eval_count?: number;
             model?: unknown;
           };
+          refuseCutOff("ollama", body.done_reason === "length", { ...ctx, model: String(reqBody.model) });
           const calls = parseOllamaToolCalls(body.message ?? {});
           if (!calls && !String(body.message?.content ?? "").trim()) throw emptyReply(reqBody.model);
           return {
@@ -356,7 +358,8 @@ export function register(): void {
           // Don't echo the upstream body — for a read-SSRF that body is the
           // exfil channel; the status alone is enough to diagnose.
           if (!res.ok) throw await failed(res);
-          const body = (await res.json()) as { message: { content: string }; model?: unknown };
+          const body = (await res.json()) as { done_reason?: string; message: { content: string }; model?: unknown };
+          refuseCutOff("ollama", body.done_reason === "length", ctx);
           if (!String(body.message?.content ?? "").trim()) throw emptyReply(ctx.model);
           return { result: { text: body.message.content }, cost_cents: 0, served_model: servedModelOf(body.model) };
         }
@@ -399,7 +402,8 @@ export function register(): void {
           // Don't echo the upstream body — for a read-SSRF that body is the
           // exfil channel; the status alone is enough to diagnose.
           if (!res.ok) throw await failed(res);
-          const body = (await res.json()) as { message: { content: string }; model?: unknown };
+          const body = (await res.json()) as { done_reason?: string; message: { content: string }; model?: unknown };
+          refuseCutOff("ollama", body.done_reason === "length", ctx);
           if (!String(body.message?.content ?? "").trim()) throw emptyReply(ctx.model);
           return { result: { text: body.message.content }, cost_cents: 0, served_model: servedModelOf(body.model) };
         }

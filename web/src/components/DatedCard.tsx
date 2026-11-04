@@ -6,7 +6,9 @@
 // A finished row leaves the card at once, with Undo on the toast, because
 // "Open" on every row sent a person to the record to do one tap there and
 // back again, 22 times (the owner, 2026-09-28). A stale backlog can be
-// cleared in one go, behind a confirm.
+// cleared in one go, behind a confirm, as used up or as tossed. Past
+// STALE_DAYS late "+3 days" is no answer, so a stale row leads with the likely
+// one: used up (the owner, 2026-11-04: most of 26 were eaten).
 import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -18,6 +20,9 @@ import { useDetailRoute } from "../lib/useDetailRoute";
 import { countOf } from "@cobblr/platform-contract/plural";
 // The merge sheet loads when it is opened (#4945).
 const DuplicateRecordsSheet = lazy(() => import("../pages/DuplicateRecordsSheet").then((m) => ({ default: m.DuplicateRecordsSheet })));
+
+/** Days past its date after which a row is stale: "+3 days" stops being offered. */
+const STALE_DAYS = 14;
 
 type Entry = NonNullable<AttentionFeedItem["entries"]>[number];
 /** An action's way back: the invoke route answers a list of steps, run in
@@ -78,7 +83,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
     });
 
   const finishes = collection.finish ?? [];
-  const toss = finishes.find((f) => f.finishes === "discarded");
+  const bulk = finishes.filter((f) => f.finishes === "used" || f.finishes === "discarded");
   const finish = async (e: Entry, f: Finish) => {
     const rec = e.record;
     if (!rec) return;
@@ -124,24 +129,28 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
     }
   };
 
-  const tossAll = async () => {
+  const finishAll = async (f: Finish) => {
     const ids = (card.overdue?.all_ids ?? []).filter((id) => !gone.has(id));
     const kind = card.overdue?.entries?.[0]?.record?.kind;
-    if (!kind || !toss || ids.length === 0) return;
+    if (!kind || ids.length === 0) return;
+    const verb = f.finishes === "used" ? "used up" : "tossed";
     const ok = await confirm({
-      title: `Mark all ${ids.length} as tossed?`,
-      message: `Every ${late.toLowerCase()} item in ${collection.label} is recorded as thrown out, one each. Each one's record keeps its history.`,
-      confirmLabel: `Toss ${ids.length}`,
-      destructive: true,
+      title: `Mark all ${ids.length} as ${verb}?`,
+      message:
+        f.finishes === "used"
+          ? `Every ${late.toLowerCase()} item in ${collection.label} is recorded as used up, one each. Each one's record keeps its history.`
+          : `Every ${late.toLowerCase()} item in ${collection.label} is recorded as thrown out, one each. Each one's record keeps its history.`,
+      confirmLabel: f.finishes === "used" ? `Used up ${ids.length}` : `Toss ${ids.length}`,
+      destructive: f.finishes === "discarded",
     });
     if (!ok) return;
-    setBusy("all");
+    setBusy(`all:${f.finishes}`);
     let done = 0;
     // One Undo for the whole batch, never one toast per record (#5812).
     const back: Array<{ id: string; steps: ReturnType<typeof undoSteps> }> = [];
     for (const id of ids) {
       try {
-        const run = await runAction({ actionId: toss.action_id, entityKind: kind, entityId: id, args: { timezone } }, { undo: "shown-here" });
+        const run = await runAction({ actionId: f.action_id, entityKind: kind, entityId: id, args: { timezone } }, { undo: "shown-here" });
         back.push({ id, steps: undoSteps(run.undo) });
         hide(id, true);
         done++;
@@ -157,13 +166,18 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
       }
     };
     const offer = back.some((b) => b.steps.length) ? { actionLabel: "Undo", onAction: undoAll } : undefined;
-    if (done === ids.length) toast.success(`Tossed ${done}.`, offer);
-    else toast.error(`Tossed ${done} of ${ids.length}; the rest are still here.`);
+    const word = verb.charAt(0).toUpperCase() + verb.slice(1);
+    if (done === ids.length) toast.success(`${word} ${done}.`, offer);
+    else toast.error(`${word} ${done} of ${ids.length}; the rest are still here.`);
   };
 
   const row = (e: Entry, overdue: boolean) => {
     const to = e.record ? routeFor(e.record.kind, e.record.id) : null;
     const name = e.record?.name ?? e.title;
+    const stale = overdue && (e.days_late ?? 0) >= STALE_DAYS;
+    const rowFinishes = stale ? finishes.filter((f) => f.finishes !== "still-good") : finishes;
+    // Say what the number counts: "73d ago" did not.
+    const when = overdue && (e.days_late ?? 0) > 1 ? `${late.toLowerCase()} ${e.days_late} days` : e.when;
     return (
       <li key={e.id} className="flex items-center gap-2 pl-9 pr-3 py-1.5 text-[13px]" data-testid="dated-entry">
         {e.action?.task && (
@@ -178,32 +192,44 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
             <CheckCircle2 size={11} className="hover-reveal text-accent" />
           </button>
         )}
-        {/* The name over when: on a phone three buttons leave the row little
-            room, and "34d ago" cut to "34d …" was the one word that mattered. */}
-        <span className="flex-1 min-w-0 flex flex-col leading-tight">
-          {to ? (
-            <Link to={to} className="truncate text-content dark:text-mortar-100 hover:text-accent">
-              {name}
+        {/* The name over when, as ONE tap target: on a phone the link is
+            44px tall, and a when below it sat a finger's height under the
+            name and off the buttons' line. */}
+        {(() => {
+          const lines = (
+            <>
+              <span data-testid="dated-name" className="truncate text-content dark:text-mortar-100">{name}</span>
+              {when && (
+                <span data-testid="dated-when" className={"text-[11px] " + (overdue ? "text-ember-600 dark:text-ember-400" : "text-muted dark:text-slate-400")}>
+                  {when}
+                </span>
+              )}
+            </>
+          );
+          return to ? (
+            <Link to={to} className="flex-1 min-w-0 flex flex-col justify-center leading-tight hover:text-accent">
+              {lines}
             </Link>
           ) : (
-            <span className="truncate text-content dark:text-mortar-100">{name}</span>
-          )}
-          {e.when && (
-            <span className={"text-[11px] " + (overdue ? "text-ember-600 dark:text-ember-400" : "text-muted dark:text-slate-400")}>
-              {e.when}
-            </span>
-          )}
-        </span>
-        {finishes.length > 0 && e.record && (
+            <span className="flex-1 min-w-0 flex flex-col justify-center leading-tight">{lines}</span>
+          );
+        })()}
+        {rowFinishes.length > 0 && e.record && (
           <span className="shrink-0 flex items-center gap-1">
-            {finishes.map((f) => (
+            {rowFinishes.map((f) => (
               <button
                 key={f.action_id}
                 title={f.label}
                 type="button"
                 onClick={() => void finish(e, f)}
                 disabled={busy !== null}
-                className="rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-[11px] font-medium text-content dark:text-mortar-100 hover:border-accent hover:text-accent transition disabled:opacity-50"
+                data-lead={stale && f.finishes === "used" ? "true" : undefined}
+                className={
+                  "rounded border px-1.5 py-0.5 text-[11px] font-medium transition disabled:opacity-50 " +
+                  (stale && f.finishes === "used"
+                    ? "border-accent bg-accent/10 text-accent hover:bg-accent/20"
+                    : "border-line dark:border-slate-600 text-content dark:text-mortar-100 hover:border-accent hover:text-accent")
+                }
               >
                 {busy === `${e.id}:${f.action_id}` ? "…" : WORDS[f.finishes].button}
               </button>
@@ -222,17 +248,22 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
       <div>
         <div className="flex items-center gap-2 pl-9 pr-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
           <span>{heading}</span>
-          {overdue && toss && (card.overdue?.all_ids?.length ?? 0) > 1 && (
-            <button
-              type="button"
-              onClick={() => void tossAll()}
-              disabled={busy !== null}
-              className="ml-auto normal-case tracking-normal font-sans text-[11px] text-ember-700 dark:text-ember-400 hover:underline disabled:opacity-50"
-            >
-              {busy === "all" ? "Tossing…" : `Mark all ${card.overdue!.all_ids!.filter((id) => !gone.has(id)).length} as tossed`}
-            </button>
-          )}
         </div>
+        {overdue && bulk.length > 0 && (card.overdue?.all_ids?.length ?? 0) > 1 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pl-9 pr-3 pb-1 text-[12px]" data-testid="dated-bulk">
+            {bulk.map((f) => (
+              <button
+                key={f.action_id}
+                type="button"
+                onClick={() => void finishAll(f)}
+                disabled={busy !== null}
+                className={"hover:underline disabled:opacity-50 " + (f.finishes === "discarded" ? "text-ember-700 dark:text-ember-400" : "text-accent")}
+              >
+                {busy === `all:${f.finishes}` ? (f.finishes === "used" ? "Marking…" : "Tossing…") : `Mark all ${card.overdue!.all_ids!.filter((id) => !gone.has(id)).length} as ${f.finishes === "used" ? "used up" : "tossed"}`}
+              </button>
+            ))}
+          </div>
+        )}
         <ul className="divide-y divide-line/40 dark:divide-slate-800/40">{shown.map((e) => row(e, overdue))}</ul>
         {more > 0 && (
           <Link to={collection.route} className="block pl-9 pr-3 py-1 text-[11px] text-muted hover:text-accent">
@@ -257,24 +288,11 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
           <button title={open ? "Collapse" : "Expand"} type="button" onClick={() => setOpen((o) => !o)} className="shrink-0" aria-label={open ? "Collapse" : "Expand"}>
             <ChevronDown size={13} className={"text-faint transition-transform " + (open ? "rotate-180" : "")} />
           </button>
-          <Link to={collection.route} className="shrink-0" title="Open the page" aria-label="Open the page">
-            <ArrowRight size={14} className="text-faint group-hover:text-accent transition" />
-          </Link>
         </div>
         {open && (
           <div className="border-t border-line/60 dark:border-slate-700/60 pb-1.5">
-            {group(card.overdue, late, true)}
-            {(card.overdue || card.upcoming) && (
-              <div className="flex items-center gap-2 px-3 pt-2">
-                <span className="h-px flex-1 bg-amber-300/70 dark:bg-amber-700/60" />
-                <span className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-400">Today</span>
-                <span className="h-px flex-1 bg-amber-300/70 dark:bg-amber-700/60" />
-              </div>
-            )}
-            {card.today && <ul className="divide-y divide-line/40 dark:divide-slate-800/40">{(card.today.entries ?? []).filter((e) => !gone.has(e.id)).map((e) => row(e, false))}</ul>}
-            {group(card.upcoming, "Coming up", false)}
             {pairs.length > 0 && (
-              <div className="flex items-center gap-2 mx-3 mt-2 rounded border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20 px-2.5 py-1.5 text-[12px]" data-testid="dated-duplicates">
+              <div className="flex items-center gap-2 mx-3 mt-2 mb-1 rounded border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20 px-2.5 py-1.5 text-[12px]" data-testid="dated-duplicates">
                 <span className="flex-1 min-w-0">
                   {pairs.length === 1
                     ? `${pairs[0]!.a.title} and ${pairs[0]!.b.title} look like one thing.`
@@ -285,6 +303,20 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
                 </button>
               </div>
             )}
+            {group(card.overdue, late, true)}
+            {(card.overdue || card.upcoming) && (
+              <div className="flex items-center gap-2 px-3 pt-2">
+                <span className="h-px flex-1 bg-amber-300/70 dark:bg-amber-700/60" />
+                <span className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-400">Today</span>
+                <span className="h-px flex-1 bg-amber-300/70 dark:bg-amber-700/60" />
+              </div>
+            )}
+            {card.today && <ul className="divide-y divide-line/40 dark:divide-slate-800/40">{(card.today.entries ?? []).filter((e) => !gone.has(e.id)).map((e) => row(e, false))}</ul>}
+            {group(card.upcoming, "Coming up", false)}
+            {/* One control on the card's line, the chevron; its page is here (#9174). */}
+            <Link to={collection.route} className="flex items-center gap-1 pl-9 pr-3 pt-1 text-xs text-accent hover:underline">
+              Open {collection.label} <ArrowRight size={12} aria-hidden />
+            </Link>
           </div>
         )}
         {merging && (

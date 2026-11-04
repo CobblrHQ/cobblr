@@ -1305,6 +1305,7 @@ export const scanApi = {
       /** The rows filed together in this selection: a record one of them
        *  just made is never asked about as "you already have it". */
       filed_with?: string[];
+      file_doubted?: boolean;
     },
   ) =>
     filed(

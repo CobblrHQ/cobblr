@@ -2,6 +2,7 @@
 // Split from api/inbox.ts by route group (#7385); inbox.ts mounts the groups in order.
 import { Router } from "express";
 import { appendScanHistory } from "../../services/scan-history.js";
+import { receiptFirstLook } from "../../services/receipt-first.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { withSellersApart } from "../../services/seller-split.js";
 import { placeAgentFields, sellerInName, thingInName } from "../../services/agent-fields.js";
@@ -304,7 +305,10 @@ intakeRouter.post(
     const emailed = { scan_purpose: body.purpose, ...(body.origin === "email" ? { [ARRIVED_BY_KEY]: "email" } : {}) };
     // A title shared with the link is the person's name for the row, kept
     // like a rename (services/shared-title.ts).
-    const arrivedBy = body.shared_title ? applySharedTitle(emailed, body.shared_title) : emailed;
+    // A picture with no code on it and no name given: is it a receipt? Known
+    // before the row exists, so no one ever sees a receipt as an item.
+    const receiptStamp = body.image_file_id && !body.barcode && !body.source_url && !body.shared_title ? await receiptFirstLook(ctx.org.id, body.image_file_id) : null;
+    const arrivedBy = { ...(body.shared_title ? applySharedTitle(emailed, body.shared_title) : emailed), ...(receiptStamp ?? {}) };
     // The one intake (services/intake.ts, #3049): the insert, the shape's
     // passes in their order (the catalog chain raced inline for a barcode
     // within the budget, the photo wire, the match once a name exists), and

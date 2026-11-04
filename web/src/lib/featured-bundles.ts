@@ -1397,8 +1397,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.14.0",
-      releases: [{ version: "0.13.8", released_at: "2026-10-17", notes: "A food scanned from Open Food Facts keeps the allergens and traces the catalog lists, shown as warning pills on the scan and on the pantry item, and a view can filter on a word in them." }, { version: "0.14.0", released_at: "2026-10-17", notes: "Food moved into the fridge or the freezer is re-dated by its cold shelf life, and by its warm one when it comes out; the record's history says why. Each item can state a fridge and a freezer number beside the existing two." }, { version: "0.13.7", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.13.5", released_at: "2026-10-03", notes: "A scanned bottle of water now goes to Groceries: the barcode catalog calls it water, and Groceries now knows the word." }, { version: "0.13.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.15.0",
+      releases: [{ version: "0.15.0", released_at: "2026-11-04", notes: "A scan of sugar, syrup, honey, flour, cornstarch, cacao or vinegar now reads as a grocery." }, { version: "0.13.8", released_at: "2026-10-17", notes: "A food scanned from Open Food Facts keeps the allergens and traces the catalog lists, shown as warning pills on the scan and on the pantry item, and a view can filter on a word in them." }, { version: "0.14.0", released_at: "2026-10-17", notes: "Food moved into the fridge or the freezer is re-dated by its cold shelf life, and by its warm one when it comes out; the record's history says why. Each item can state a fridge and a freezer number beside the existing two." }, { version: "0.13.7", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.13.5", released_at: "2026-10-03", notes: "A scanned bottle of water now goes to Groceries: the barcode catalog calls it water, and Groceries now knows the word." }, { version: "0.13.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -1592,10 +1592,21 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         "almonds",
         "cashews",
         "peanuts",
+        "sugar",
+        "sugar cubes",
+        "sweetener",
+        "syrup",
+        "honey",
+        "flour",
+        "cornstarch",
+        "corn starch",
+        "cacao",
+        "cacao powder",
+        "vinegar",
       ],
       released_at: "2026-09-28",
       changelog:
-        "Where a grocery is kept is its Location now, the same place its shelf label lists: the separate Storage field is gone, a scan that reads Pantry files the item into your Pantry, and the Storage you had already set moves over on this update. Earlier: Wine has its own collection now, so a scanned bottle files there when both are installed; Groceries no longer claims the word wine. Earlier: Call them what you call them: items, groceries or pantry items. Pick the word when you install, or change it later in the table's settings, and every label says it.",
+        "A scan of sugar, syrup, honey, flour, cornstarch, cacao or vinegar now reads as a grocery.",
       name: "Groceries",
       description:
         "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",

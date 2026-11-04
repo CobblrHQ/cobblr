@@ -57,3 +57,5 @@ export async function requireCapability(req: Request, res: Response, actionId: s
   });
   return false;
 }
+
+export { hasSomethingToRead } from "@cobblr/platform-contract/readable-text";

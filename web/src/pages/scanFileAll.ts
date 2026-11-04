@@ -1,3 +1,4 @@
+import type { api } from "../lib/api";
 // Pure routing behind the scan session-header "File all" button (and the
 // selection bulk-confirm). Kept out of the component so the one load-bearing
 // detail — WHICH destination each item commits to — is unit-tested.
@@ -144,6 +145,28 @@ export function isReadyToFile(it: ScanItemLike, viewer: ScanRowStateContext): bo
 }
 
 /** Ids of the items "File all" will commit, in order. */
+/** A ticked row the server wouldn't file unasked: nothing about it names the
+ *  table (#9179). */
+export interface DoubtedRow {
+  id: string;
+  name: string;
+  table: string;
+  /** The filing body the server held, sent again with the person's answer. */
+  body: Parameters<typeof api.confirmScanItem>[2];
+}
+
+/** The one question a person's own selection gets: "Sugar and Agave don't look
+ *  like Spices: file them anyway, or leave them?" */
+export function doubtQuestion(rows: readonly DoubtedRow[]): string {
+  const shown = rows.slice(0, 5).map((r) => r.name);
+  const left = rows.length - shown.length;
+  const names = left > 0 ? `${shown.join(", ")} and ${left} more` : shown.length > 1 ? `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}` : (shown[0] ?? "");
+  const tables = [...new Set(rows.map((r) => r.table))];
+  const look = rows.length === 1 ? "doesn't look like" : "don't look like";
+  const it = rows.length === 1 ? "file it anyway, or leave it?" : "file them anyway, or leave them?";
+  return tables.length === 1 ? `${names} ${look} ${tables[0]}: ${it}` : `${names} ${look} where ${rows.length === 1 ? "it's" : "they're"} going: ${it}`;
+}
+
 export function readyToFileIds(items: readonly ScanItemLike[], viewer: ScanRowStateContext): string[] {
   return items.filter((it) => isReadyToFile(it, viewer)).map((it) => it.id);
 }

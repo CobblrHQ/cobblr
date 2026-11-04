@@ -12,7 +12,9 @@
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { ProjectsDB } from "../db.js";
-import { refuseNewTaskDependency } from "./deps.js";
+import { addTaskDependency } from "./deps.js";
+
+const RECORDED = "Recorded. The task shows as blocked until this is satisfied.";
 
 const str = (v: unknown): string =>
   typeof v === "string" && v.trim() ? v.trim() : "";
@@ -39,8 +41,9 @@ export function registerDependencyHandlers(): void {
     }
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ProjectsDB>;
     if (isTaskDep) {
-      const refused = await refuseNewTaskDependency(db, task.id, dependsOn);
-      if (refused) return { ok: false, error: refused };
+      const added = await addTaskDependency(db, task.id, dependsOn);
+      if ("refused" in added) return { ok: false, error: added.refused };
+      return { ok: true, result: { dependency_id: added.row.id, note: RECORDED } };
     }
     const [targetModule, targetType] = kind.includes(":")
       ? [kind.split(":")[0]!, kind.split(":")[1]!]
@@ -50,14 +53,14 @@ export function registerDependencyHandlers(): void {
       .insertInto("projects_task_dependencies")
       .values({
         task_id: task.id,
-        depends_on_task_id: isTaskDep ? dependsOn : null,
-        target_module: isExternal ? targetModule : null,
-        target_entity_type: isExternal ? targetType : null,
-        target_entity_id: isExternal ? id : null,
+        depends_on_task_id: null,
+        target_module: targetModule,
+        target_entity_type: targetType,
+        target_entity_id: id,
       } as never)
       .returning(["id"])
       .executeTakeFirstOrThrow();
-    return { ok: true, result: { dependency_id: row.id, note: "Recorded. The task shows as blocked until this is satisfied." } };
+    return { ok: true, result: { dependency_id: row.id, note: RECORDED } };
   });
 
   platform().actions.registerHandler("projects.unblock", async (ctx) => {

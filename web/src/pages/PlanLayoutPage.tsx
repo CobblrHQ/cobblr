@@ -23,6 +23,7 @@ import { reorderTo, shelfRow } from "../lib/planFit";
 import type { Board } from "../lib/layoutBoard";
 import { LayoutBoard, startThingDrag, type ThingDrop } from "../components/LayoutBoard";
 import { AddSizesDialog } from "../components/PlanSizedThings";
+import { DamagedPlanNotice } from "../components/DamagedPlanNotice";
 import { DEFAULT_AISLE_MM } from "@cobblr/platform-contract/plan-clearance";
 import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
 import { readBound, withBound } from "../lib/floorplanGeometry";
@@ -320,6 +321,7 @@ export function PlanLayoutPage() {
         <ArrowLeft size={14} /> back to {room?.name ?? "the room"}
       </Link>
       <h1 className="text-2xl font-semibold text-content dark:text-slate-100">Plan a layout{room ? `: ${room.name}` : ""}</h1>
+      {room && <DamagedPlanNotice slug={slug} place={room} />}
 
       {/* The options and New option together, once the saved options have
           answered (the row held meanwhile): drawn before them, Option A
