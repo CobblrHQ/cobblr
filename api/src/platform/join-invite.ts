@@ -127,7 +127,7 @@ async function pauseJoinLink(orgId: string, inviteId: string, limit: number, per
 
 export type JoinOutcome =
   | { ok: true; orgId: string; role: OrgRole; alreadyMember: boolean }
-  | { ok: false; code: Exclude<InviteStatus, "open">; message: string };
+  | { ok: false; code: Exclude<InviteStatus, "open"> | "not_yours"; message: string };
 
 /** Make `userId` a member through `invite`, or say why not. A member already
  *  in the workspace is let through a join link (never counted, never refused
@@ -144,34 +144,64 @@ export async function joinThroughInvite(
     .where("org_id", "=", invite.org_id)
     .executeTakeFirst();
   const status = inviteStatus(invite);
+  // Their own second press, however late: the row said "used" only once their
+  // membership had committed with it. Someone removed since isn't let back in.
+  if (status === "consumed" && existing && invite.consumed_by_user === userId) {
+    return { ok: true, orgId: invite.org_id, role: existing.role as OrgRole, alreadyMember: true };
+  }
   if (status !== "open" && !(invite.reusable && existing && status !== "revoked" && status !== "expired")) {
     return { ok: false, code: status as Exclude<InviteStatus, "open">, message: REFUSAL[status as Exclude<InviteStatus, "open">] };
   }
-  if (invite.reusable && !existing) {
-    const claimed = await claimJoinUse(invite.id);
-    if (!claimed.ok) return { ok: false, code: claimed.why, message: REFUSAL[claimed.why] };
-  }
-  if (!existing) {
-    // Two accepts at once (a double press) both found no membership: the
-    // second is a member already, not a 500.
-    await meta.insertInto("org_memberships").values({ user_id: userId, org_id: invite.org_id, role: invite.role }).onConflict((oc) => oc.columns(["user_id", "org_id"]).doNothing()).execute();
-  }
-  if (invite.reusable) {
-    if (!existing) {
-      await meta
-        .insertInto("workspace_invite_uses")
-        .values({ invite_id: invite.id, user_id: userId, new_account: !!opts.newAccount })
-        .execute();
+  // A forwarded link must not let someone else in, with the role it was made for
+  // (#5365 for shares). The sign-up and sign-in-link doors say this before they
+  // make anyone; a signed-in account reaches it here.
+  if (!existing && invite.invited_email) {
+    const me = await meta.selectFrom("users").select("email").where("id", "=", userId).executeTakeFirst();
+    if ((me?.email ?? "").toLowerCase().trim() !== invite.invited_email.toLowerCase().trim()) {
+      return { ok: false, code: "not_yours", message: `This invite is for ${invite.invited_email}. Sign in with that address, or ask for a new invite.` };
     }
-  } else {
+  }
+  // The claim and the membership commit together, and the claim comes first, so
+  // two people can't both take a single-use invite and a failed join doesn't spend it.
+  const refused = await meta.transaction().execute(async (trx): Promise<{ code: "full" | "paused" | "consumed" } | null> => {
+    if (invite.reusable) {
+      if (existing) return null;
+      // The membership goes first: a double press waits here for the first to
+      // commit and finds them in, so it never counts a second use of a capped link.
+      const joined = await trx.insertInto("org_memberships").values({ user_id: userId, org_id: invite.org_id, role: invite.role }).onConflict((oc) => oc.columns(["user_id", "org_id"]).doNothing()).returning("user_id").executeTakeFirst();
+      if (!joined) return null;
+      const claimed = await claimJoinUse(invite.id, trx);
+      if (!claimed.ok) {
+        await trx.deleteFrom("org_memberships").where("user_id", "=", userId).where("org_id", "=", invite.org_id).execute();
+        return { code: claimed.why };
+      }
+      await trx.insertInto("workspace_invite_uses").values({ invite_id: invite.id, user_id: userId, new_account: !!opts.newAccount }).execute();
+      return null;
+    }
     // Clearing declined_at matters: a browser run produced one invite marked
     // BOTH accepted and declined. Accepting is the later, stronger answer, so
     // it erases the earlier no rather than sitting beside it.
-    await meta
+    const claimed = await trx
       .updateTable("workspace_invites")
       .set({ consumed_at: new Date(), consumed_by_user: userId, declined_at: null, declined_by_user: null })
       .where("id", "=", invite.id)
-      .execute();
+      .where("consumed_at", "is", null)
+      .where("revoked_at", "is", null)
+      .returning("id")
+      .executeTakeFirst();
+    if (!claimed) return { code: "consumed" };
+    if (!existing) {
+      await trx.insertInto("org_memberships").values({ user_id: userId, org_id: invite.org_id, role: invite.role }).onConflict((oc) => oc.columns(["user_id", "org_id"]).doNothing()).execute();
+    }
+    return null;
+  });
+  if (refused) {
+    if (refused.code === "consumed") {
+      // Our own double press took it a moment ago: they're in, not refused.
+      const now = await meta.selectFrom("workspace_invites").select("consumed_by_user").where("id", "=", invite.id).executeTakeFirst();
+      if (now?.consumed_by_user === userId) return { ok: true, orgId: invite.org_id, role: invite.role as OrgRole, alreadyMember: true };
+    }
+    return { ok: false, code: refused.code, message: REFUSAL[refused.code] };
   }
   // An invite made for someone on the People list: that entry is now this
   // member, so everything that was theirs stays theirs.

@@ -81,7 +81,7 @@ async function parseBackupDir(dir: unzipper.CentralDirectory): Promise<ParsedBac
       files.set(entry.path.slice("files/".length), await readEntry(entry));
     }
   }
-  if (!manifest) throw Object.assign(new Error("manifest.json missing from backup"), { code: "bad_archive" });
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) throw Object.assign(new Error("manifest.json missing from backup, or not a manifest"), { code: "bad_archive" });
   const carriesPlatform = Array.isArray(manifest.data_index?.platform);
   return { manifest, tables, platform: carriesPlatform ? shared : null, files };
 }

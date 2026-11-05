@@ -1,3 +1,4 @@
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { readListPage, pagedAnswer, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { canPurgeDeletedRecord } from "@cobblr/platform-contract";
@@ -521,8 +522,12 @@ filesRouter.get(
     const variantMime = inline ? rawMime : "application/octet-stream";
     res.type(variantMime);
     if (!inline) {
-      const safeName = String(row.filename || "download").replace(/[^A-Za-z0-9._-]/g, "_");
-      res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+      const name = String(row.filename || "download");
+      const safeName = name.replace(/[^A-Za-z0-9._-]/g, "_");
+      // The plain form for an old client, and the real name for everyone else (RFC 5987).
+      // LIKE-OK: percent-encoding for a header, no query here.
+      const realName = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}"; filename*=UTF-8''${realName}`);
     }
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "private, max-age=3600");
@@ -539,7 +544,7 @@ filesRouter.get(
 // the file by and the folder it lives in.
 // AI-REACH: crud — the core-files:file kind's update endpoint (filename, folder_id)
 const FilePatch = z
-  .object({ filename: z.string().trim().min(1).max(255).optional(), folder_id: z.string().uuid().nullable().optional(), metadata: z.record(z.unknown()).optional() })
+  .object({ filename: readableNameField(255).transform((name) => name.replace(/[\\/]/g, "-")).optional(), folder_id: z.string().uuid().nullable().optional(), metadata: z.record(z.unknown()).optional() })
   .refine((b) => b.filename !== undefined || b.folder_id !== undefined || b.metadata !== undefined, "filename, folder_id or metadata");
 filesRouter.patch(
   "/:id",

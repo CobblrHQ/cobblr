@@ -1,5 +1,6 @@
 import { planProblem } from "@cobblr/platform-contract/plan-clearance";
 import { countOf } from "@cobblr/platform-contract/plural";
+import { canonicalJson } from "@cobblr/platform-contract/service-consent";
 // The plan an import follows: which row creates, which updates, and under
 // which parent, decided once and used by both the preview and the commit.
 //
@@ -77,6 +78,8 @@ export interface ExistingPlace {
   metadata: Record<string, unknown> | null;
   kind?: "area" | "container";
   short_name?: string | null;
+  description?: string | null;
+  notes?: string | null;
 }
 
 /** Where a row's parent is: an existing place, an earlier row of this file, or
@@ -93,7 +96,7 @@ export interface PlannedRow {
   metadata: Record<string, unknown>;
   description?: string | null;
   notes?: string | null;
-  action: "create" | "update";
+  action: "create" | "update" | "unchanged";
   /** The existing place an update writes to. */
   id: string | null;
   parent: { key: string; resolved: boolean; path: string | null } | null;
@@ -307,6 +310,20 @@ export function planByKey(rows: ImportRow[], existing: ExistingPlace[], matchOn:
   return finish(planned, refs, rows, existing);
 }
 
+const same = (a: unknown, b: unknown) => canonicalJson(a ?? null) === canonicalJson(b ?? null);
+
+/** True when committing this row would leave the place exactly as it is. */
+function writesNothingNew(p: PlannedRow, ref: ParentRef, planned: PlannedRow[], held: ExistingPlace): boolean {
+  if (p.name !== held.name || p.kind !== (held.kind ?? "area") || !same(p.short_name, held.short_name)) return false;
+  if (p.description !== undefined && !same(p.description, held.description)) return false;
+  if (p.notes !== undefined && !same(p.notes, held.notes)) return false;
+  if (p.parent) {
+    const parentId = !ref ? null : "existing" in ref ? ref.existing : planned[ref.row]!.id;
+    if (parentId !== held.parent_id) return false;
+  }
+  return Object.entries(p.metadata).every(([key, value]) => same(value, held.metadata?.[key]));
+}
+
 /** Order parents before children, and gather what blocks the commit. */
 function finish(planned: PlannedRow[], refs: ParentRef[], rows: ImportRow[], existing: ExistingPlace[]): ImportPlan {
   const holding = new Map(existing.map((e) => [e.id, e]));
@@ -324,6 +341,10 @@ function finish(planned: PlannedRow[], refs: ParentRef[], rows: ImportRow[], exi
       else metadata[key] = read.value;
     }
     p.metadata = metadata;
+  });
+  planned.forEach((p, i) => {
+    const held = p.id ? holding.get(p.id) : undefined;
+    if (held && !p.error && writesNothingNew(p, refs[i] ?? null, planned, held)) p.action = "unchanged";
   });
   const order: number[] = [];
   const state = new Map<number, "doing" | "done">();

@@ -6,6 +6,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { imagePathField } from "@cobblr/platform-contract/image-reference";
 import { platform } from "@cobblr/platform-contract";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
@@ -218,7 +219,7 @@ const MainBody = z
     entity_id: z.string().min(1).max(100),
     instance: z.string().max(80).nullable().optional(),
     file_id: z.string().uuid().optional(),
-    image_path: z.string().max(2000).nullable().optional(),
+    image_path: imagePathField(2000).nullable().optional(),
   })
   .refine((b) => b.file_id !== undefined || b.image_path !== undefined, { message: "file_id or image_path is required" });
 // AI-REACH: exempt — the star on a record's photo tile and its Undo, a person choosing which of their own pictures leads; the assistant sets a record's picture through update_record

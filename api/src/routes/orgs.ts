@@ -1,5 +1,6 @@
 import { clearPart, partStates, setPart } from "../platform/module-parts.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { activityPresentation } from "@cobblr/platform-contract/activity-summary";
 import { nameActivityRows } from "../platform/activity-subjects.js";
 import { currencyFromLocale, isCurrency } from "@cobblr/platform-contract/money";
@@ -144,7 +145,7 @@ orgsRouter.get("/", requireAuth, async (req, res, next) => {
 });
 
 const CreateOrgBody = z.object({
-  name: z.string().min(1).max(120),
+  name: readableNameField(120),
   // Optional managed-app id ("yarn"). When set, the new workspace is provisioned
   // AS that app (flagship bundle + app mode), exactly like POST /provision-app
   // and the /auth/signup app branch — so all three create-paths agree. Without
@@ -352,6 +353,12 @@ orgsRouter.post(
 // UI-REACH: legacy immediate teardown for API clients; Settings requests deletion with a backup and grace period instead.
 orgsRouter.delete("/:slug", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // A support session's write mode is for fixing a record. Deleting the workspace
+    // would also delete the log of who did it, so it goes through the console's own door.
+    if (req.impersonation) {
+      res.status(403).json({ error: { code: "impersonation_cannot_delete", message: "A support session can't delete a workspace." } });
+      return;
+    }
     if (req.tenant!.role !== "owner") {
       res.status(403).json({
         error: { code: "forbidden", message: "Only the workspace owner can delete it." },
@@ -375,6 +382,10 @@ orgsRouter.delete("/:slug", requireAuth, withTenant, async (req, res, next) => {
 const DeletionBody = z.object({ confirm_name: z.string().max(200) });
 orgsRouter.post("/:slug/deletion", requireAuth, withTenant, async (req, res, next) => {
   try {
+    if (req.impersonation) {
+      res.status(403).json({ error: { code: "impersonation_cannot_delete", message: "A support session can't delete a workspace." } });
+      return;
+    }
     if (req.tenant!.role !== "owner") {
       res.status(403).json({ error: { code: "forbidden", message: "Only an owner can delete this workspace." } });
       return;
@@ -618,7 +629,7 @@ orgsRouter.patch("/:slug/focused", requireAuth, withTenant, async (req, res, nex
 const normalizeSlug = (s: string) =>
   s.toLowerCase().replace(/['’]s\b/g, "").replace(/['’`]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 const RenameBody = z
-  .object({ name: z.string().trim().min(1).max(120).optional(), slug: z.string().trim().min(1).max(60).optional() })
+  .object({ name: readableNameField(120).optional(), slug: z.string().trim().min(1).max(60).optional() })
   .refine((b) => b.name !== undefined || b.slug !== undefined, { message: "Provide a name and/or slug." });
 // AI-ACTION: platform:rename-workspace
 orgsRouter.patch("/:slug", requireAuth, withTenant, async (req, res, next) => {

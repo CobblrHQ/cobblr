@@ -39,6 +39,7 @@ import {
 } from "../platform/oidc.js";
 import { buildAuthResponse, provisionOrgForUser } from "./auth.js";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 
 const startLimiter = makeIpLimiter(60_000, 30);
 const redeemLimiter = makeIpLimiter(60_000, 30);
@@ -205,7 +206,7 @@ oidcAdminRouter.use(requireAuth, requirePlatformAdmin);
 
 const ProviderBody = z.object({
   slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "Lowercase letters, digits and dashes."),
-  display_name: z.string().min(1).max(60),
+  display_name: readableNameField(60),
   issuer: z.string().url().max(500),
   client_id: z.string().min(1).max(500),
   /** Write-only. Omitted on an update: unchanged. "" clears it (a public client). */

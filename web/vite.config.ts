@@ -122,7 +122,7 @@ function importAgain(): Plugin {
 /** Writes dist/sw.js: the service worker (src/sw/service-worker.js) with the
  *  request rules (src/sw/sw-logic.js) inlined and, in front, this build's id
  *  and the files an offline launch needs: the shell and every chunk the entry
- *  loads eagerly, with their CSS. Lazy route chunks are kept as they are first
+ *  loads eagerly, with their CSS and the font index.html preloads. Lazy route chunks are kept as they are first
  *  loaded. Computed from the bundle itself, so the list cannot drift from what
  *  was built (#4226). */
 function serviceWorker(): Plugin {
@@ -142,6 +142,7 @@ function serviceWorker(): Plugin {
         for (const css of c.viteMetadata?.importedCss ?? []) eager.add(css);
       };
       walk(entry.fileName);
+      for (const f of Object.keys(bundle)) if (/^static\/inter-latin-(?!ext-)[^/]+\.woff2$/.test(f)) eager.add(f);
       const precache = ["/", "/prepaint.js", "/favicon.svg", "/icon-192.png", ...[...eager].sort().map((f) => `/${f}`)];
       const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
       const logic = read("./src/sw/sw-logic.js").replace(/^export /gm, "");

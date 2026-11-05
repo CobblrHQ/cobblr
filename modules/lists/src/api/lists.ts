@@ -22,14 +22,18 @@ import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { lineAmountText, parseLineAmount } from "../line-amount.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
+import { hasSomethingToRead } from "@cobblr/platform-contract/readable-text";
 
 export const listsRouter = Router({ mergeParams: true });
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? {})}::jsonb`;
 
 // ── lists ───────────────────────────────────────────────────────────────────
+/** A pasted line break stays allowed; a row with nothing on it to read or press doesn't. */
+const listText = (max: number) => z.string().trim().min(1).max(max).refine(hasSomethingToRead, "This needs something to read.");
+
 const ListCreate = z.object({
-  title: z.string().min(1).max(200),
+  title: listText(200),
   description: optionalText(2000),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -278,13 +282,13 @@ listsRouter.post(
 // ── items ───────────────────────────────────────────────────────────────────
 const ItemCreate = z.object({
   list_id: z.string().uuid(),
-  title: z.string().min(1).max(300),
+  title: listText(300),
   note: optionalText(2000),
   qty: optionalText(64),
   metadata: z.record(z.unknown()).optional(),
 });
 const ItemUpdate = z.object({
-  title: z.string().min(1).max(300).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  title: listText(300).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   note: optionalText(2000),
   qty: optionalText(64),
   checked: z.boolean().optional(),

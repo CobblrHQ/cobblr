@@ -3,13 +3,14 @@ import { z } from "zod";
 import { sql, type Kysely } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import type { PurchasesDB } from "../db.js";
+import { lineQty } from "../line-qty.js";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 
 const PlanOrder = z.object({
   request_key: z.string().trim().min(1).max(200), vendor: z.string().trim().min(1).max(160),
   expected_arrival: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), tracking_number: z.string().max(160).optional(),
   source_file_id: z.string().uuid().optional(), add_to_stock: z.boolean(), notes: z.string().max(8000).optional(),
-  lines: z.array(z.object({ part_id: z.string().uuid().optional(), description: z.string().trim().min(1).max(500), qty: z.number().finite().positive().max(1_000_000_000) })).min(1).max(800),
+  lines: z.array(z.object({ part_id: z.string().uuid().optional(), description: z.string().trim().min(1).max(500), qty: lineQty })).min(1).max(800),
 });
 export function registerPlannedOrderAction() {
   platform().actions.registerHandler("purchases.plan-order", async ctx => {

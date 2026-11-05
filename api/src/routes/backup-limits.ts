@@ -62,7 +62,10 @@ export async function readJsonlRowsBounded(
   const rows: Array<Record<string, unknown>> = [];
   const take = (line: Buffer) => {
     const text = line.toString("utf8");
-    if (text.trim()) rows.push(JSON.parse(text) as Record<string, unknown>);
+    if (!text.trim()) return;
+    const row: unknown = JSON.parse(text);
+    if (typeof row !== "object" || row === null || Array.isArray(row)) throw new Error("A backup row is not a row.");
+    rows.push(row as Record<string, unknown>);
   };
   let unfinished: Buffer[] = [];
   let n = 0;

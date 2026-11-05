@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { imagePathField } from "@cobblr/platform-contract/image-reference";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
@@ -21,7 +22,7 @@ recordsRouter.use((req, res, next) => {
 
 const RecordCreate = z.object({
   name: z.string().min(1).max(200),
-  image_path: z.string().max(500).nullable().optional(),
+  image_path: imagePathField().nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
   location_id: z.string().uuid().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),

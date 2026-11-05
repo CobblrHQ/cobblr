@@ -44,6 +44,7 @@ import * as activity from "../platform/activity.js";
 import { enableModuleForOrg, isDefaultModule } from "../modules/enable.js";
 import { canonicalModuleName, getEntry } from "../modules/registry.js";
 import { getFlagshipManifest, listFlagshipManifests } from "../lib/flagship-bundles.js";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { externalRegistry } from "./registry.js";
 import { upsertOverride, deleteOverride } from "../platform/entity-kind-overrides.js";
 import { createInstance, getInstance } from "../platform/instances.js";
@@ -474,8 +475,8 @@ export const BundleManifest = z.object({
    *  are hidden and their order. The workspace's own choices sit over it. */
   record_panels: z.record(RecordPanelLayout).default({}),
   id: z.string().min(1),
-  version: z.string().min(1),
-  name: z.string().min(1),
+  version: z.string().min(1).max(40),
+  name: readableNameField(200),
   description: z.string().optional(),
   author: z.string().optional(),
   /** Release date of this version (ISO) + plain-language changelog, shown on

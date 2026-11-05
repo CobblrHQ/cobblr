@@ -3,6 +3,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { imagePathField } from "@cobblr/platform-contract/image-reference";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
@@ -38,7 +39,7 @@ const LocationCreate = z.object({
   }),
   description: z.string().max(8_000).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
-  image_path: z.string().max(500).nullable().optional(),
+  image_path: imagePathField().nullable().optional(),
 });
 
 const LocationUpdate = LocationCreate.partial();

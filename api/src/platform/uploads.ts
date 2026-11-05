@@ -187,11 +187,15 @@ export function uploadMiddleware(options: UploadOptions): UploadMiddleware {
     throw new Error(`an upload route's cap (${routeCap} bytes) is above UPLOAD_CEILING_BYTES, which the proxy is sized to`);
   }
   const field = opts.field ?? "file";
-  const parse = multer({
+  // defParamCharset: a browser sends a file's name as UTF-8; the default reads it as Latin-1, so "café" became
+  // "cafÃ©". multer takes it, and its types don't list it.
+  const multerOptions: Parameters<typeof multer>[0] & { defParamCharset: string } = {
     storage: diskEngine(routeCap, policy),
+    defParamCharset: "utf8",
     // The hard stop; each file's own limit is applied by the engine.
     limits: { fileSize: routeCap ?? UPLOAD_CEILING_BYTES, files: 1 },
-  }).single(field);
+  };
+  const parse = multer(multerOptions).single(field);
   return (req, res, next) => {
     const started = performance.now();
     const rq = req as Req;
@@ -233,6 +237,11 @@ export function uploadMiddleware(options: UploadOptions): UploadMiddleware {
         rs.status(status).json({
           error: { code: refusal.reason, message: refusal.message, size_bytes: refusal.sizeBytes ?? null, limit_bytes: refusal.limitBytes ?? null },
         });
+        return;
+      }
+      // The request itself is broken (busboy's words): the sender's to fix, not a fault here.
+      if (err instanceof Error && /^(Malformed part header|Unexpected end of form|Part terminated early|Multipart: Boundary not found|Unexpected end of multipart)/.test(err.message)) {
+        rs.status(400).json({ error: { code: "bad_upload", message: "That upload could not be read: the file or its name is damaged." } });
         return;
       }
       next(err);

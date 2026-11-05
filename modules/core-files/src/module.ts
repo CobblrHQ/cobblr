@@ -188,6 +188,8 @@ export default defineModule({
     onBoot: async () => {
       const { registerDeletedFilesHeal } = await import("./heal-deleted-records.js");
       registerDeletedFilesHeal();
+      const { registerFileNamesAndFolderLoopsHeal } = await import("./heal-file-names-and-folder-loops.js");
+      registerFileNamesAndFolderLoopsHeal();
       // One-shot heal: server-written copies of a file fold into the file
       // they repeat (see heal-same-bytes.ts for the retirement condition).
       const { registerSameBytesHeal } = await import("./heal-same-bytes.js");

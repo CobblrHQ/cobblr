@@ -1,5 +1,6 @@
 // EGRESS-FILE: operator-configured - the accepted trial source, the OAuth broker and Google's token endpoint are the operator's settings or written in the code
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { tryHoldExclusive } from "../platform/exclusive.js";
 import { productName } from "../platform/product-name.js";
 import { captureBackupSecrets, rebindBackupSecrets } from "../platform/secret-backup.js";
 // Backup — a full point-in-time copy of a workspace: the Blueprint (its
@@ -359,7 +360,26 @@ export function safeInsertColumns(
  *  row and shared row, in one transaction. The caller has already asked for
  *  consent (the workspace is empty, or the person said replace). One door for
  *  every way a backup arrives: an upload, a link from another box. */
-export async function restoreBackupInto(
+export class RestoreAlreadyRunning extends Error {
+  readonly code = "restore_running";
+  constructor() {
+    super("A restore is already running in this workspace. Wait for it to finish, then look at what it brought back.");
+  }
+}
+
+/** One restore at a time in a workspace, across every api process: a double
+ *  press replaced the same rows twice at once and answered a duplicate key. */
+export async function restoreBackupInto(orgId: string, sess: Parameters<typeof applyBlueprint>[1], parsed: ParsedBackup) {
+  const held = await tryHoldExclusive(`backup-restore:${orgId}`);
+  if (!held) throw new RestoreAlreadyRunning();
+  try {
+    return await restoreWhileHolding(orgId, sess, parsed);
+  } finally {
+    await held.release();
+  }
+}
+
+async function restoreWhileHolding(
   orgId: string,
   sess: Parameters<typeof applyBlueprint>[1],
   parsed: ParsedBackup,
@@ -563,6 +583,7 @@ backupRouter.post("/restore", requireAuth, withTenant, upload, async (req, res, 
     };
     res.status(201).json({ restored: await restoreBackupInto(orgId, sess, parsed) });
   } catch (err) {
+    if (err instanceof RestoreAlreadyRunning) return void res.status(409).json({ error: { code: err.code, message: err.message } });
     next(err);
   }
 });
@@ -628,6 +649,7 @@ backupRouter.post("/restore-from-link", requireAuth, withTenant, async (req, res
     };
     res.status(201).json({ restored: await restoreBackupInto(orgId, sess, parsed), name: parsed.manifest.name ?? null });
   } catch (err) {
+    if (err instanceof RestoreAlreadyRunning) return void res.status(409).json({ error: { code: err.code, message: err.message } });
     next(err);
   }
 });

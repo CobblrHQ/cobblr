@@ -611,17 +611,30 @@ function ImpersonationLogTab() {
           target_name: string | null;
           workspace_slug: string | null;
           workspace_name: string | null;
+          workspace_deleted?: boolean;
         }>;
+        removed?: Array<{
+          id: string;
+          action: string;
+          subject_kind: string;
+          subject_name: string | null;
+          created_at: string;
+          operator_email: string | null;
+          operator_name: string | null;
+        }>;
+        kept_days?: number;
       }>("GET", "/super-admin/impersonations"),
     refetchInterval: 30_000,
   });
   const items = q.data?.items ?? [];
+  const removed = q.data?.removed ?? [];
   const now = Date.now();
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted">
         Every operator "View as" session - append-only. Read-only by default; <b>write</b> means editing
-        was deliberately enabled. Each session also leaves a trace in the workspace's own activity feed.
+        was deliberately enabled. A session stays here after its workspace is deleted, under the name it had,
+        and is kept for {q.data?.kept_days ?? 365} days.
       </p>
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden overflow-x-auto">
         <table className="w-full text-sm">
@@ -644,7 +657,10 @@ function ImpersonationLogTab() {
                 <tr key={s.id}>
                   <td className="px-3 py-2 text-xs">{s.operator_name ?? s.operator_email ?? "—"}</td>
                   <td className="px-3 py-2 text-xs">{s.target_name ?? s.target_email ?? "—"}</td>
-                  <td className="px-3 py-2 text-xs">{s.workspace_name ?? s.workspace_slug ?? "—"}</td>
+                  <td className="px-3 py-2 text-xs">
+                    {s.workspace_name ?? s.workspace_slug ?? "—"}
+                    {s.workspace_deleted && <span className="ml-1 text-faint">(deleted)</span>}
+                  </td>
                   <td className="px-3 py-2 text-xs text-muted max-w-[240px] truncate" title={s.reason}>{s.reason}</td>
                   <td className="px-3 py-2 text-[10px] uppercase">
                     {s.write_enabled_at ? <span className="text-red-500">write</span> : <span className="text-amber-500">read</span>}
@@ -659,6 +675,32 @@ function ImpersonationLogTab() {
             })}
             {!q.isLoading && items.length === 0 && (
               <tr><td colSpan={8} className="px-3 py-6 text-center text-faint text-xs">No impersonation sessions yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <h3 className="text-sm font-semibold text-content dark:text-mortar-100 pt-2">Removed from the console</h3>
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden overflow-x-auto">
+        <table className="w-full text-sm" data-testid="operator-removed">
+          <thead className="bg-subtle/50 dark:bg-slate-800/40">
+            <tr>
+              <Th>Operator</Th>
+              <Th>Removed</Th>
+              <Th>When</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line dark:divide-slate-800">
+            {removed.map((a) => (
+              <tr key={a.id}>
+                <td className="px-3 py-2 text-xs">{a.operator_name ?? a.operator_email ?? "—"}</td>
+                <td className="px-3 py-2 text-xs">
+                  {a.subject_kind === "workspace" ? `Workspace ${a.subject_name ?? ""}`.trim() : "An account"}
+                </td>
+                <td className="px-3 py-2 text-[11px] text-muted">{new Date(a.created_at).toLocaleString()}</td>
+              </tr>
+            ))}
+            {!q.isLoading && removed.length === 0 && (
+              <tr><td colSpan={3} className="px-3 py-6 text-center text-faint text-xs">Nothing removed from the console yet.</td></tr>
             )}
           </tbody>
         </table>

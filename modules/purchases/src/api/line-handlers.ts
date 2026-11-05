@@ -14,6 +14,7 @@ import { sql, type Kysely } from "kysely";
 import type { PurchasesDB } from "../db.js";
 import { claimLine } from "./line-subject.js";
 import { editOrderLine, type LineEdit } from "../line-edit.js";
+import { isLineQty, LINE_QTY_MAX } from "../line-qty.js";
 
 export function registerLineHandlers(): void {
   registerUndos();
@@ -23,7 +24,7 @@ export function registerLineHandlers(): void {
     const order = requireActionEntity(ctx);
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const qty = typeof args.qty === "number" ? args.qty : Number(args.qty);
-    if (!Number.isFinite(qty) || qty === 0) return { ok: false, error: "say how many (qty)" };
+    if (!isLineQty(qty)) return { ok: false, error: `how many must be more than 0 and at most ${LINE_QTY_MAX} (qty)` };
 
     const description = typeof args.description === "string" ? args.description.trim() : "";
     const partId = typeof args.part_id === "string" && args.part_id.trim() ? args.part_id.trim() : null;
@@ -85,7 +86,7 @@ function registerEditLine(): void {
     if (typeof args.description === "string") edit.description = args.description.trim() || null;
     if (args.qty !== undefined) {
       const qty = Number(args.qty);
-      if (!Number.isFinite(qty) || qty <= 0) return { ok: false, error: "how many must be more than 0 (qty)" };
+      if (!isLineQty(qty)) return { ok: false, error: `how many must be more than 0 and at most ${LINE_QTY_MAX} (qty)` };
       edit.qty = qty;
     }
     if (args.unit_cost !== undefined) edit.unit_cost = args.unit_cost === null ? null : Number(args.unit_cost);

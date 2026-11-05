@@ -667,6 +667,28 @@ export function completeApp(app: Application): void {
         });
         return;
       }
+      // A character Postgres can't store (a NUL byte, most often): the caller's
+      // to fix at every door, so no route has to think of it.
+      if (["22021", "22P05"].includes((err as { code?: string }).code ?? "")) {
+        res.status(400).json({
+          error: { code: "invalid_input", message: "This text has a character that can't be saved. Remove it and try again." },
+        });
+        return;
+      }
+      // A date Postgres can't read, or a number too large for its column: the
+      // same, for every door that hands a value straight to the database.
+      if (["22003", "22007", "22008"].includes((err as { code?: string }).code ?? "")) {
+        res.status(400).json({
+          error: { code: "invalid_input", message: "A date or number here can't be saved. Check it and try again." },
+        });
+        return;
+      }
+      // Two signups with one address both passed the look before the insert:
+      // the second hears what it would have heard a moment later.
+      if ((err as { code?: string; constraint?: string }).code === "23505" && (err as { constraint?: string }).constraint === "users_email_key") {
+        res.status(409).json({ error: { code: "email_taken", message: "That email is already registered." } });
+        return;
+      }
       // A thing saved into a place that is not there, or that was deleted as
       // it was saved: the location sync refuses it (migrate-location-to-placement.ts).
       // A place made inside one deleted just before: the parent key refuses it.

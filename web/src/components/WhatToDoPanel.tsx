@@ -19,6 +19,7 @@
 // a ready-made tracker → "set it up & drop me in"; a blank slate → "add a
 // blank one" / "name a new category". Build-it-yourself is a CTA, not a lane.
 
+import { captureAddAll } from "./captureAddAll";
 import { productName } from "@cobblr/platform-web";
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -897,13 +898,15 @@ export function WhatToDoPanel({
               <div className="grid grid-cols-1 min-w-0 gap-4 lg:grid-cols-2">
                 {orderedGroups.map(([key, group]) => {
                   const d = group.captures[0]!.resolved_destination;
+                  const { offer, left } = captureAddAll(group.captures);
                   return <section key={key} aria-label={group.label} data-testid="capture-group" className="min-w-0">
                     <div className="flex min-w-0 items-center justify-between gap-2 py-1">
                       <div className="min-w-0">
                         <h3 className="truncate text-[10px] uppercase tracking-widest text-accent">{group.label} · {group.captures.length}</h3>
                         {d?.bundle_external_id && <p className="text-[11px] text-faint">Collection will be created</p>}
+                        {left.length > 0 && <p data-testid="capture-left" className="text-[11px] text-faint">{left.length === 1 ? `${captureName(left[0]!)} doesn't look like ${group.label}: add it on its own` : `${left.length} don't look like ${group.label}: add each on its own`}</p>}
                       </div>
-                      {d && <button type="button" aria-label={`Add all ${group.captures.length} to ${group.label}`} disabled={discardMut.isPending || batchMut.isPending || confirmMut.isPending || mergeMut.isPending || (!!d.bundle_external_id && materialize.busy(d.bundle_external_id))} onClick={() => addCaptures(group.captures)} className="shrink-0 rounded px-2 py-2 text-xs font-medium text-accent hover:bg-subtle disabled:opacity-50">Add all {group.captures.length}</button>}
+                      {d && offer && <button type="button" aria-label={`Add all ${offer.length} to ${group.label}`} disabled={discardMut.isPending || batchMut.isPending || confirmMut.isPending || mergeMut.isPending || (!!d.bundle_external_id && materialize.busy(d.bundle_external_id))} onClick={() => addCaptures(offer)} className="shrink-0 rounded px-2 py-2 text-xs font-medium text-accent hover:bg-subtle disabled:opacity-50">Add all {offer.length}</button>}
                     </div>
                     <ul>{[...group.rows.values()].map(captures => renderCapture(captures, group.label))}</ul>
                   </section>;

@@ -6,6 +6,7 @@ import { productName } from "../platform/product-name.js";
 import { childTerms } from "../auth/token-lineage.js";
 import { OPERATOR_ONLY_ACTIONS, IMPORT_ROW } from "../platform/activity.js";
 import { activityPresentation } from "@cobblr/platform-contract/activity-summary";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { nameActivityRows } from "../platform/activity-subjects.js";
 import { describeChanges } from "../platform/history-describe.js";
 import { historyBag } from "../platform/record-history.js";
@@ -234,7 +235,7 @@ meRouter.post("/me/verify-email/resend", requireAuth, async (req, res, next) => 
 // implications (auth token still valid; OIDC link still works; etc.)
 // — not in v0.1.
 const MeUpdate = z.object({
-  display_name: z.string().min(1).max(160).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  display_name: readableNameField(160).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   // Per-user theme; null clears back to device/OS default.
   theme_pref: z.enum(["light", "dark"]).nullable().optional(),
   /** true = mark the tour seen now. false = clear it, so "Take the tour" from
@@ -1656,7 +1657,7 @@ meRouter.post(
 // ──────────────────────── API tokens ─────────────────────────────
 
 const TokenCreate = z.object({
-  name: z.string().min(1).max(120),
+  name: readableNameField(120),
   /** ISO timestamp; if omitted, the token never expires. */
   expires_at: z.string().datetime().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** Capability scopes. Omitted/empty = unrestricted (legacy full access).
@@ -1781,6 +1782,10 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
       scopes: cleanScopes.length > 0 ? cleanScopes : null,
       access: access as TokenAccess | null,
     };
+    if (terms.expires_at && new Date(terms.expires_at).getTime() <= Date.now()) {
+      res.status(400).json({ error: { code: "already_expired", message: "That expiry has already passed, so the token could never work. No token was created." } });
+      return;
+    }
     let parentTokenId: string | null = null;
     if (req.session!.auth_method === "api_token" && req.session!.api_token_id) {
       const parent = await meta

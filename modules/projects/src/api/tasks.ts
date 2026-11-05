@@ -139,7 +139,7 @@ tasksRouter.post(
   "/reorder",
   asyncHandler(async (req, res) => {
     if (!(await requireCapability(req, res, "projects:move-task"))) return;
-    const parsed = z.object({ project_id: z.string().uuid(), ids: z.array(z.string().uuid()).min(1).max(1000) }).safeParse(req.body);
+    const parsed = z.object({ project_id: z.string().uuid(), ids: z.array(z.string().uuid()).min(1).max(1000).refine((ids) => new Set(ids).size === ids.length, "A task can only be in the order once.") }).safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const stray = await writeTaskOrder(db, parsed.data.project_id, parsed.data.ids);

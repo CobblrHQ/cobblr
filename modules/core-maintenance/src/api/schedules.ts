@@ -166,6 +166,14 @@ function when(v: string | null | undefined): Date | null {
   return v ? instantFromInput(v) : null;
 }
 
+/** A counter a schedule follows has to be one the record's kind keeps, or the
+ *  schedule never comes due. A failed read throws, so it is never taken for "no such counter". */
+export async function refuseUnknownCounter(orgId: string, kind: string, field: string | null | undefined): Promise<void> {
+  if (!field) return;
+  const counters = await platform().entities.countersFor(orgId, kind);
+  if (!counters.some((c) => c.key === field)) throw new MaintenanceRefusal("Choose a counter this record keeps");
+}
+
 /** Create one, stamping the counter reading it starts from, and make its
  *  first occurrence. Shared by the route and the action. */
 export async function createSchedule(
@@ -307,6 +315,9 @@ schedulesRouter.post(
     const parsed = ScheduleCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
+    const kind = `${parsed.data.entity_module}:${parsed.data.entity_type}`;
+    if (!(await platform().entities.lookup(ctx.org.id, kind, parsed.data.entity_id))) throw new MaintenanceRefusal("This schedule's record doesn't exist");
+    await refuseUnknownCounter(ctx.org.id, kind, parsed.data.counter_field);
     const row = await createSchedule(tenantDb(req), ctx.org.id, parsed.data);
     void platform().events.emit("core-maintenance.schedule.created", { orgId: ctx.org.id, scheduleId: row.id, entityId: row.entity_id });
     res.status(201).json(await present(ctx.org.id, row));
@@ -386,6 +397,7 @@ export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: strin
     }
     if (next.expiry_field && d.current_expiry) await writeExpiry(orgId, { ...before, expiry_field: next.expiry_field }, new Date(d.current_expiry + "T12:00:00Z"));
     const counterChanged = next.counter_field !== before.counter_field;
+    if (counterChanged) await refuseUnknownCounter(orgId, `${before.entity_module}:${before.entity_type}`, next.counter_field);
     const reading = counterChanged && next.counter_field
       ? await readCounter(orgId, `${before.entity_module}:${before.entity_type}`, before.entity_id, next.counter_field)
       : undefined;

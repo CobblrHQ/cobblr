@@ -32,6 +32,8 @@ const SUBJECT_IS_SIGNUP = new Set([
   "a-sign-up-records-the-source-that-sent-it.test.ts",
   // what the signup response says about verifying the new account's email
   "a-self-host-install-with-no-email-sender-never-asks-to-verify.test.ts",
+  // a signup that loses its address to another gives back the invite it claimed
+  "a-second-press-sends-no-second-invite-and-a-lost-signup-frees-its-invite.test.ts",
   "auth-pair-codes.test.ts",
   "auth-reset-verify.test.ts",
   "auth-signup-gate.test.ts",

@@ -834,8 +834,8 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
     // UPC/EAN — OR a scanned book's ISBN-13, which IS an EAN-13. Both resolve
     // through the box resolver chain, so books now hit the local Open Library
     // mirror (free, instant, offline) and CDs/vinyl hit the MusicBrainz mirror,
-    // instead of leaning on the live APIs. A miss on an ISBN still falls back to
-    // the live Open Library API below (a brand-new book not yet in the mirror).
+    // instead of leaning on the live APIs. A miss on an ISBN still asks the live
+    // Open Library API (a brand-new book not yet in the mirror).
     // The chain, and for an ISBN the book catalog too, decided in one place
     // (catalog-answer.ts) that a check without a scan can ask as well.
     const answer = await catalogAnswerForCode(ctx.upc, ctx.orgId);
@@ -860,8 +860,12 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
     if (answer.bookAfterMiss && hit) await cacheHit(ctx, hit);
   } else if (codeClass.type === "isbn") {
     // An ISBN-10 (manual entry — a scanned book is the ISBN-13 EAN handled above).
-    // The live Open Library API; a miss falls through to web search.
-    hit = await resolveIsbn(codeClass.code).catch(() => null);
+    // The live Open Library API. A book catalog that could not be asked is
+    // unresolved, and retries; web search never names a book.
+    hit = await resolveIsbn(codeClass.code).catch((err: unknown) => {
+      if (err instanceof BookDoorUnavailable) rateLimited = lookupUnreachable = true;
+      return null;
+    });
     if (hit) await cacheHit(ctx, hit);
   } else if (codeClass.type === "asin") {
     // A real Amazon ASIN → best-effort product-page title. Amazon often blocks

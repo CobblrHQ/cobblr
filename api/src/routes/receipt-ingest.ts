@@ -12,6 +12,7 @@
 // route (POST /scan/receipt) through an internal call with a minted session
 // token — so all the parse/tier/fan-out logic stays in core-scan, uncoupled.
 
+import { addressRefusal } from "../platform/inbound-address-refusal.js";
 import { productName } from "../platform/product-name.js";
 import { Router } from "express";
 import { sql } from "kysely";
@@ -107,8 +108,8 @@ export interface ReceiptEmailInput {
  *  write each receipt attachment via the files seam, and reuse core-scan's
  *  /scan/receipt route per file. Pure of req/res so BOTH the standalone
  *  /receipt-ingest/email route AND the /inbound-email dispatcher can call it.
- *  Never throws for a routing miss — returns a 200 { ignored, reason } so a
- *  stray email doesn't bounce. */
+ *  Never throws. Stray mail to the bare address answers 200 { ignored, reason } so a
+ *  stray email does not bounce; a dead forwarding address is refused. */
 
 
 export async function ingestReceiptEmail(
@@ -142,7 +143,7 @@ export async function ingestReceiptEmail(
     orgId = input.resolved.orgId;
   } else if (tok) {
     const decoded = verifyReceiptToken(tok);
-    if (!decoded) return { status: 200, body: { ignored: true, reason: "bad_token" } };
+    if (!decoded) return addressRefusal("bad_token");
     userId = decoded.userId;
     orgId = decoded.orgId;
   } else if (from_email) {
@@ -177,7 +178,7 @@ export async function ingestReceiptEmail(
     .where("m.user_id", "=", userId)
     .where("m.org_id", "=", orgId)
     .executeTakeFirst();
-  if (!membership) return { status: 200, body: { ignored: true, reason: "not_a_member" } };
+  if (!membership) return addressRefusal("not_a_member");
 
   const slug = membership.slug;
 

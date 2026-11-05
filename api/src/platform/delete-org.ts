@@ -4,6 +4,7 @@
 // DELETE /super-admin/workspaces/:id (cleaning up e2e/test detritus is an
 // operator chore — console audit 2026-06-11). AUTHZ IS THE CALLER'S JOB.
 
+import { snapshotWorkspaceOnSessions } from "./operator-log-retention.js";
 import { platform } from "@cobblr/platform-contract";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
@@ -169,6 +170,8 @@ async function removeRows(orgId: string): Promise<void> {
     // (memberships, modules, bundles, bindings, field_defs, invites).
     // activity_log doesn't cascade — clear it explicitly.
     await trx.deleteFrom("activity_log").where("org_id", "=", orgId).execute();
+    // The View as log is the operator's, and outlives the workspace (#9234).
+    await snapshotWorkspaceOnSessions(trx, orgId);
     await trx.deleteFrom("notifications").where("org_id", "=", orgId).execute();
     await trx.deleteFrom("notification_subscriptions").where("org_id", "=", orgId).execute();
     // Feedback is the operator's, not the workspace's: the report stays, under

@@ -29,6 +29,8 @@ import { listScanEvalCases } from "./scan-eval-cases.js";
 import { scanResolversRouter } from "./super-admin-scan-resolvers.js";
 import { ImpersonationRefused, startImpersonation, describeSession } from "../platform/impersonation.js";
 import { log as activityLog } from "../platform/activity.js";
+import { hasSomethingToRead, readableNameField } from "@cobblr/platform-contract/readable-text";
+import { OPERATOR_LOG_DAYS, recordOperatorAction } from "../platform/operator-log-retention.js";
 import { activationOf, cohortFunnel, countsToward } from "../platform/activation.js";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
@@ -183,6 +185,7 @@ superAdminRouter.patch("/workspaces/:id", async (req, res, next) => {
       res.status(400).json({ error: { code: "invalid_body", message: "plan must be free | paid | disabled" } });
       return;
     }
+    const before = await meta.selectFrom("orgs").select("plan").where("id", "=", req.params.id!).executeTakeFirst();
     const updated = await meta
       .updateTable("orgs")
       .set({ plan: parsed.data.plan })
@@ -192,6 +195,15 @@ superAdminRouter.patch("/workspaces/:id", async (req, res, next) => {
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "Workspace not found." } });
       return;
+    }
+    if (before?.plan !== updated.plan) {
+      await activityLog({
+        orgId: updated.id,
+        userId: req.session!.id,
+        action: "workspace_plan_changed",
+        ref: { module: null, entityType: "org", entityId: updated.id },
+        diff: { from: before?.plan ?? null, to: updated.plan },
+      });
     }
     res.json(updated);
   } catch (err) {
@@ -205,7 +217,7 @@ superAdminRouter.patch("/workspaces/:id", async (req, res, next) => {
 // "core-ai"]) so the demo can show off what real trials lock. Target the user by email.
 const DemoBody = z.object({
   email: z.string().email(),
-  name: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  name: readableNameField(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   expiresInDays: optionalField(z.number().int().positive()),
   unlock: z.array(z.string().min(1)).max(50).optional(),
   blueprint: BlueprintManifest.optional(),
@@ -316,6 +328,7 @@ superAdminRouter.delete("/users/:id", async (req, res, next) => {
     const takeWorkspaces = req.query.delete_workspaces === "1" || req.query.delete_workspaces === "true";
     try {
       const result = await hardDeleteUser(id, { deleteSoleOwnedWorkspaces: takeWorkspaces });
+      await recordOperatorAction({ operatorUserId: req.session!.id, action: "user_deleted", subjectKind: "user", subjectId: id });
       console.log(
         `[super-admin] operator ${req.session!.id} deleted account ${id} (${result.mode}${result.workspaces_deleted.length ? `, with ${result.workspaces_deleted.map((w) => w.slug).join(", ")}` : ""})`,
       );
@@ -353,6 +366,7 @@ superAdminRouter.delete("/workspaces/:id", async (req, res, next) => {
       return;
     }
     await hardDeleteOrg(org.id);
+    await recordOperatorAction({ operatorUserId: req.session!.id, action: "workspace_deleted", subjectKind: "workspace", subjectId: org.id, subjectName: org.name });
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -1340,17 +1354,36 @@ superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
     const token = randomBytes(24).toString("base64url");
     const expires_at = inviteExpiresAt(parsed.data.expires_in_days);
-    const invite = await meta
-      .insertInto("signup_invites")
-      .values({
-        token,
-        created_by: userId!,
-        invited_email: entry.email,
-        note: parsed.data.note ?? "waitlist",
-        expires_at,
-      })
-      .returning(["id", "token", "invited_email", "expires_at", "created_at"])
-      .executeTakeFirstOrThrow();
+    // The decision is taken on the row itself, still pending, in the same
+    // transaction as the invite: a second press, or a Dismiss at the same
+    // moment, finds it decided and makes no invite and sends no email.
+    const invite = await meta.transaction().execute(async (trx) => {
+      const decided = await trx
+        .updateTable("waitlist")
+        .set({ status: "invited", decided_at: new Date(), decided_by: userId ?? null })
+        .where("id", "=", entry.id)
+        .where("status", "=", "pending")
+        .returning("id")
+        .executeTakeFirst();
+      if (!decided) return null;
+      const made = await trx
+        .insertInto("signup_invites")
+        .values({
+          token,
+          created_by: userId!,
+          invited_email: entry.email,
+          note: parsed.data.note ?? "waitlist",
+          expires_at,
+        })
+        .returning(["id", "token", "invited_email", "expires_at", "created_at"])
+        .executeTakeFirstOrThrow();
+      await trx.updateTable("waitlist").set({ invite_id: made.id }).where("id", "=", entry.id).execute();
+      return made;
+    });
+    if (!invite) {
+      res.status(409).json({ error: { code: "not_pending", message: "Signup not found or already decided." } });
+      return;
+    }
     let emailed = false;
     if (hasAuthEmailSender()) {
       // The public signup surface, not this console's host: an operator's
@@ -1375,11 +1408,6 @@ superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
         kind: "invite",
       });
     }
-    await meta
-      .updateTable("waitlist")
-      .set({ status: "invited", invite_id: invite.id, decided_at: new Date(), decided_by: userId ?? null })
-      .where("id", "=", entry.id)
-      .execute();
     res.status(201).json({ id: entry.id, status: "invited", invite: { ...invite, emailed } });
   } catch (err) {
     next(err);
@@ -2793,7 +2821,7 @@ superAdminRouter.patch("/announce-settings/:category", async (req, res, next) =>
 // Only `composable` categories may be posted this way.
 const ComposeAnnounce = z.object({
   category: z.string().min(1).max(80),
-  title: z.string().min(1).max(240),
+  title: readableNameField(240),
   body: z.string().max(3500).optional(),
 });
 
@@ -2839,7 +2867,7 @@ superAdminRouter.post("/announce", async (req, res, next) => {
 const StartImpersonation = z.object({
   org_id: z.string().uuid(),
   target_user_id: z.string().uuid(),
-  reason: z.string().min(1).max(500),
+  reason: z.string().trim().min(1).max(500).refine(hasSomethingToRead, "Say why you're looking."),
   ttl_min: z.number().int().min(1).max(60).optional(),
 });
 
@@ -2887,7 +2915,7 @@ superAdminRouter.patch("/impersonations/:id", async (req, res, next) => {
     }
     const sess = await meta
       .selectFrom("impersonation_sessions")
-      .select(["id", "operator_user_id", "org_id", "mode", "write_enabled_at", "ended_at"])
+      .select(["id", "operator_user_id", "org_id", "mode", "write_enabled_at", "ended_at", "expires_at"])
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
     if (!sess) {
@@ -2899,8 +2927,14 @@ superAdminRouter.patch("/impersonations/:id", async (req, res, next) => {
       res.status(403).json({ error: { code: "not_your_session", message: "Not your impersonation session." } });
       return;
     }
+    // The log and the workspace's feed are the record of what an operator did: a
+    // second end doesn't move the time it ended, and a session that's over can't be armed.
+    if (parsed.data.mode === "write" && (sess.ended_at || new Date(sess.expires_at) <= new Date())) {
+      res.status(409).json({ error: { code: "session_over", message: "This session is over. Start a new one to make changes." } });
+      return;
+    }
     const updates: { ended_at?: Date; mode?: "read" | "write"; write_enabled_at?: Date } = {};
-    if (parsed.data.ended) updates.ended_at = new Date();
+    if (parsed.data.ended && !sess.ended_at) updates.ended_at = new Date();
     if (parsed.data.mode) {
       updates.mode = parsed.data.mode;
       if (parsed.data.mode === "write" && !sess.write_enabled_at) updates.write_enabled_at = new Date();
@@ -2944,10 +2978,18 @@ superAdminRouter.get("/impersonations", async (_req, res, next) => {
         "op.display_name as operator_name",
         "tu.email as target_email",
         "tu.display_name as target_name",
-        "o.slug as workspace_slug",
-        "o.name as workspace_name",
+        sql<string | null>`coalesce(o.slug, s.workspace_slug)`.as("workspace_slug"),
+        sql<string | null>`coalesce(o.name, s.workspace_name)`.as("workspace_name"),
+        sql<boolean>`o.id is null`.as("workspace_deleted"),
       ])
       .orderBy("s.created_at", "desc")
+      .limit(100)
+      .execute();
+    const removed = await meta
+      .selectFrom("operator_actions as a")
+      .leftJoin("users as op", "op.id", "a.operator_user_id")
+      .select(["a.id", "a.action", "a.subject_kind", "a.subject_id", "a.subject_name", "a.created_at", "op.email as operator_email", "op.display_name as operator_name"])
+      .orderBy("a.created_at", "desc")
       .limit(100)
       .execute();
     const summarised = items.map((it) => ({
@@ -2964,7 +3006,7 @@ superAdminRouter.get("/impersonations", async (_req, res, next) => {
         workspace: it.workspace_name || it.workspace_slug,
       }),
     }));
-    res.json({ items: summarised });
+    res.json({ items: summarised, removed, kept_days: OPERATOR_LOG_DAYS });
   } catch (err) {
     next(err);
   }

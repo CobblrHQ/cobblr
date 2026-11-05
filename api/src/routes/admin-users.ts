@@ -23,6 +23,7 @@ import { isUndeliverableAddress, normalizeUsername, placeholderEmail, usernamePr
 import { Router } from "express";
 import { z } from "zod";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
 import { createAccount } from "../platform/accounts.js";
@@ -43,7 +44,7 @@ const CreateBody = z.object({
   email: optionalField(z.string().email().max(254)),
   // An optional name to sign in with beside the email (#6910).
   username: optionalField(z.string().trim().max(64)),
-  display_name: z.string().min(1).max(120),
+  display_name: readableNameField(120),
   role: z.enum(ORG_ROLES).default("member"),
 });
 

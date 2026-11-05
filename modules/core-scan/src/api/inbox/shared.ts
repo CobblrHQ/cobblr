@@ -1,5 +1,6 @@
 // What more than one group of the scan inbox's routes uses.
 // Split from api/inbox.ts by route group (#7385); inbox.ts mounts the groups in order.
+import { bulkDoubt } from "../../services/bulk-doubt.js";
 import { applyModelFacts } from "../../services/model-facts.js";
 import { linkInVault } from "../../services/vault-original.js";
 import { createMatchQueue } from "../../services/match-queue.js";
@@ -328,13 +329,15 @@ export function withHeld<T extends { needs_review: boolean }>(served: T, viewer:
  *  for a reader that cannot run the resolver: the kernel's quickstart
  *  groups and files by it, so "these look like X" and "file all N" agree
  *  with the card and the scanner queue (#3618). */
-export function withDestination<T>(served: T, raw: DestinationRow, tables: ScanResolverTable[], live: LiveTable[]): T & { resolved_destination: { module: string; instance: string | null; kind: string | null; label: string | null; bundle_external_id: string | null } | null } {
+export function withDestination<T>(served: T, raw: DestinationRow, tables: ScanResolverTable[], live: LiveTable[]): T & { bulk_doubt: string | null; resolved_destination: { module: string; instance: string | null; kind: string | null; label: string | null; bundle_external_id: string | null } | null } {
   const d = filingDestination(raw, tables, live);
   return {
     ...served,
     resolved_destination: d
       ? { module: d.module, instance: d.instance ?? null, kind: typeof d.kind === "string" ? d.kind : null, label: typeof d.label === "string" ? d.label : null, bundle_external_id: typeof d.bundle_external_id === "string" ? d.bundle_external_id : null }
       : null,
+    // Whether a bulk action would leave this row, so a button counts only what it files (#9224).
+    bulk_doubt: bulkDoubt(withPersonName(raw as never) as never, d, tables),
   };
 }
 

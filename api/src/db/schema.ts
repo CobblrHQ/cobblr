@@ -552,6 +552,19 @@ export interface ImpersonationSessionsTable {
   expires_at: Date;
   write_enabled_at: Date | null;
   ended_at: Date | null;
+  /** The workspace's name and address when it was deleted; null while it exists. */
+  workspace_name: string | null;
+  workspace_slug: string | null;
+}
+
+export interface OperatorActionsTable {
+  id: Generated<string>;
+  operator_user_id: string;
+  action: string;
+  subject_kind: string;
+  subject_id: string;
+  subject_name: string | null;
+  created_at: Generated<Date>;
 }
 
 export interface BackupDestinationsTable {
@@ -2112,6 +2125,7 @@ export interface MetaDB {
   platform_announce_settings: PlatformAnnounceSettingsTable;
   field_upgrade_offers: FieldUpgradeOffersTable;
   impersonation_sessions: ImpersonationSessionsTable;
+  operator_actions: OperatorActionsTable;
   backup_destinations: BackupDestinationsTable;
   org_outbound_email: OrgOutboundEmailTable;
   org_outbound_sms: OrgOutboundSmsTable;

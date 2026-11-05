@@ -22,12 +22,9 @@
          workspace name rendered under the clock. -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Workspace</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Asked for before the code that draws the page, so the first draw normally
+         has it. A font later than that waits for the next load (src/fonts.css). -->
+    <link rel="preload" href="/src/assets/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
     <!-- Per-environment app icon + manifest + tab title, so the PWA and the
          browser tab are unmistakably NOT public prod (beta request: tell staging apart
          from cobblr.me at a glance).

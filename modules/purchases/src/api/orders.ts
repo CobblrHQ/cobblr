@@ -8,6 +8,7 @@ import { orderFigures, combineOrderTotals } from "../order-money.js";
 
 import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { receiveIfArrived, receiveOrderLines, setReceivedCount } from "../receive.js";
+import { lineQty } from "../line-qty.js";
 import { createHash } from "node:crypto";
 import { Router } from "express";
 import { sql } from "kysely";
@@ -39,14 +40,17 @@ ordersRouter.use((req, res, next) => {
 
 const OrderStatus = z.enum(["planned", "ordered", "in-transit", "arrived", "cancelled"]);
 
+/** Postgres reads the many ways a receipt writes a date, so that stays its call; it also takes a year nobody means. */
+const orderDate = z.string().refine((v) => !/^\s*\+?\d{5}/.test(v), "That year is too far off.").nullable().optional();
+
 const OrderCreate = z.object({
   vendor: z.string().max(160).nullable().optional(),
   vendor_id: z.string().uuid().nullable().optional(),
   order_number: z.string().max(160).nullable().optional(),
   url: z.string().url().max(500).nullable().optional(),
-  ordered_at: z.string().nullable().optional(),
-  expected_arrival: z.string().nullable().optional(),
-  arrived_at: z.string().nullable().optional(),
+  ordered_at: orderDate,
+  expected_arrival: orderDate,
+  arrived_at: orderDate,
   status: OrderStatus.optional(),
   total_cost: z.number().nullable().optional(),
   shipping_cost: z.number().nullable().optional(),
@@ -78,7 +82,7 @@ const ItemCreate = z.object({
   subject_kind: z.string().min(1).max(80).nullable().optional(),
   subject_id: z.string().min(1).max(120).nullable().optional(),
   description: z.string().max(500).nullable().optional(),
-  qty: z.number(),
+  qty: lineQty,
   unit_cost: z.number().nullable().optional(),
   /** The amount the source line stated. Optional, and authoritative over
    *  qty * unit_cost when present — see migration 0007. */
@@ -581,7 +585,11 @@ ordersRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
-    const orderCurrency = await db.selectFrom("purchases_orders").select("metadata").where("id", "=", orderId).executeTakeFirstOrThrow();
+    const orderCurrency = await db.selectFrom("purchases_orders").select("metadata").where("id", "=", orderId).where("instance", "=", instanceOf(req)).executeTakeFirst();
+    if (!orderCurrency) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
     const main = await platform().money.currency(ctx.org.id);
     const lineMetadata = Object.assign({}, parsed.data.metadata, { currency: fieldCurrency(parsed.data.metadata, "unit_cost", fieldCurrency(orderCurrency.metadata, "total_cost", main)) });
     const { subject_kind, subject_id, add_to_stock, ...lineFields } = parsed.data;
@@ -642,7 +650,7 @@ ordersRouter.get(
 const ItemEdit = z
   .object({
     description: z.string().max(500).nullable().optional(),
-    qty: z.number().positive().optional(),
+    qty: lineQty.optional(),
     unit_cost: z.number().min(0).nullable().optional(),
     currency: z.string().refine(isCurrency).optional(),
   })

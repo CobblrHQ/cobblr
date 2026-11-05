@@ -1,5 +1,6 @@
 import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
 import { ReceiptPending } from "./receipt-pending.js";
+import { stockAddedBy } from "./line-qty.js";
 import { sql, type Kysely } from "kysely";
 import { arrivedEverywhere, platform } from "@cobblr/platform-contract";
 import type { PurchasesDB } from "./db.js";
@@ -84,7 +85,7 @@ async function queueReceived(db: Kysely<PurchasesDB>, orgId: string, orderId: st
     orderItemId: it.id,
     partId: it.part_id,
     // The stock change this receipt makes, which the stock wire reads.
-    delta: addsStock ? qty : 0,
+    delta: addsStock ? stockAddedBy(qty) : 0,
     qty,
     unitCost: counted ? null : unitCost,
     lineCost: counted ? null : lineCost,
@@ -157,7 +158,7 @@ export async function unreceiveOrderLines(db: Kysely<PurchasesDB>, orgId: string
       orderId,
       orderItemId: it.id,
       partId: it.part_id,
-      delta: -qty,
+      delta: -stockAddedBy(qty),
       qty,
       unitCost: null,
       lineCost: null,

@@ -251,6 +251,9 @@ export function InviteAcceptPage() {
     );
   }
 
+  // The API refuses this too (join-invite.ts): say so before they press Join.
+  const forSomeoneElse = !!p.invited_email && !!user?.email && p.invited_email.toLowerCase().trim() !== user.email.toLowerCase().trim();
+
   return (
     <CenteredCard tone="info" title={`Join ${p.org_name}`}>
       <p className="text-sm text-content dark:text-mortar-200">
@@ -262,6 +265,11 @@ export function InviteAcceptPage() {
           Expires {new Date(p.expires_at).toLocaleString()}
         </p>
       )}
+      {forSomeoneElse && (
+        <p className="text-sm text-content dark:text-mortar-200 mt-3" data-testid="invite-for-someone-else">
+          This invite is for <strong>{p.invited_email}</strong>, and you're signed in as <strong>{user?.email}</strong>. Sign in with that address, or ask {p.invited_by_name} for a new invite.
+        </p>
+      )}
       <div className="flex items-center gap-2 mt-5">
         <button
           onClick={() => navigate("/")}
@@ -269,13 +277,15 @@ export function InviteAcceptPage() {
         >
           Not now
         </button>
-        <button
-          onClick={() => accept.mutate()}
-          disabled={accept.isPending}
-          className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50"
-        >
-          {accept.isPending ? "Joining…" : `Join as ${p.role}`}
-        </button>
+        {!forSomeoneElse && (
+          <button
+            onClick={() => accept.mutate()}
+            disabled={accept.isPending}
+            className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50"
+          >
+            {accept.isPending ? "Joining…" : `Join as ${p.role}`}
+          </button>
+        )}
       </div>
     </CenteredCard>
   );

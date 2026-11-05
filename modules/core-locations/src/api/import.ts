@@ -120,7 +120,7 @@ locationsImportRouter.post(
     const db = tenantDb(req);
 
     const { headers, rows, errors } = parseLocations(csv, match_on);
-    const existing = (await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "metadata", "kind", "short_name"]).execute()).map((l) => ({
+    const existing = (await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "metadata", "kind", "short_name", "description", "notes"]).execute()).map((l) => ({
       ...l,
       metadata: (l.metadata as Record<string, unknown> | null) ?? null,
     }));
@@ -142,6 +142,7 @@ locationsImportRouter.post(
     const summary = {
       create: preview.filter((p) => p.action === "create" && !p.error).length,
       update: preview.filter((p) => p.action === "update" && !p.error).length,
+      unchanged: preview.filter((p) => p.action === "unchanged" && !p.error).length,
       unresolved_parents: preview.filter((p) => p.parent && !p.parent.resolved).length,
       blocked: plan.blocking.length,
     };
@@ -171,6 +172,7 @@ locationsImportRouter.post(
     const session = sessionUser(req);
     let created = 0;
     let updated = 0;
+    let unchanged = 0;
 
     const offTree = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
       await lockTree(trx);
@@ -181,7 +183,10 @@ locationsImportRouter.post(
         const ref = p.parentRef;
         const parentId = ref ? ("existing" in ref ? ref.existing : idOfRow.get(ref.row) ?? null) : null;
         const setParent = p.parent ? { parent_id: parentId } : {};
-        if (p.action === "update" && p.id) {
+        if (p.action === "unchanged" && p.id) {
+          idOfRow.set(i, p.id);
+          unchanged++;
+        } else if (p.action === "update" && p.id) {
           await trx
             .updateTable("core_locations_locations")
             .set({ name: p.name, short_name: p.short_name, kind: p.kind, ...setParent, ...written(p), metadata: sql`metadata || ${JSON.stringify(p.metadata)}::jsonb` })
@@ -211,7 +216,7 @@ locationsImportRouter.post(
         )
         update core_locations_locations l set depth = tree.d from tree where tree.id = l.id
       `.compile(trx));
-      await log({ orgId: ctx.org.id, userId: session.id, action: "locations_imported", ref: { module: "core-locations", entityType: "location", entityId: "" }, diff: { created, updated, match_on } });
+      if (created + updated > 0) await log({ orgId: ctx.org.id, userId: session.id, action: "locations_imported", ref: { module: "core-locations", entityType: "location", entityId: "" }, diff: { created, updated, match_on } });
     }).then((): string[] => []).catch((e: unknown) => {
       if (e instanceof ImportLoop) return e.names;
       throw e;
@@ -223,7 +228,7 @@ locationsImportRouter.post(
       return;
     }
 
-    res.json({ committed: created + updated, created, updated, errors });
+    res.json({ committed: created + updated, created, updated, unchanged, errors });
   }),
 );
 

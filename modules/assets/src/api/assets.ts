@@ -3,6 +3,7 @@ import { withCustodyLabel } from "./custody.js";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { Router } from "express";
 import { z } from "zod";
+import { imagePathField } from "@cobblr/platform-contract/image-reference";
 import { AssetDate } from "./asset-date.js";
 import { sql } from "kysely";
 import { mergeRowMetadata, platform } from "@cobblr/platform-contract";
@@ -40,7 +41,7 @@ const AssetCreate = z.object({
   vendor: z.string().max(200).nullable().optional(),
   warranty_until: AssetDate.optional(),
   last_service_at: AssetDate.optional(),
-  image_path: z.string().max(500).nullable().optional(),
+  image_path: imagePathField().nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
   location_id: z.string().uuid().nullable().optional(),
   flags: z.array(z.string()).optional(),

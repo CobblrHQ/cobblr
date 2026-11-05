@@ -14,6 +14,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const customRolesRouter = Router({ mergeParams: true });
@@ -95,7 +96,7 @@ customRolesRouter.get(
 );
 
 const CreateRole = z.object({
-  name: z.string().min(1).max(80),
+  name: readableNameField(80),
   description: optionalText(500),
   capabilities: z.array(z.string().min(1).max(120)).default([]),
 });
@@ -157,7 +158,7 @@ customRolesRouter.post(
 );
 
 const UpdateRole = z.object({
-  name: z.string().min(1).max(80).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  name: readableNameField(80).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   description: z.string().max(500).nullable().optional(),
   /** Full replacement of the capability list. Pass an empty array to
    *  clear all capabilities. */

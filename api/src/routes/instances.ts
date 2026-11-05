@@ -6,6 +6,7 @@
 // owner/admin only.
 
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { Router } from "express";
 import { z } from "zod";
 import { InstanceNameRegex } from "@cobblr/platform-contract";
@@ -42,7 +43,7 @@ export const overridesRouter = Router({ mergeParams: true });
 const CreateInstanceBody = z.object({
   module_name: z.string().min(1),
   instance_name: z.string().min(1).regex(InstanceNameRegex),
-  display_name: z.string().min(1).max(160),
+  display_name: readableNameField(160),
 });
 
 /** Shaping instances is builder work: the admin tier, by rank. */
@@ -216,7 +217,7 @@ instancesRouter.post(
 const PromoteBody = z.object({
   category: z.string().min(1).max(60),
   instance_name: z.string().min(1).regex(InstanceNameRegex),
-  display_name: z.string().min(1).max(160),
+  display_name: readableNameField(160),
 });
 
 // AI-ACTION: platform:promote-category

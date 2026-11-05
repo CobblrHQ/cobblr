@@ -8,6 +8,8 @@
 // take the first query VALUE that looks like a file name; decode it; drop
 // anything a file name should not carry. A plain name passes through as is.
 
+import { hasSomethingToRead } from "@cobblr/platform-contract/readable-text";
+
 const HAS_EXTENSION = /\.[A-Za-z0-9]{1,5}$/;
 
 function decode(s: string): string {
@@ -46,5 +48,5 @@ export function readableFilename(raw: string | null | undefined, fallback = "unt
   }
   // eslint-disable-next-line no-control-regex
   base = base.replace(/[\u0000-\u001f<>:"|?*\\]/g, "").trim();
-  return base || fallback;
+  return hasSomethingToRead(base) ? base : fallback;
 }

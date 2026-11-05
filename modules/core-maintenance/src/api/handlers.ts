@@ -24,7 +24,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "../db.js";
 import { serviceTimeZone, completeEntry, rollForward, rolledFromOf, unrollIfCurrent } from "../schedules-store.js";
-import { createSchedule, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule, removeSchedule } from "./schedules.js";
+import { createSchedule, refuseUnknownCounter, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule, removeSchedule } from "./schedules.js";
 import { NagBody, CadenceBody, changeNag } from "./reminders.js";
 import { moneyForStorage } from "@cobblr/platform-contract/money";
 import { TermBody } from "../term-fields.js";
@@ -260,6 +260,12 @@ export function registerMaintenanceHandlers(): void {
       };
     }
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
+    try {
+      await refuseUnknownCounter(ctx.orgId, `${parsed.data.entity_module}:${parsed.data.entity_type}`, parsed.data.counter_field);
+    } catch (error) {
+      if (error instanceof MaintenanceRefusal) return { ok: false, error: error.message };
+      throw error;
+    }
     const row = await createSchedule(db, ctx.orgId, parsed.data);
     return { ok: true, result: { schedule_id: row.id, name: row.name } };
   });

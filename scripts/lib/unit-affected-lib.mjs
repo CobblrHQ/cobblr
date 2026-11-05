@@ -346,9 +346,23 @@ export function listedBy(path, tests, testSources) {
   return out;
 }
 
+// A TEST THAT READS THE TRACKED FILE LIST SAYS SO (2026-11-05, #9191, set 375). walk-specs-name-their-devices reads
+// `git ls-files`, so #9188's two new walk specs failed it, and nothing connected them: the selector did not pick it on
+// the pull request's own check, and the bisect read "its change reaches it nowhere" and filed a true red as an
+// intermittent. Which file such a test cares about is its own logic, so the test declares what it reads, and any
+// change to the list (a file added, removed or moved) reaches it. An edit does not: the list is the same.
+const DECLARES_LIST = /^\s*\/\/ READS-TRACKED-FILES:/m;
+/** PURE. Whether a test's source declares it reads the repository's tracked file list. */
+export function readsTrackedFiles(src) {
+  return DECLARES_LIST.test(src ?? "");
+}
+/** The verdict cache's name for the list itself: a declared test's pass holds only while the list is the same. */
+export const TRACKED_LIST_INPUT = "<the tracked file list>";
+
 /**
  * @param {{
  *   changed: string[] | null,      null = no base, cannot tell
+ *   listChanged?: string[],        the changed paths added, removed or moved: what changes the tracked file list
  *   tests: string[],               every unit test file the runner discovered
  *   sources: Map<string, string>,  repo path → source, for every code file in the graph
  *   packages: Map<string, string>,
@@ -359,7 +373,7 @@ export function listedBy(path, tests, testSources) {
  * }} input
  * @returns {{ kind: "full" | "affected", tests: string[], reason: string, why: Map<string, string> }}
  */
-export function selectUnitTests({ changed, tests, sources, packages, basenameCount, versionOnly = new Set(), graph: prebuilt = null, exportsByDir }) {
+export function selectUnitTests({ changed, listChanged = [], tests, sources, packages, basenameCount, versionOnly = new Set(), graph: prebuilt = null, exportsByDir }) {
   const full = (reason) => ({ kind: "full", tests: [...tests], reason, why: new Map() });
   if (changed === null) return full("no base to compare against");
   const paths = changed.filter(Boolean);
@@ -387,6 +401,9 @@ export function selectUnitTests({ changed, tests, sources, packages, basenameCou
     for (const f of dependents(graph, keysOfChanged(TEST_LISTER, packages, versionOnly), packages)) {
       if (testSet.has(f) && !why.has(f)) why.set(f, `scans every test file, and ${aTest} is one`);
     }
+  }
+  if (listChanged.length) {
+    for (const t of tests) if (!why.has(t) && readsTrackedFiles(testSources.get(t))) why.set(t, `reads the tracked file list, and ${listChanged[0]} is added, removed or moved`);
   }
   const selected = tests.filter((t) => why.has(t));
   return {

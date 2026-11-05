@@ -24,6 +24,7 @@ import { hashPassword } from "../auth/password.js";
 import { buildAuthResponse } from "./auth.js";
 import { canActOnRole } from "../auth/capability.js";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { REFUSAL, claimJoinUse, inviteStatus, joinThroughInvite } from "../platform/join-invite.js";
 import { clearPeopleCache, linkPersonToUser, listPeople, personForUser } from "../platform/people.js";
 import { accountEmailFor } from "../platform/account-emails.js";
@@ -414,6 +415,17 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
       });
       return;
     }
+    // Mail saying "join" to someone already in, whose accept then does nothing.
+    if (parsed.data.email) {
+      const member = await meta
+        .selectFrom("org_memberships as m")
+        .innerJoin("users as u", "u.id", "m.user_id")
+        .select("u.id")
+        .where("m.org_id", "=", req.tenant!.org.id)
+        .where(sql<boolean>`lower(u.email) = ${parsed.data.email.toLowerCase().trim()}`)
+        .executeTakeFirst();
+      if (member) return void res.status(409).json({ error: { code: "already_member", message: "That person is already in this workspace. Change their role on the member list instead." } });
+    }
     // An invite that emails someone is one of the workspace's sends for the
     // hour, by the same count as the People screen and the assistant.
     if (parsed.data.email) {
@@ -674,7 +686,7 @@ invitesRootRouter.post("/invites/:token/accept", requireAuth, async (req, res, n
     }
     const joined = await joinThroughInvite(invite, req.session!.id);
     if (!joined.ok) {
-      res.status(410).json({ error: { code: joined.code, message: joined.message } });
+      res.status(joined.code === "not_yours" ? 403 : 410).json({ error: { code: joined.code, message: joined.message } });
       return;
     }
     const org = await meta
@@ -770,7 +782,7 @@ invitesRootRouter.post("/invites/:token/decline", requireAuth, async (req, res, 
 const AcceptSignup = z.object({
   email: z.string().email().max(255),
   password: z.string().min(8).max(128),
-  display_name: z.string().min(1).max(120),
+  display_name: readableNameField(120),
 });
 invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) => {
   try {

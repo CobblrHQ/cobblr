@@ -3,6 +3,7 @@
 // See docs/architecture/nav-builder.md.
 
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
@@ -29,11 +30,11 @@ function requireOwnerOrAdmin(req: Req, res: Res): boolean {
 }
 
 const CreateBody = z.object({
-  name: z.string().min(1).max(80),
+  name: readableNameField(80),
   icon: z.string().max(80).nullable().optional(),
 });
 const UpdateBody = z.object({
-  name: z.string().min(1).max(80).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  name: readableNameField(80).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   icon: z.string().max(80).nullable().optional(),
   position: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });

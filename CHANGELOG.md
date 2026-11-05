@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-05
+
+### Security
+- An invite now lets in only the person it was made for, and a single-use invite lets in one person. Before, anyone signed in who got hold of an invite link addressed to someone else could join with its role, so a forwarded admin invite made them an admin (since 2026.8.0); and several people pressing a single-use invite at the same moment could all get in (2026.11.0). Now an invite with an address admits only an account with that address, and anyone else is told it isn't theirs; a single-use invite admits exactly one; and a double press on a join link counts once. If you run your own Cobblr, update, then look over each workspace's member list for anyone you didn't invite, since people who already joined this way stay members. Someone invited at one address who signs in with another now needs that address, or a new invite made with no address.
+- A new password now says which API tokens still work and offers to end them
+
 ## 2026-11-04
 
 ### Improvements
@@ -370,6 +376,9 @@ User-facing changes, newest first. Dates are release dates.
 
 ## 2026-10-11
 
+### Security
+- Cobblr's pages now enforce a strict Content-Security-Policy, so a script injected into a page can no longer run or send your session anywhere; every source the app really uses (fonts, the signup captcha, file previews) is named, and anything refused is reported to the server.
+
 ### Features
 - A barcode someone has filed is filed the next time into the same kind of table, with its product details filled in, without asking the AI.
 - A vehicle's bill of sale read under Personal documents can be filed again: File this vehicle purchase puts the car in the scan inbox, offered against the car you already have by its VIN, and records its purchase with the fees and tax kept as charges. The page is read by code first and is never stored.
@@ -555,6 +564,9 @@ User-facing changes, newest first. Dates are release dates.
 
 ## 2026-10-05
 
+### Security
+- Changing the address you sign in with can no longer be turned against you. Taking the account back from the old address now stops the old password working, signs out every device, and cuts off every API token and connected app, then asks you for a new password straight away; before, whoever made the change could sign back in with the password they already knew. Reset and sign-in links sent to the old address stop working once the address changes, an API token cannot start a change, and asking is limited to a few times an hour. Links in every email Cobblr sends (sign in, reset, verify, invites) now always point at this site's own address, never at whatever address the request that sent them named. An account without a password can now change its address too, right after signing in.
+
 ### Features
 - Recent activity now names what changed in plain sentences, links to your things, shows photos and keeps the time in one place.
 - Track registration and inspection expiry dates, renew without losing time, and snooze or stop overdue reminders.
@@ -597,6 +609,9 @@ User-facing changes, newest first. Dates are release dates.
 - Sheets added through the Sheets bundle appeared on the floor manager with their remaining area and became available for material dispatch.
 
 ## 2026-10-04
+
+### Security
+- Kept offline answers now belong to the session that opened them, and signing out prevents unfinished reads from keeping them again.
 
 ### Features
 - Libraries from other modules can now show their own webhook setup and match items from their notifications.
@@ -763,6 +778,9 @@ User-facing changes, newest first. Dates are release dates.
 
 ## 2026-09-30
 
+### Security
+- When an AI assistant connected to your workspace asks to delete something, the delete waits for your answer. A card in your notifications names what it asked to delete, with Delete it and Keep it, and a card nobody answers within a day deletes nothing.
+
 ### Features
 - A file now has its own page: a link to a file from search, a tag, a view or Cobb opens it, with a preview, the records it is attached to, and rename, move, open and delete.
 - The email with your sandbox's work now has a Continue on Cobblr button that brings everything straight into a workspace once you sign up or sign in, pictures included, and a new workspace's first screen can take a backup file or a sandbox's link directly.
@@ -836,6 +854,17 @@ User-facing changes, newest first. Dates are release dates.
 - Your activity (under your account) now lists only what you did. In a shared workspace it used to list every member's changes as if they were yours, and its count could be higher than the list.
 
 ## 2026-09-29
+
+### Security
+- A guest can now change only their own notifications and their own requests for more access; every other change is refused, including through a module that did not check the role itself. And an AI build draft is now private to the person who started it.
+- A field you limited to people with a permission (a price, a supplier's cost) is now hidden from everyone else on every page, in the API and in CSV exports, not only in views and search.
+- An assistant connected over MCP can no longer run an action that cannot be undone, such as a command to a connected machine, without a person confirming it in Cobblr. This now holds for every way an assistant connects: an API token, the hosted endpoint, and a connector signed in with OAuth.
+- An assistant outside Cobblr working through your chat with Changes set to Auto no longer deletes records on its own. A delete waits for you, the same as it does in Cobblr's own chat.
+- A guest now reads only what the workspace shares in its portal: the records of the views pinned there, and nothing else. Before, a guest using the API could also read the workspace's activity log, member list, automations, bundle export, scan inbox and every record of every kind.
+- Only the workspace that shares its records through a workspace link can make that share last longer or reach more of the other workspace's people. The receiving workspace can still end it sooner or narrow it.
+- A field your workspace hides from some members is now hidden everywhere they look. Search no longer finds a record by what a hidden field says, and a hidden custom field no longer shows in lists or search results. Owners and admins see those fields in search again.
+- An API token made with another token can no longer outlive or reach beyond the token that made it, and revoking a token now revokes every token made with it. Before, a short-lived token could make itself a permanent one.
+- Only an owner or admin can now change where an action is offered, or put it back; before, any member could. Putting back an action that does not exist now says so instead of failing.
 
 ### Features
 - Set up a small shop in one install. The new Small shop bundle turns on Sales, Builds, Inventory, Purchases, Digital Fabrication and Shipments together and gathers them under one Shop menu, instead of six modules switched on one by one. Your Home page opens with the boards a shop checks every day: orders by status, stock, products and purchase orders. Orders get a due date and where they came in, parts get a SKU and whether you make or buy them, and products get a sell price.

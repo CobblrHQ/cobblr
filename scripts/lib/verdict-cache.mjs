@@ -28,7 +28,7 @@
 import { createHash } from "node:crypto";
 import { matchesGlob } from "node:path";
 import {
-  ANY_TEST, CODE_EXT, GLOB_STRING, LISTS, PREFIX_REGEX, DISTINCT_BASENAME_MAX, TEST_LISTER,
+  ANY_TEST, CODE_EXT, GLOB_STRING, LISTS, TRACKED_LIST_INPUT, readsTrackedFiles, PREFIX_REGEX, DISTINCT_BASENAME_MAX, TEST_LISTER,
   keyOf, parseSpecifiers, quoted, readsOf, resolveSpecifier, stripComments, walksDir,
 } from "./unit-affected-lib.mjs";
 
@@ -218,6 +218,9 @@ export function unitTestInputs({ test, sources, packages, tree }) {
 
   // SCANS: a test that reaches the lister of test files reads every test file in the repo (#7434).
   if (closure.files.has(TEST_LISTER)) for (const p of tree.files) if (ANY_TEST.test(p)) inputs.add(p);
+
+  // THE TRACKED FILE LIST: declared by the test, since no other input says which files it will find (#9191).
+  if (readsTrackedFiles(src)) inputs.add(TRACKED_LIST_INPUT);
 
   // LISTS
   if (LISTS.test(s)) {

@@ -59,6 +59,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
 
   const field = "px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   const s = preview?.summary;
+  const nothingToChange = !!s && s.create + s.update === 0;
 
   return (
     <Modal open onClose={onClose} title="Import locations from CSV" size="lg">
@@ -103,7 +104,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
           <>
             <div className="flex items-center gap-3 text-xs">
               <span className="text-content dark:text-mortar-100">Matching on <code className="text-accent">{preview.match_on}</code></span>
-              {s && <span className="text-faint">· {s.create} create · {s.update} update{s.unresolved_parents ? ` · ${s.unresolved_parents} unresolved parent${s.unresolved_parents === 1 ? "" : "s"}` : ""}</span>}
+              {s && <span className="text-faint">· {s.create} create · {s.update} update · {s.unchanged ?? 0} unchanged{s.unresolved_parents ? ` · ${s.unresolved_parents} unresolved parent${s.unresolved_parents === 1 ? "" : "s"}` : ""}</span>}
               <div className="flex-1" />
               <button type="button" onClick={() => setPreview(null)} className="text-faint hover:text-content">← edit CSV</button>
             </div>
@@ -131,7 +132,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
                 <tbody className="divide-y divide-line dark:divide-slate-800">
                   {(preview.rows ?? []).map((r) => (
                     <tr key={r.row_number} className={r.error ? "bg-ember-50/60 dark:bg-ember-900/20" : undefined} title={r.error ?? undefined}>
-                      <td className="px-2 py-1">{r.error ? <span className="text-ember-600 dark:text-ember-400">blocked</span> : <span className={r.action === "create" ? "text-moss-600" : "text-amber-600"}>{r.action}</span>}</td>
+                      <td className="px-2 py-1">{r.error ? <span className="text-ember-600 dark:text-ember-400">blocked</span> : <span className={r.action === "create" ? "text-moss-600" : r.action === "unchanged" ? "text-faint" : "text-amber-600"}>{r.action}</span>}</td>
                       <td className="px-2 py-1 text-content dark:text-mortar-100">{r.name}{r.short_name ? <span className="text-faint"> · {r.short_name}</span> : null}</td>
                       <td className="px-2 py-1 text-faint">{r.kind}</td>
                       <td className="px-2 py-1">{r.parent ? <span className={r.parent.resolved ? "text-faint" : "text-ember-600 dark:text-ember-400"} title={r.parent.resolved ? "" : "parent not found in the file or existing"}>{r.parent.path ?? r.parent.key}{r.parent.resolved ? "" : " ⚠"}</span> : <span className="text-faint/50">—</span>}</td>
@@ -148,7 +149,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
         {!preview ? (
           <button type="button" onClick={() => dry.mutate()} disabled={dry.isPending || !csv.trim()} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{dry.isPending ? "…" : "Preview"}</button>
         ) : (
-          <button type="button" onClick={() => commit.mutate()} disabled={commit.isPending || !preview.rows?.length || (preview.blocking?.length ?? 0) > 0} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{commit.isPending ? "Importing…" : `Import ${(preview.rows ?? []).length} row${(preview.rows ?? []).length === 1 ? "" : "s"}`}</button>
+          <button type="button" onClick={() => commit.mutate()} disabled={commit.isPending || !preview.rows?.length || (preview.blocking?.length ?? 0) > 0 || nothingToChange} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{commit.isPending ? "Importing…" : nothingToChange ? "Nothing to change" : `Import ${(preview.rows ?? []).length} row${(preview.rows ?? []).length === 1 ? "" : "s"}`}</button>
         )}
         <button type="button" onClick={onClose} className="text-sm text-faint hover:text-content">Cancel</button>
       </div>

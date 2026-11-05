@@ -18,7 +18,8 @@
 // A PR is a "feature" if: a `feat:` commit, a NEW modules/<name>/ dir, or a module
 // MINOR-or-MAJOR bump. It SATISFIES the requirement by adding a changelog.d/*.md
 // entry — OR (for a bundle feature) bumping a bundles/*.json version, since the
-// bundle's own manifest `changelog` already records it. fix:/chore:/docs exempt.
+// bundle's own manifest `changelog` already records it. fix:/chore:/docs exempt,
+// except a security change, which owes a `type: security` entry whatever its type.
 //
 // Diffs against main; no-ops with no base. Run: npx tsx scripts/lint-changelog.ts
 import { execSync } from "node:child_process";
@@ -30,6 +31,7 @@ import { ALL_ENTRY_TYPES, AUDIENCE_TYPES, isInternalChangelogEntry } from "./pub
 // plain .mjs module, shared with docs-flush so this gate and the
 // release-time splice can never disagree about what "the heading exists" means
 import { findHeadingLine, headingsAlreadyIn, listHeadings, paragraphsAlreadyIn, parseDocsTarget, resolveDocsTarget } from "./docs-target.mjs";
+import { isSecurityEntry, notSecurityReason, securityReasons } from "./lib/security-changelog.mjs";
 import { areaForScope, AREAS_FILE, GUIDE_INDEX } from "./lib/user-guide.mjs";
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
 
@@ -349,6 +351,24 @@ function minorOrMajor(oldV?: string, newV?: string): boolean {
   const [oM = 0, oN = 0] = oldV.split(".").map(Number);
   const [nM = 0, nN = 0] = newV.split(".").map(Number);
   return nM > oM || (nM === oM && nN > oN);
+}
+
+// ── a security fix says so in the release notes ──
+// A fix needs no entry, so #9216 closed a hole that made a stranger an admin with no line for anyone on an
+// older release to read. The rule is lib/security-changelog.mjs.
+const owed = securityReasons(changed, subjects);
+if (owed.length && !touchedEntries.some((f) => isSecurityEntry(readFileSync(f, "utf8")))) {
+  const why = notSecurityReason(git(`log ${base}..HEAD --format=%B%x00`).split("\0"), subjects);
+  if (why) {
+    console.log(`[lint:changelog] ${owed.join("; ")}: no security entry, because "${why}"`);
+  } else {
+    console.error(
+      `[lint:changelog] ✗ this PR changes who gets in (${owed.join("; ")}) and adds no "type: security" entry.\n` +
+        '  Add one, so a person on an older release knows to move: pnpm run new:changelog "<what can no longer happen>" --type security\n' +
+        "  Not a security change? Add this line to a commit message: Not-security: <why>",
+    );
+    process.exit(1);
+  }
 }
 
 // ── is this a feature? ──

@@ -14,6 +14,7 @@ import { fieldCurrency } from "@cobblr/platform-contract/money";
 import { heldInLines, placeNames } from "@cobblr/platform-contract";
 import { Router, type Request } from "express";
 import { z } from "zod";
+import { imagePathField } from "@cobblr/platform-contract/image-reference";
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import { csvCell } from "@cobblr/platform-contract/csv";
 import { daysUntilField, platform, stockDisclosureFromConfig, unreadableFieldsOf, type FilterPredicate } from "@cobblr/platform-contract";
@@ -175,7 +176,7 @@ export const PartCreate = z.object({
   min_qty: z.number().nonnegative().nullable().optional(),
   manufacturer: z.string().max(120).nullable().optional(),
   supplier_url: z.string().url().max(500).nullable().optional(),
-  image_path: z.string().max(500).nullable().optional(),
+  image_path: imagePathField().nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
   state: z.enum(["active", "draft", "needs_review"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   metadata: z.record(z.unknown()).optional(),

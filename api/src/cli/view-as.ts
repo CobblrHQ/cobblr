@@ -195,8 +195,9 @@ async function log(): Promise<void> {
   const rows = await meta
     .selectFrom("impersonation_sessions as s")
     .innerJoin("users as t", "t.id", "s.target_user_id")
-    .innerJoin("orgs as o", "o.id", "s.org_id")
-    .select(["s.id", "s.created_at", "s.expires_at", "s.ended_at", "s.reason", "s.request_count", "s.mode", "o.slug as workspace", "t.email as target"])
+    .leftJoin("orgs as o", "o.id", "s.org_id")
+    .select((eb) => [eb.fn.coalesce("o.slug", "s.workspace_slug").as("workspace")])
+    .select(["s.id", "s.created_at", "s.expires_at", "s.ended_at", "s.reason", "s.request_count", "s.mode", "t.email as target"])
     .orderBy("s.created_at", "desc")
     .limit(50)
     .execute();

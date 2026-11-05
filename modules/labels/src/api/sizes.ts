@@ -3,6 +3,7 @@
 // (deriveGrid), never stored, so "a 1.5 x 3 sheet holding two 1.5in squares" is
 // two measurements. See docs/design-decisions/label-media-and-accumulation.md.
 
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { Router } from "express";
 import { z } from "zod";
 import { deriveGrid } from "../label-sizes.js";
@@ -14,11 +15,12 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 export const sizesRouter = Router({ mergeParams: true });
 
 // Inches. Generous bounds: a 100in roll is fine, a 0 is not.
-const dim = z.number().positive().max(100);
+// Inches. Smaller than this is no label anyone can read, and a sheet of them is billions of labels to draw.
+const dim = z.number().min(0.1).max(100);
 const gap = z.number().min(0).max(100);
 
 export const SizeBody = z.object({
-  name: z.string().trim().min(1).max(120),
+  name: readableNameField(120),
   media_w: dim,
   media_h: dim,
   label_w: dim,

@@ -1,3 +1,4 @@
+@import "./fonts.css";
 @import "@cobblr/platform-web/floating-chrome.css";
 @tailwind base;
 @tailwind components;

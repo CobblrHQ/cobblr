@@ -169,6 +169,7 @@ import { postCardlessFeedback } from "./routes/feedback-card-post.js";
 import { logSignupGates } from "./platform/signup-gates.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
 import { startDeletionReaper } from "./platform/reap-deletions.js";
+import { startOperatorLogRetention } from "./platform/operator-log-retention.js";
 import { startSandboxReaper } from "./platform/reap-sandboxes.js";
 import { startSandboxPool } from "./platform/try-sandbox-pool.js";
 import { seedSandbox } from "./platform/try-sandbox-seed.js";
@@ -2065,6 +2066,8 @@ async function boot() {
   startTrialReaper();
   // Workspaces their owners asked to delete, once the grace period is over.
   startDeletionReaper();
+  // The View as log and console deletes, kept a year (#9234).
+  startOperatorLogRetention();
   // Sandboxes live an hour, so they are swept in minutes, not the trial
   // reaper's six hours. No-op unless the box hands them out.
   startSandboxReaper();

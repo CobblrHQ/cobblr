@@ -360,6 +360,8 @@ export interface ScanInboxItem {
   /** Where the row goes, as its card says: the server's one destination
    *  (core-scan services/destination.ts). Read this, never the raw top
    *  candidate, for the table a surface names or files into (#3618). */
+  /** Why a bulk action leaves this row for a person, or null when it would file it. */
+  bulk_doubt?: string | null;
   resolved_destination?: { module: string; instance: string | null; kind: string | null; label: string | null; bundle_external_id: string | null } | null;
   id: string;
   status: "pending" | "enriching" | "resolved" | "discarded";

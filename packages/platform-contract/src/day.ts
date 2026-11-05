@@ -209,6 +209,9 @@ function offsetMinutes(at: number, timeZone: string): number {
 /** Which moment of the day: its middle, its first instant, or its last. */
 export type DayMoment = "noon" | "start" | "end";
 
+/** `Date` reads a year under 100 as 19xx, so a year this early can only be a slip. */
+const EARLIEST_YEAR = 1000;
+
 /**
  * The instant to store when a column holds an instant but a person gave a
  * day (a visit "on the 16th", a task due the 16th). With no zone that is
@@ -227,6 +230,7 @@ export function instantOnDay(day: Day, timeZone?: string | null, at: DayMoment =
   const parts = partsOf(day);
   if (!parts) return null;
   const [y, m, d] = parts;
+  if (y < EARLIEST_YEAR) return null;
   const wall = at === "noon" ? Date.UTC(y, m - 1, d, 12) : at === "start" ? Date.UTC(y, m - 1, d) : Date.UTC(y, m - 1, d + 1) - 1;
   if (!timeZone || at === "noon") {
     if (at === "noon") return new Date(wall);
@@ -253,7 +257,9 @@ export function instantFromInput(value: unknown, timeZone?: string | null, at: D
   const s = value.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return instantOnDay(s, timeZone, at);
   const t = Date.parse(s);
-  return Number.isNaN(t) ? null : new Date(t);
+  if (Number.isNaN(t)) return null;
+  const year = new Date(t).getUTCFullYear();
+  return year < EARLIEST_YEAR || year > 9999 ? null : new Date(t);
 }
 
 /** The day `n` days after `day` (before, for a negative `n`): calendar

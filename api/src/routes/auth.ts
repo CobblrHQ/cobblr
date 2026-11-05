@@ -1,4 +1,5 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { currencyFromLocale } from "@cobblr/platform-contract/money";
 // /api/v1/auth — signup, login. Minimal for Phase 0:
 //
@@ -104,13 +105,13 @@ const requireEmailVerify = () => (process.env.COBBLR_REQUIRE_EMAIL_VERIFY ?? "")
 const SignupBody = z.object({
   email: z.string().email().max(255),
   password: z.string().min(8).max(128),
-  display_name: z.string().min(1).max(120),
+  display_name: readableNameField(120),
   // Captcha token (e.g. Cloudflare Turnstile). Verified server-side only when a
   // captcha provider is configured (the trial tier); ignored otherwise.
   captcha_token: optionalText(4096),
   // Optional when `app` is set — a managed-app signup names the workspace
   // after the app (the consumer never picks a workspace name).
-  org_name: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  org_name: readableNameField(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** The link or QR that sent the person here (`?source=`), recorded on the
    *  account's signed_up event. Cleaned, never refused (signup-source.ts). */
   source: z.string().max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
@@ -530,11 +531,28 @@ authRouter.post("/signup", async (req, res, next) => {
     // Phase 1: user row only (org provisioning is its own helper now,
     // so signup and POST /orgs share the same code path). The row is born
     // through the one door that also tells the operator (platform/accounts.ts).
-    const userId = await createAccount(
-      meta,
-      { email, password_hash, display_name: body.display_name.trim() },
-      { via: "signup", how: invite ? "invite" : isManagedAppSignup ? "app" : "open", ...(isManagedAppSignup ? { app: String(body.app) } : {}) },
-    );
+    // The invite was claimed above, before the account exists. If the account
+    // can't be made (another signup took the address a moment ago), the claim
+    // is given back: an invite nobody used must still let its person in.
+    let userId: string;
+    try {
+      userId = await createAccount(
+        meta,
+        { email, password_hash, display_name: body.display_name.trim() },
+        { via: "signup", how: invite ? "invite" : isManagedAppSignup ? "app" : "open", ...(isManagedAppSignup ? { app: String(body.app) } : {}) },
+      );
+    } catch (err) {
+      if (invite) {
+        await meta
+          .updateTable("signup_invites")
+          .set({ consumed_at: null })
+          .where("id", "=", invite.id)
+          .where("consumed_by_user", "is", null)
+          .execute()
+          .catch((e) => console.error(`[signup] could not release invite ${invite!.id}:`, (e as Error).message));
+      }
+      throw err;
+    }
 
     // Attribute the consumed invite to the new user (the claim above only
     // stamped consumed_at, before the user existed).
@@ -1066,7 +1084,7 @@ function pageOrigin(req: { get(name: string): string | undefined }): string {
 const IdentitySignupBody = z.object({
   email: z.string().email().max(255),
   password: z.string().min(8).max(128),
-  display_name: z.string().trim().min(1).max(120),
+  display_name: readableNameField(120),
   captcha_token: optionalText(4096),
   app: z.string().min(1).max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   source: z.string().max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
@@ -1253,7 +1271,7 @@ const MagicRequest = z.object({
    *  no password joins through the club's join link (#3801). */
   invite: z.string().min(8).max(200).optional(),
   /** The name a new account made through the invite goes by. */
-  display_name: z.string().trim().min(1).max(120).optional(),
+  display_name: readableNameField(120).optional(),
 });
 
 authRouter.post("/magic/request", async (req, res, next) => {

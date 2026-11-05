@@ -59,6 +59,16 @@ like maintainer plumbing but is typed for users fails with the choice above. And
 since bugfixes never needed an entry at all, the cheapest answer for pure plumbing
 is to write none.
 
+**The exception is a security change.** A commit scoped `(security)`, or a change
+to the files that decide who gets in (`scripts/lib/security-changelog.mjs` names
+them), needs a `type: security` entry, even as a fix: someone on an older release
+reads it to know they should move. `lint:changelog` holds this. A change to those
+files that has nothing to do with security says why on a commit, in a line
+`Not-security: <why>`, so nothing is announced that didn't happen. The entry
+leads the release notes and the public changelog under a Security heading; every
+reader takes its sections from `NOTE_SECTIONS` in that same file, never a list of
+its own.
+
 - **Every user-facing type is announced.** `feature`, `improvement` and `fix` all
   appear in the daily post and on the changelog page, grouped by type. Discord
   used to carry features only, which meant it said nothing at all on the ~30% of

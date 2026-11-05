@@ -299,7 +299,7 @@ export async function logMany(p: { orgId: string; userId?: string | null; rows: 
  *  their feed; the record still exists, on the operator side only. Anything
  *  listed here is filtered out of every member-facing list BY DEFAULT, so a
  *  new tenant-facing route cannot leak it by forgetting a flag. */
-export const OPERATOR_ONLY_ACTIONS: ReadonlySet<string> = new Set(["impersonation_started"]);
+export const OPERATOR_ONLY_ACTIONS: ReadonlySet<string> = new Set(["impersonation_started", "workspace_plan_changed"]);
 
 export function isOperatorOnlyAction(action: string): boolean {
   return OPERATOR_ONLY_ACTIONS.has(action) || action.startsWith("impersonation_");

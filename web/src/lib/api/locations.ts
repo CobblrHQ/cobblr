@@ -8,7 +8,7 @@ export interface LocationImportRow {
   short_name: string | null;
   kind: "area" | "container";
   match_value: string | null;
-  action: "create" | "update";
+  action: "create" | "update" | "unchanged";
   parent: { key: string; resolved: boolean; path?: string | null } | null;
   /** The place's full path, "Attic › Shelf 1", once its parent is known. */
   path?: string | null;
@@ -23,7 +23,7 @@ export interface LocationImportResponse {
   errors: { row_number: number; message: string }[];
   /** Rows the file cannot be imported with until they are written apart. */
   blocking?: { row_number: number; message: string }[];
-  summary?: { create: number; update: number; unresolved_parents: number; blocked?: number };
+  summary?: { create: number; update: number; unchanged?: number; unresolved_parents: number; blocked?: number };
   committed: number;
   created?: number;
   updated?: number;

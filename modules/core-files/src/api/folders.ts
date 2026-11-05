@@ -9,12 +9,13 @@ import { Router } from "express";
 import { sql, type Kysely } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { sessionUser, tenantContext, tenantDb, type CoreFilesDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const foldersRouter = Router({ mergeParams: true });
 
-const Name = z.string().trim().min(1).max(120);
+const Name = readableNameField(120);
 const CreateBody = z.object({ name: Name, parent_id: z.string().uuid().nullable().optional() });
 const PatchBody = z.object({ name: Name.optional(), parent_id: z.string().uuid().nullable().optional() }).refine((b) => b.name !== undefined || b.parent_id !== undefined, "name or parent_id");
 
@@ -99,6 +100,8 @@ foldersRouter.patch(
     const parsed = PatchBody.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     await tenantDb(req).transaction().execute(async (db) => {
+      // One move at a time in a workspace. Each move checks its own path up; two at once each pass, and leave a loop.
+      if (parsed.data.parent_id) await sql`select pg_advisory_xact_lock(hashtext('core_files_folders.move'))`.execute(db);
       const current = await db.selectFrom("core_files_folders").selectAll().where("id", "=", id).forUpdate().executeTakeFirst();
       if (!current) {
         res.status(404).json({ error: { code: "not_found", message: "folder not found" } });

@@ -10,7 +10,7 @@
 
 import { answerAgreesWithCode, durableOutcome, lookupBarcode, type BarcodeHit, type BarcodeOutcome } from "./barcode-lookup.js";
 import { lookupBarcodeFor } from "./operator-services.js";
-import { classifyScanCode, resolveIsbn } from "./scan-router.js";
+import { BookDoorUnavailable, classifyScanCode, resolveIsbn } from "./scan-router.js";
 import { isBookSource } from "./catalog-replay.js";
 import { gtinCases } from "./identifier-equals.js";
 import { cleanListingTitle } from "./listing-title.js";
@@ -74,23 +74,30 @@ export async function catalogAnswerForCode(code: string, orgId?: string): Promis
   // A product catalog's answer the chain refused for an ISBN: not taken, but
   // named as what the book displaced when the book is found.
   const refused = result.outcome === "miss" ? result.refused : undefined;
-  const rateLimited = result.outcome === "rate_limited" || result.outcome === "unavailable";
-  const lookupUnreachable = result.outcome === "unavailable";
   let bookAfterMiss = false;
-  if (codeClass.type === "isbn" && !rateLimited) {
-    if (hit && !isBookSource(hit.source)) {
+  if (codeClass.type === "isbn") {
+    // The book catalog is asked whatever the product chain said, throttled
+    // included: only a product catalog was throttled, and an ISBN is a book's.
+    // Skipped on a throttle, the code went on to web search of a bare number.
+    const book = !hit || !isBookSource(hit.source)
+      ? await resolveIsbn(codeClass.code).catch((err: unknown) => (err instanceof BookDoorUnavailable ? "unreachable" as const : null))
+      : null;
+    if (book === "unreachable") {
+      // Unreachable is not absent: nothing is cached, and the row retries.
+      if (hit && !answerAgreesWithCode(code, hit)) hit = null;
+      if (!hit) result = { outcome: "unavailable", reason: "unreachable" };
+    } else if (hit && !isBookSource(hit.source)) {
       // The chain's first answer for an ISBN can be a product catalog's stray
       // entry; the book's answer wins, and a non-book never stands (#3674).
-      const book = await resolveIsbn(codeClass.code).catch(() => null);
       if (book) hit = { ...book, raw: { ...book.raw, displaced: { source: hit.source, title: hit.title } } };
       else if (!answerAgreesWithCode(code, hit)) hit = null;
-    } else if (!hit) {
-      // Not in any chain tier: the live book catalog, before web search.
-      hit = await resolveIsbn(codeClass.code).catch(() => null);
-      if (hit && refused) hit = { ...hit, raw: { ...hit.raw, displaced: { source: refused.source, title: refused.title } } };
-      bookAfterMiss = !!hit;
+    } else if (!hit && book) {
+      hit = refused ? { ...book, raw: { ...book.raw, displaced: { source: refused.source, title: refused.title } } } : book;
+      bookAfterMiss = true;
     }
   }
+  const rateLimited = !hit && (result.outcome === "rate_limited" || result.outcome === "unavailable");
+  const lookupUnreachable = !hit && result.outcome === "unavailable";
   // A title learned from a resale listing ("Lot of 2 ... Dark Blue & White")
   // is cleaned to the one item it names.
   if (hit?.title) {

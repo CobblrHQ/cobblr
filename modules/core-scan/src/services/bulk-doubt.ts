@@ -1,8 +1,9 @@
 // The one rule every bulk door holds a row to (#9179). "Add all 29 to Spices" held
 // agave syrup and sugar cubes. A row's card may still offer that table, whoever
 // chose it, because one tap there files one thing the person can see. A bulk door
-// files what they have not looked at, so it takes only rows whose own words tie
-// them to the table.
+// files what they have not looked at, so it leaves a row that says it is something
+// else: a category that isn't this table, or words another table fits. A bare
+// "MakerMex MM1" says nothing either way and is still a printer (#9224).
 
 import type { ScanResolverTable } from "@cobblr/platform-contract/scan-triage";
 import { makeLexicalScorer, nounSaysWhatItIs, type FitTable } from "@cobblr/platform-contract/table-fit";
@@ -21,12 +22,16 @@ export function bulkDoubt(row: BulkDoubtRow, destination: { module?: string | nu
   if (!table?.noun || (!nounSaysWhatItIs(table) && !table.scan_keywords?.length)) return null;
   const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
   const name = String(row.suggested_name ?? "");
-  const evidence = makeLexicalScorer({
+  const category = typeof meta.category === "string" && meta.category.trim() ? meta.category : null;
+  const scorer = makeLexicalScorer({
     name,
-    category: typeof meta.category === "string" ? meta.category : null,
+    category,
     manufacturer: typeof meta.manufacturer === "string" ? meta.manufacturer : null,
     description: typeof meta.description === "string" ? meta.description : null,
-  }).scoreEntry({ ...table, fields: table.fields ?? [] });
+  });
+  const evidence = scorer.scoreEntry({ ...table, fields: table.fields ?? [] });
   if (evidence.plausible || evidence.nounHit || evidence.categoryNames) return null;
+  const fitsElsewhere = (tables as ReadonlyArray<ScanResolverTable & FitTable>).some((t) => t !== table && t.noun && !t.is_fallback && scorer.scoreEntry({ ...t, fields: t.fields ?? [] }).plausible);
+  if (!category && !fitsElsewhere) return null;
   return `nothing about "${name || "this"}" says it belongs in ${table.label ?? table.instance_name}; file it on its own if it does`;
 }
