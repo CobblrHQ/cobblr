@@ -48,7 +48,7 @@ import {
 import { observation, swapFreshObservations, type StockObservation } from "../observations.js";
 import { arrivedToday, freshLotStamps, shelfLifeDaysOf, startsFreshLot } from "../fresh-lot.js";
 import { BELOW_ZERO, NOTHING_ON_HAND, floorDelta } from "../stock-floor.js";
-import { dayIn } from "@cobblr/platform-contract/day";
+import { STALE_DAYS, dayIn, daysUntil } from "@cobblr/platform-contract/day";
 import { stillGoodPatch } from "../still-good.js";
 import { stateWrite, type StateFieldDef } from "../state-write.js";
 
@@ -58,7 +58,7 @@ import { stateWrite, type StateFieldDef } from "../state-write.js";
  *  promised date uses, so a lot is stamped with the day the row promised. It
  *  used to fall back to the UTC day when no zone was sent, so the row said one
  *  day and the check-off stamped the next, from 00:00 to 12:00 UTC. */
-async function personToday(userId: string | null | undefined, timezone: string | undefined): Promise<string> {
+export async function personToday(userId: string | null | undefined, timezone: string | undefined): Promise<string> {
   if (timezone) return dayIn(new Date(), timezone);
   return platform().accounts.dayFor(userId ?? null);
 }
@@ -105,7 +105,7 @@ async function logTap(log: (p: ActivityLogParams) => Promise<void>, orgId: strin
   });
 }
 
-async function announce(orgId: string, userId: string | null | undefined, applied: Record<string, unknown>, obs: StockObservation[]): Promise<void> {
+export async function announce(orgId: string, userId: string | null | undefined, applied: Record<string, unknown>, obs: StockObservation[]): Promise<void> {
   if (applied.ok !== true || applied.skipped) return;
   for (const o of obs) {
     await platform().events.emit("inventory.stock.observed", { orgId, userId: userId ?? null, ...o });
@@ -445,14 +445,14 @@ async function applyStockDraws(orgId: string, draws: StockDraw[], reason: string
 // in, diffs on the way out, and hands the difference back with the result;
 // the undoer registered beside each handler turns that into the step.
 
-interface PartSnapshot {
+export interface PartSnapshot {
   qty: number;
   name: string;
   location_id: string | null;
   metadata: Record<string, unknown>;
 }
 
-async function partSnapshot(orgId: string, partId: string): Promise<PartSnapshot | null> {
+export async function partSnapshot(orgId: string, partId: string): Promise<PartSnapshot | null> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
   const row = await db
     .selectFrom("inventory_parts")
@@ -505,6 +505,13 @@ async function withPartUndo(
   if (!partId || !before || result.ok !== true || result.skipped) return result;
   const after = await partSnapshot(ctx.orgId, partId);
   if (!after) return result;
+  const state = partUndoState(partId, before, after);
+  return state ? { ...result, undo_state: state } : result;
+}
+
+/** What changed between two snapshots of a part, with the values before, or
+ *  null when nothing did. */
+export function partUndoState(partId: string, before: PartSnapshot, after: PartSnapshot): PartUndoState | null {
   const state: PartUndoState = { partId };
   if (after.qty !== before.qty) state.qty = before.qty;
   if (after.name !== before.name) state.name = before.name;
@@ -515,8 +522,7 @@ async function withPartUndo(
     if (k in before.metadata) (state.metadata ??= {})[k] = before.metadata[k];
     else (state.absent ??= []).push(k);
   }
-  if (Object.keys(state).length === 1) return result;
-  return { ...result, undo_state: state };
+  return Object.keys(state).length === 1 ? null : state;
 }
 
 /** The step that puts the part back, from a result the wrapper decorated. */
@@ -613,12 +619,12 @@ export function arrivingLots(delta: number, restock: boolean, lots: readonly Arr
 /** Reads that need a connection of their own, made before a transaction takes
  *  one: the day where the person is, and which fields of this record play the
  *  expiry and acquired-on roles. */
-interface BatchPrep {
+export interface BatchPrep {
   today: string;
   roles: { acquiredOn: string | null; expiry: string | null } | null;
 }
 
-async function prepareBatches(orgId: string, partId: string, opts: { timezone?: string; userId?: string | null }): Promise<BatchPrep> {
+export async function prepareBatches(orgId: string, partId: string, opts: { timezone?: string; userId?: string | null }): Promise<BatchPrep> {
   const today = await personToday(opts.userId, opts.timezone);
   let roles: BatchPrep["roles"] = null;
   try {
@@ -1206,7 +1212,11 @@ export function registerInventoryActionHandlers(): void {
       (typeof md.received_on === "string" ? md.received_on : "") ||
       (row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : "");
 
-    if (startedOn) {
+    // A lot ended long after its date was never a measurement: it taught
+    // nothing about how long the thing keeps, so one cleared in a backlog
+    // must not move a learned shelf life (#9274).
+    const stale = !!oldest?.expires_on && daysUntil(oldest.expires_on, today) <= -STALE_DAYS;
+    if (startedOn && !stale) {
       const prior = Array.isArray(md.shelf_life_observations)
         ? (md.shelf_life_observations as LifecycleObservation[])
         : [];

@@ -42,6 +42,8 @@ export default defineModule({
   // until done (no cron). Same dynamic-import shape as `api`.
   lifecycle: {
     onBoot: async () => {
+      const { registerMangledLibraryNamesHeal } = await import("./heal-mangled-library-names.js");
+      registerMangledLibraryNamesHeal();
       // What each machine runs, once an hour, handed to its machine record.
       const { registerVersionRead } = await import("./version-read.js");
       registerVersionRead();

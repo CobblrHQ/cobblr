@@ -32,6 +32,7 @@
 // lint:tenant-sweep-registered refuses a new bare loop over the workspaces
 // reaching tenants.getDb / withDb outside this file, so the next pass is a
 // registration.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { sql } from "kysely";
 import type {
   PlatformSweeps,
@@ -346,7 +347,27 @@ async function realDeps(): Promise<WalkDeps> {
   };
 }
 
+/** How many rounds that name their workspaces run at once. Such a round skips
+ *  the pass's lock and has its own concurrency budget, so nothing else bounds
+ *  the sum: one asked per workspace behind took staging past the server's limit
+ *  and starved the meta pool (#9280). */
+export const NAMED_ROUNDS_AT_ONCE = 8;
+const namedRounds = new Gate(NAMED_ROUNDS_AT_ONCE);
+// A round a visit asks for runs inside the round that holds the slot it would
+// wait for.
+const inNamedRound = new AsyncLocalStorage<true>();
+
+/** Run a round that names its workspaces when its turn comes. */
+export function namedRoundTurn<T>(fn: () => Promise<T>): Promise<T> {
+  if (inNamedRound.getStore()) return fn();
+  return namedRounds.run(() => inNamedRound.run(true, fn));
+}
+
 async function walk(passes: TenantSweepPass[], opts: { now: Date; orgIds?: string[]; waitForLockMs?: number }): Promise<Map<string, TenantSweepRunResult>> {
+  return opts.orgIds === undefined ? walkNow(passes, opts) : namedRoundTurn(() => walkNow(passes, opts));
+}
+
+async function walkNow(passes: TenantSweepPass[], opts: { now: Date; orgIds?: string[]; waitForLockMs?: number }): Promise<Map<string, TenantSweepRunResult>> {
   const deps = await realDeps();
   try {
     return await walkWith(deps, passes, opts);
@@ -526,24 +547,36 @@ export const SOON_ASKS = 5;
 /** sweeps.soon over a given run, so the coalescing and the asking again are a
  *  unit test. A skipped round used to be dropped: the record stayed queued
  *  until the next idle round, and a test's checked-out workspace, which no
- *  scheduled round visits, never matched at all (#8608). */
+ *  scheduled round visits, never matched at all (#8608). Every workspace asked
+ *  for while one round is due goes in that round: one round each put 1098 at
+ *  once past the walk's budget (#9280). */
 export function soonWith(run: PlatformSweeps["run"], afterMs = SOON_AFTER_MS): PlatformSweeps["soon"] {
-  const pending = new Map<string, ReturnType<typeof setTimeout>>();
+  const due = new Map<string, Map<string, number>>();
+  const fire = (name: string, asks: Map<string, number>): void => {
+    void Promise.resolve()
+      .then(() => run(name, { orgIds: [...asks.keys()] }))
+      .then((r) => {
+        if (!r.skipped) return;
+        for (const [orgId, left] of asks) {
+          if (left > 1) ask(name, orgId, left - 1);
+          else console.warn(`[tenant-sweeps] ${name}: workspace ${orgId} stayed busy for ${SOON_ASKS} asks; its idle round will reach it`);
+        }
+      })
+      .catch((err) => console.error(`[tenant-sweeps] ${name}: a round asked for ${[...asks.keys()].length} workspace(s) failed:`, (err as Error).message));
+  };
   const ask = (name: string, orgId: string, asksLeft: number): void => {
-    const key = `${name}\0${orgId}`;
-    if (pending.has(key)) return;
-    const t = setTimeout(() => {
-      pending.delete(key);
-      void Promise.resolve()
-        .then(() => run(name, { orgIds: [orgId] }))
-        .then((r) => {
-          if (r.skipped && asksLeft > 1) ask(name, orgId, asksLeft - 1);
-          else if (r.skipped) console.warn(`[tenant-sweeps] ${name}: workspace ${orgId} stayed busy for ${SOON_ASKS} asks; its idle round will reach it`);
-        })
-        .catch((err) => console.error(`[tenant-sweeps] ${name}: a round asked for workspace ${orgId} failed:`, (err as Error).message));
-    }, afterMs);
-    if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
-    pending.set(key, t);
+    let asks = due.get(name);
+    if (!asks) {
+      asks = new Map();
+      due.set(name, asks);
+      const t = setTimeout(() => {
+        const round = due.get(name);
+        due.delete(name);
+        if (round) fire(name, round);
+      }, afterMs);
+      if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+    }
+    if (!asks.has(orgId)) asks.set(orgId, asksLeft);
   };
   return (name, orgId) => ask(name, orgId, SOON_ASKS);
 }

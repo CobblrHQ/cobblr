@@ -8,6 +8,7 @@ import { BenchRequest, type BenchRequestInput } from "./bench-model.js";
 import { scopeScreenshotPng } from "./bench-screenshot.js";
 import { discoverBenchESPHome } from "./bench-discovery.js";
 import { logBenchReading } from "./bench-log.js";
+import { bridgeErrorText } from "./bridge-wait.js";
 export async function configuredControl(orgId:string,connectionId:string){
  const row=await platform().devices.connections().getInternal(orgId,connectionId);
  if(!row?.credentials_enc)return false;
@@ -114,7 +115,7 @@ export function registerBench(){
  platform().entities.registerListResolver("digifab:instrument-reading",async(orgId,query)=>{const db=await platform().tenants.getDb(orgId) as Kysely<DigifabDB>;let source=db.selectFrom("digifab_bench_readings").selectAll();if(query.q?.trim())source=source.where(eb=>textSearchWhere(eb,query.q,{unreadable: query.unreadable, text:["record_kind"],json:["report"]})!);const rows=await source.orderBy("created_at","desc").orderBy("id","desc").limit(Math.min(query.limit || 20,200)).offset(query.offset || 0).execute();return {items:rows.map(benchEntity)};});
  platform().actions.registerHandler("digifab.instrument-stop",async ctx=>{
   if(!ctx.userId||!await platform().auth.userHasRole({orgId:ctx.orgId,userId:ctx.userId,minRole:"member"}))return {ok:false,error:"A workspace member must stop an instrument."};
-  try{return {ok:true,data:await runBench(await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>,ctx.orgId,{machine_id:ctx.args?.machine_id,operation:"output_off"},ctx.userId)};}catch(error){return {ok:false,error:error instanceof Error?error.message:"The supply did not answer."};}
+  try{return {ok:true,data:await runBench(await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>,ctx.orgId,{machine_id:ctx.args?.machine_id,operation:"output_off"},ctx.userId)};}catch(error){return {ok:false,error:bridgeErrorText(error,"The supply did not answer.")};}
  });
  platform().actions.registerHandler("digifab.discover-esphome",async ctx=>{
   if(!ctx.userId||!await platform().auth.userHasRole({orgId:ctx.orgId,userId:ctx.userId,minRole:"admin"}))return {ok:false,error:"An admin must discover bench devices."};
@@ -123,11 +124,11 @@ export function registerBench(){
  platform().actions.registerHandler("digifab.instrument-control",async ctx=>{
   if(!["output_on","set_voltage","set_current"].includes(String(ctx.args?.operation)))return {ok:false,error:"Choose a supply control operation."};
   if(!ctx.userId||!await platform().auth.userHasRole({orgId:ctx.orgId,userId:ctx.userId,minRole:"member"}))return {ok:false,error:"A workspace member must control an instrument."};
-  try{return {ok:true,data:await runBench(await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>,ctx.orgId,ctx.args,ctx.userId)};}catch(error){return {ok:false,error:error instanceof Error?error.message:"The supply did not answer."};}
+  try{return {ok:true,data:await runBench(await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>,ctx.orgId,ctx.args,ctx.userId)};}catch(error){return {ok:false,error:bridgeErrorText(error,"The supply did not answer.")};}
  });
  platform().actions.registerHandler("digifab.instrument",async ctx=>{
   if(!["identify","read","log","capture","configure"].includes(String(ctx.args?.operation)))return {ok:false,error:"Use the dedicated control or stop action for a supply change."};
   if(!ctx.userId||!await platform().auth.userHasRole({orgId:ctx.orgId,userId:ctx.userId,minRole:"member"}))return {ok:false,error:"A workspace member must read or stop an instrument."};
-  try{return {ok:true,data:await runBench(await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>,ctx.orgId,ctx.args,ctx.userId)};}catch(error){return {ok:false,error:error instanceof Error?error.message:"The instrument did not answer."};}
+  try{return {ok:true,data:await runBench(await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>,ctx.orgId,ctx.args,ctx.userId)};}catch(error){return {ok:false,error:bridgeErrorText(error,"The instrument did not answer.")};}
  });
 }

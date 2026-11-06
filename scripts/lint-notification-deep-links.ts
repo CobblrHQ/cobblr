@@ -69,7 +69,6 @@ const BASELINE = new Set([
   "modules/digifab/src/notify.ts:/configuration/farm",
   "api/src/platform/notifications.ts:/me/notification-channels",
   "api/src/routes/me.ts:/configuration/links",
-  "api/src/routes/super-admin.ts:/me/feedback",
 ]);
 
 const findings: string[] = [];

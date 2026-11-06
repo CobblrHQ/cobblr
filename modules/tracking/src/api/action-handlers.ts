@@ -13,7 +13,8 @@
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { TrackingDB } from "../db.js";
-import { logMeasurement, type MetricLike } from "./record.js";
+import { canBeAName } from "@cobblr/platform-contract/readable-text";
+import { logMeasurement, removeMeasurement, type MetricLike } from "./record.js";
 
 let registered = false;
 
@@ -31,14 +32,29 @@ interface LogArgs {
   note?: string;
 }
 
-function coerceNumber(v: unknown): number | undefined {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = Number(v.replace(/[^0-9.\-]/g, ""));
-    if (Number.isFinite(n) && v.trim() !== "") return n;
+const PLAIN_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+// A sign, a short currency mark, one number with its thousands, and a unit with no digit in it.
+const NUMBER_IN_WORDS = /^(-?)\s*[^\d\s.,+-]{0,3}\s*(-?)((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)\D*$/;
+
+/** The number a value says, or undefined when it does not say exactly one:
+ *  stripping everything else logged "no reading today" as 0 and "12 of 15" as 1215. */
+export function coerceNumber(v: unknown): number | undefined {
+  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+  if (typeof v !== "string") return undefined;
+  const text = v.trim();
+  if (PLAIN_NUMBER.test(text)) {
+    const plain = Number(text);
+    return Number.isFinite(plain) ? plain : undefined;
   }
-  return undefined;
+  const match = NUMBER_IN_WORDS.exec(text);
+  if (!match) return undefined;
+  const n = Number(match[3]!.replace(/,/g, ""));
+  if (!Number.isFinite(n)) return undefined;
+  return match[1] || match[2] ? -n : n;
 }
+
+const GOAL_DIRECTIONS = new Set(["up", "down", "hit"]);
+const textOr = (v: unknown, max: number): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
 
 export function registerTrackingActionHandlers(): void {
   registerUndos();
@@ -78,22 +94,30 @@ export function registerTrackingActionHandlers(): void {
         .where("id", "=", args.metricId)
         .executeTakeFirst();
     }
-    if (!metric && args.metricName) {
-      const name = args.metricName.trim();
+    const name = typeof args.metricName === "string" ? args.metricName.trim() : "";
+    if (!metric && name && (name.length > 200 || !canBeAName(name))) {
+      return { ok: false, error: "a metric's name needs something to read, on one line, in 200 characters or fewer" };
+    }
+    if (!metric && name) {
+      // The oldest of any that share the name, so a wire feeds one metric, not whichever the database hands back.
       metric = await db
         .selectFrom("tracking_metrics")
         .select(["id", "name", "unit", "goal_value", "goal_direction"])
         .where(sql<boolean>`lower(name) = lower(${name})`)
+        .orderBy("created_at", "asc")
+        .orderBy("id", "asc")
+        .limit(1)
         .executeTakeFirst();
       if (!metric) {
+        const goalValue = coerceNumber(args.goalValue);
         metric = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
           const made = await trx
             .insertInto("tracking_metrics")
             .values({
               name,
-              unit: args.unit ?? null,
-              goal_value: args.goalValue != null ? String(args.goalValue) : null,
-              goal_direction: args.goalDirection ?? "hit",
+              unit: textOr(args.unit, 40),
+              goal_value: goalValue != null ? String(goalValue) : null,
+              goal_direction: GOAL_DIRECTIONS.has(args.goalDirection ?? "") ? args.goalDirection! : "hit",
               metadata: sql`'{}'::jsonb` as never,
             })
             .returning(["id", "name", "unit", "goal_value", "goal_direction"])
@@ -112,7 +136,7 @@ export function registerTrackingActionHandlers(): void {
     }
     if (!metric) return { ok: false, error: "which metric? run this on the metric, or name it in `metricName`" };
 
-    const row = await logMeasurement({ db, orgId: ctx.orgId, userId: ctx.userId ?? null, metric, value, note: args.note ?? null });
+    const row = await logMeasurement({ db, orgId: ctx.orgId, userId: ctx.userId ?? null, metric, value, note: textOr(args.note, 2000) });
     return {
       ok: true,
       metricId: metric.id,
@@ -128,9 +152,9 @@ function registerUndos(): void {
     const id = String((ctx.args as { measurement_id?: unknown } | null)?.measurement_id ?? "").trim();
     if (!id) return { ok: false, error: "missing measurement_id" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<TrackingDB>;
-    const row = await db.deleteFrom("tracking_measurements").where("id", "=", id).returning(["id"]).executeTakeFirst();
-    if (!row) return { ok: true, skipped: true, reason: "already gone" };
-    return { ok: true, summary: "Removed the measurement.", removed: row.id };
+    const removed = await removeMeasurement({ db, orgId: ctx.orgId, userId: ctx.userId ?? null, id });
+    if (!removed) return { ok: true, skipped: true, reason: "already gone" };
+    return { ok: true, summary: "Removed the measurement.", removed: id };
   });
   platform().actions.registerUndo("tracking.log-measurement", (result) => {
     const r = result as { ok?: unknown; skipped?: unknown; measurementId?: unknown } | null;

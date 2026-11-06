@@ -8,6 +8,13 @@ import { ApiError, browserTimeZone, getToken, request, setToken } from "./client
 import { previewingShare } from "../share-view";
 import type { SignupInvite } from "./admin";
 
+/** What a new password's answer says about API tokens, which it leaves working. */
+export interface TokensStillWorking {
+  count: number;
+  items: Array<{ id: string; name: string }>;
+  message: string | null;
+}
+
 export interface CommunityLink {
   id: CommunityLinkId;
   label: string;
@@ -224,10 +231,12 @@ export const accountApi = {
   // carries a freshly-minted one for THIS session, which we persist so the
   // user stays logged in on this device.
   changeMyPassword: async (body: { current_password: string; new_password: string }) => {
-    const res = await request<{ token: string }>("POST", "/me/password", body);
+    const res = await request<{ token: string; api_tokens?: TokensStillWorking | null }>("POST", "/me/password", body);
     if (res?.token) setToken(res.token);
     return res;
   },
+  /** End every API token of this person's that still works. */
+  endMyApiTokens: () => request<{ ended: number; names: string[]; message: string }>("POST", "/me/api-tokens/end-all"),
   // Sign out of every other device without changing the password. Revokes all
   // prior tokens server-side and returns a fresh one for THIS device, which we
   // persist so the current session survives.

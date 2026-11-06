@@ -798,8 +798,9 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
     // expiry, so without this a junk "Fit Shake" for a book's ISBN would stand
     // in every workspace for ever. The book's answer replaces it in both
     // caches. When no book source knows the ISBN the stray stands, stamped, so
-    // the book catalog is asked again once a day, not on every scan.
-    if (codeClass.type === "isbn" && !isBookSource(hit.source)) {
+    // the book catalog is asked again once a day, not on every scan. An advert
+    // a book catalog answered with is treated the same way.
+    if (codeClass.type === "isbn" && (!isBookSource(hit.source) || !answerAgreesWithCode(ctx.upc, hit))) {
       // `__no_book_at`, not the earlier `__book_checked_at`: that stamp was
       // written while an unreachable catalog read as absent (one afternoon,
       // 2026-09-17), so every entry carrying it was stamped under a false

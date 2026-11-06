@@ -25,6 +25,16 @@ import { useDetailRoute } from "../lib/useDetailRoute";
 import { Link } from "react-router-dom";
 import { SearchIncomplete } from "./SearchIncomplete";
 
+/** A comment body as one line of words, for a place that shows it inside
+ *  something already pressable (a quote, a preview) where a chip's link cannot
+ *  go. A token never reaches the screen as itself: [[user:<uuid>]] read as
+ *  broken software in every place that printed the body. */
+export function mentionWords(body: string, names: (userId: string) => string): string {
+  return splitMentions(body)
+    .map((p) => (p.t === "text" ? p.value : p.t === "user" ? `@${names(p.id)}` : p.t === "cobb" ? "@Cobb" : "@record"))
+    .join("");
+}
+
 /** A comment body with its mentions rendered as live chips. */
 export function MentionText({
   body,

@@ -15,7 +15,8 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { LogOut, ShieldAlert } from "lucide-react";
 import { usePageTitle, PasswordInput } from "@cobblr/platform-web";
-import { ApiError, api, setToken } from "../lib/api";
+import { ApiError, api, setToken, type TokensStillWorking } from "../lib/api";
+import { TokensStillWork } from "../components/TokensStillWork";
 import { useAuth } from "../auth/AuthContext";
 
 export function ForcePasswordResetPage() {
@@ -27,6 +28,7 @@ export function ForcePasswordResetPage() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stillWork, setStillWork] = useState<TokensStillWorking | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -41,7 +43,7 @@ export function ForcePasswordResetPage() {
     }
     setBusy(true);
     try {
-      const res = await api.request<{ token: string }>("POST", "/me/password", {
+      const res = await api.request<{ token: string; api_tokens?: TokensStillWorking | null }>("POST", "/me/password", {
         current_password: current,
         new_password: next,
       });
@@ -50,6 +52,10 @@ export function ForcePasswordResetPage() {
       if (res?.token) setToken(res.token);
       // Refresh /me so the UI sees must_reset_password=false and the
       // redirect guard releases.
+      if (res?.api_tokens?.count) {
+        setStillWork(res.api_tokens);
+        return;
+      }
       await refreshMe();
       navigate("/", { replace: true });
     } catch (err) {
@@ -75,7 +81,7 @@ export function ForcePasswordResetPage() {
           </div>
         </div>
 
-        <form onSubmit={submit} className="space-y-3">
+        {stillWork ? <TokensStillWork tokens={stillWork} onDone={() => { void refreshMe().then(() => navigate("/", { replace: true })); }} /> : <form onSubmit={submit} className="space-y-3">
           <label className="block">
             <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Current (temp) password
@@ -125,7 +131,7 @@ export function ForcePasswordResetPage() {
           >
             {busy ? "Setting…" : "Set password and continue"}
           </button>
-        </form>
+        </form>}
 
         <div className="pt-3 border-t border-line dark:border-slate-800 flex items-center justify-between text-[11px] text-faint">
           <span>Signed in as {user?.email}</span>

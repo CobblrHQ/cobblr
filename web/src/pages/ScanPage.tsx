@@ -44,7 +44,7 @@ import { LocationChipPicker } from "../components/LocationChipPicker";
 import { useScanSessionLocation } from "../lib/useScanSessionLocation";
 import { SessionLocationModal } from "../components/SessionLocationModal";
 import { committedGroupsOf, sendBackIdsOf } from "../lib/committedGroups";
-import { placeForFilingLine, sessionPlaceSuggestion, suggestedPlaceNames, suggestedPlaces } from "../lib/sessionPlaceSuggestion";
+import { placeForFilingLine, sessionMostPlace, sessionPlaceSuggestion, sessionSharedWhy, suggestedPlaceNames, suggestedPlaces } from "../lib/sessionPlaceSuggestion";
 import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
@@ -606,7 +606,7 @@ export function ScanPage() {
   // upload session, or the `?batch=` this page is scoped to.
   const aiStatus = useAiStatus();
   const aiAnswered = useAiStatusAnswered();
-  const intake = useScanIntake(activeSlug, { session: "inbox", batchId: params.get("batch"), identifyAvailable: aiStatus?.identify_available });
+  const intake = useScanIntake(activeSlug, { session: "inbox", rowSaysSo: true, batchId: params.get("batch"), identifyAvailable: aiStatus?.identify_available });
   // ?pick=photos: the PWA shortcut's door (components/AddPhotosTile.tsx).
   const pickPhotos = params.get("pick") === "photos";
   const { uploading, uploadProgress, takeFiles, uploadReceipt, importReceiptFile } = intake;
@@ -3046,7 +3046,7 @@ export function ScanPage() {
           {/* Opaque (was a /30 tint you could read the cards through) and tight:
               short labels + icon-only Discard/clear keep it to one action row on a
               phone instead of wrapping to three. */}
-          <span className="font-medium text-content dark:text-mortar-100 whitespace-nowrap">{selected.size} sel.</span>
+          <span data-bulk-count="" className="font-medium text-content dark:text-mortar-100 whitespace-nowrap">{selected.size} selected</span>
           <button
             type="button"
             onClick={() => setSelected(new Set(visibleItems.map((i) => i.id)))}
@@ -3055,6 +3055,19 @@ export function ScanPage() {
             all {visibleItems.length}
           </button>
           <span className="flex-1 min-w-[8px]" />
+          {/* On a phone two rows on purpose: what is chosen and the way out, then
+              what to do with it. Letting it wrap left Discard and clear alone on
+              the second row (#9269). */}
+          <button
+            type="button"
+            onClick={clearSelected}
+            title="Clear selection"
+            aria-label="Clear selection"
+            className="rounded p-1 text-faint hover:text-content sm:order-1"
+          >
+            <X size={14} className="shrink-0" />
+          </button>
+          <span className="w-full sm:hidden" aria-hidden />
           {selected.size >= 2 && (
             <button
               type="button"
@@ -3072,9 +3085,10 @@ export function ScanPage() {
               disabled={bulkBusy || selected.size === 0}
               onClick={() => setBulkLocOpen((o) => !o)}
               title="File the whole selection into a location"
+              aria-label="File the whole selection into a location"
               className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 text-xs px-2 py-1 text-content hover:bg-subtle dark:hover:bg-slate-700 transition disabled:opacity-50"
             >
-              <MapPin size={13} className="shrink-0" /> Location
+              <MapPin size={13} className="shrink-0" /> <span className="max-[380px]:hidden">Location</span>
             </button>
           )}
           {(menu?.length ?? 0) > 0 && (
@@ -3105,15 +3119,6 @@ export function ScanPage() {
             className="rounded border border-line dark:border-slate-600 p-1 text-danger hover:bg-subtle dark:hover:bg-slate-700 transition disabled:opacity-50"
           >
             <Trash2 size={14} className="shrink-0" />
-          </button>
-          <button
-            type="button"
-            onClick={clearSelected}
-            title="Clear selection"
-            aria-label="Clear selection"
-            className="rounded p-1 text-faint hover:text-content"
-          >
-            <X size={14} className="shrink-0" />
           </button>
           {bulkTargetOpen && (menu?.length ?? 0) > 0 && (
             <div className="w-full pt-1 flex flex-wrap gap-1.5">
@@ -3681,11 +3686,10 @@ export function ScanPage() {
                 busy === 0 && readyIds.length > 0
                   ? sessionLocName
                     ? filingLabel(sessionLocName)
-                    : (() => {
-                        const one = suggestedPlaces(placeItems);
-                        return one.length === 1 ? one[0]!.place : null;
-                      })()
+                    : (sessionMostPlace(placeItems)?.place ?? null)
                   : null,
+              category: busy === 0 && readyIds.length > 0 ? sessionCat.suggestion : null,
+              sharedWhy: sessionSharedWhy(placeItems),
               vendor: (() => {
                 const v = g.vendor ?? vendorOfItems(g.items);
                 return v && sessionName(g, isReceiptSession)?.includes(v) ? v : null;
@@ -4682,11 +4686,12 @@ export function ScanPage() {
                     // While the read finishes, the line says what the
                     // "finishing" chip's tooltip says, and holds the place the
                     // caption arrives in (#7789).
-                    const caption = readyIds.length > 0 ? sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems))) : busy > 0 && !onlyReadingReceipts ? "Names, covers and where they go may still change" : null;
+                    const caption = readyIds.length > 0 ? sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems), sessionMostPlace(placeItems))) : busy > 0 && !onlyReadingReceipts ? "Names, covers and where they go may still change" : null;
                     return (
                       <SessionMetaLine
                         parts={[
                           caption && <span data-testid="session-add-caption">{caption}</span>,
+                          sessionSays.category && <span data-testid="session-category">{sessionSays.category}</span>,
                           isReceiptSession && g.batchId && <SessionOrderRef orderRef={g.orderRef} purchaseId={batchMeta[g.batchId]?.purchases_order_id} />,
                         ]}
                       />

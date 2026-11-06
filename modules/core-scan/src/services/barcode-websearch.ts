@@ -414,8 +414,8 @@ export async function resolveBarcodeViaWebSearch(
   const code = upc.trim();
   if (!code) return null;
   // A book's name comes from a book catalog. Searched bare, an ISBN brings back
-  // whatever page carries those digits ("BYDFi Referral Code"), and a book with
-  // no catalog entry is better blank, for its photo or a person to name.
+  // whatever page carries those digits, and a book with no catalog entry is
+  // better blank, for its photo or a person to name.
   if (kind === "barcode" && (classifyScanCode(code).type === "isbn" || codeKindOf(code) === "book")) return null;
 
   // Stage 1 — best-effort grounding titles, from BOTH DDG endpoints in parallel:

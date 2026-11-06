@@ -38,7 +38,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ApiError, api, fetchCsv, type Location } from "../lib/api";
-import { downloadBlob, editOf, isKeptOffline, KEPT_SENTENCE } from "@cobblr/platform-web";
+import { downloadBlob, editOf, useRecordAsOpened, isKeptOffline, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { deleteDialogMessage, restorePlaces, restoredSentence } from "../lib/placeDelete";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { useHideEmpty } from "../lib/useHideEmpty";
@@ -1312,7 +1312,7 @@ function RunCard({
 export function LocationFormModal({
   slug,
   parentId: parentIdInitial,
-  target,
+  target: shown,
   onClose,
   onSaved,
 }: {
@@ -1322,6 +1322,7 @@ export function LocationFormModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const target = useRecordAsOpened(shown);
   const mayReorder = !!useCan("core-locations:reorder");
   const editing = !!target;
   const [name, setName] = useState(target?.name ?? "");

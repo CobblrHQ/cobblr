@@ -27,6 +27,11 @@ import { fieldDay } from "@cobblr/platform-contract/field-day";
 /** A calendar day, `YYYY-MM-DD`. */
 export type Day = string;
 
+/** Days past its date after which a dated item is stale: ending it says
+ *  nothing about how long the thing keeps (it sat in the cupboard, not the
+ *  fridge), so it teaches no shelf life, and "+3 days" stops being offered. */
+export const STALE_DAYS = 14;
+
 /** A workspace's calendar zone before one is known: UTC, the zone every due
  *  date was kept in before workspaces had a zone of their own, so a workspace
  *  with none set keeps the dates it always had (#8717). A guess west of UTC

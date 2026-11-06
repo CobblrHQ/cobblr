@@ -16,6 +16,9 @@ export interface CombineUndo {
   candidates_after: unknown;
   merged_barcodes_before: unknown;
   merged_count_before: unknown;
+  /** Lines of one receipt: what they cost and were, before and after. */
+  figures_before?: Record<string, unknown>;
+  figures_after?: Record<string, unknown>;
   /** The kept row's own earlier combine, so undoing this one leaves that one
    *  undoable in its turn. */
   previous: CombineUndo | null;
@@ -63,5 +66,13 @@ export function uncombinePlan(kept: KeptRow, absorbedQuantities: number[]): Unco
   if (u.previous) metaSet.combine_undo = u.previous;
   if (u.merged_barcodes_before != null) metaSet.merged_barcodes = u.merged_barcodes_before;
   if (u.merged_count_before != null) metaSet.merged_count = u.merged_count_before;
+  // Each figure reverts only while it reads what the combine wrote.
+  const current = meta as Record<string, unknown>;
+  for (const [k, after] of Object.entries(u.figures_after ?? {})) {
+    if (!same(current[k], after)) continue;
+    const before = u.figures_before?.[k];
+    if (before === null || before === undefined) metaDrop.push(k);
+    else metaSet[k] = before;
+  }
   return { set, metaSet, metaDrop: metaDrop.filter((k) => !(k in metaSet)) };
 }

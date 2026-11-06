@@ -57,6 +57,7 @@ import {
   INSTALL_BLOCKED_SENTENCE,
   UNAVAILABLE_SENTENCE,
   KEYWORD_ROUTE_SENTENCE,
+  LOW_CONFIDENCE_RECEIPT_SENTENCE,
   LOW_CONFIDENCE_SENTENCE,
   MERGE_SENTENCE,
   NO_NAME_SENTENCE,
@@ -80,7 +81,7 @@ import { gtinChecksumOk } from "@cobblr/platform-contract/identifier-check";
 import { isBareCodeName, nameIsRejected } from "@cobblr/platform-contract/display-identity";
 import { normaliseTargetKind, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import { rankFits, type FitItem, type FitTable } from "@cobblr/platform-contract/table-fit";
-import { SCAN_TOOLS, type ScanTool, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
+import { SCAN_TOOLS, isReceiptLine, type ScanTool, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 
 /** The columns/fields any triage decision is made from — the subset of a scan
  *  row these predicates read. Deliberately structural: the API row, the web
@@ -545,8 +546,7 @@ export function scanReviewReason(
   const checks = scanCheckFields(row);
   if (checks) return checkFieldsWords(checks, opts.fieldLabel);
   if (meta.low_trust) return scanDoubtWords(row) ?? UNTRUSTED_DOUBT;
-  const confidence = Number(row.ai_confidence);
-  return fillSentence(LOW_CONFIDENCE_SENTENCE, { pct: Math.round(confidence * 100) });
+  return isReceiptLine(row) ? LOW_CONFIDENCE_RECEIPT_SENTENCE : LOW_CONFIDENCE_SENTENCE;
 }
 
 /** One answer a question offers, and where it came from. */

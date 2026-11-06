@@ -699,11 +699,25 @@ export function codeKindOf(code: string): "book" | null {
   return null;
 }
 
+/** An advert filed as a book. Open Library is a wiki: on 2026-11-05 someone
+ *  added an edition titled "BYDFi Referral Code" under Effective Java's ISBN,
+ *  published by "BYDFi Referral Code", with no author, and the Books API began
+ *  answering with it. A record whose only credit is its own title says nothing
+ *  a book's record says. */
+export function isAdvertNotABook(hit: BarcodeHit): boolean {
+  const bare = (t: string | null | undefined) => (t ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const title = bare(hit.title);
+  if (!title || title !== bare(hit.brand)) return false;
+  const named = hit.fields?.author ?? (hit.raw as { openlibrary?: { authors?: unknown } } | null | undefined)?.openlibrary?.authors;
+  return !named;
+}
+
 /** Whether a catalog's answer is the kind of thing the code says it is. A
  *  book: a book catalog's answer, or one carrying the ISBN decode or a books
- *  category. */
+ *  category, and never an advert in a book's record. */
 export function answerAgreesWithCode(code: string, hit: BarcodeHit): boolean {
   if (codeKindOf(code) !== "book") return true;
+  if (isAdvertNotABook(hit)) return false;
   return isBookSource(hit.source) || hit.decoder_id === "isbn" || /\bbooks?\b/i.test(hit.category ?? "");
 }
 

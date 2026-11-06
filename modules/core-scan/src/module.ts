@@ -67,6 +67,22 @@ export default defineModule({
       // this call goes.
       const { registerFiledIntoHeal } = await import("./heal-filed-into.js");
       registerFiledIntoHeal();
+      // A book named by an advert in a book catalog: see the DONE WHEN in
+      // heal-books-named-by-an-advert.ts for when this call goes.
+      const { registerBooksNamedByAnAdvertHeal } = await import("./heal-books-named-by-an-advert.js");
+      registerBooksNamedByAnAdvertHeal();
+      // A status bar kept as the shop: see the DONE WHEN in
+      // heal-status-bar-vendors.ts for when this call goes.
+      const { registerStatusBarVendorsHeal } = await import("./heal-status-bar-vendors.js");
+      registerStatusBarVendorsHeal();
+      // A receipt's repeated lines, read before they became one row: see the
+      // DONE WHEN in heal-same-receipt-lines.ts for when this call goes.
+      const { registerSameReceiptLinesHeal } = await import("./heal-same-receipt-lines.js");
+      registerSameReceiptLinesHeal();
+      // A receipt line wearing a picture found for a guess: see the DONE WHEN in
+      // heal-guessed-receipt-pictures.ts for when this call goes.
+      const { registerGuessedReceiptPicturesHeal } = await import("./heal-guessed-receipt-pictures.js");
+      registerGuessedReceiptPicturesHeal();
       // Boot-time heal: a draft identified before #3613 reads its unsupported
       // identifiers as unconfirmed - see the DONE WHEN in
       // heal-unconfirmed-identifiers.ts for when this call goes.

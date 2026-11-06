@@ -24,6 +24,7 @@ import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { stripPlaceFields } from "./place-fields.js";
 import { liveTableForOffer } from "./resolve-offers.js";
+import { sharedRead } from "./shared-menu-read.js";
 import { normaliseCategory, isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
 import { makeLexicalScorer, type FitTable, type LexicalEvidence } from "@cobblr/platform-contract/table-fit";
 import { parentInstanceOf, scanLabelForChild, typeTablesAmong, withTypeFields, type ParentedTable } from "@cobblr/platform-contract/scan-type-tables";
@@ -397,7 +398,12 @@ export function withProposedCategories(menu: ScanMenuEntry[], proposed: string[]
   });
 }
 
-export async function assembleScanMenu(
+interface MenuRead { baseUrl: string; slug: string; token: string; orgId: string }
+// By token as well as by workspace: the routes answer as the person asking.
+const menuReadKey = (r: MenuRead) => `${r.baseUrl} ${r.slug} ${r.token}`;
+const sharedScanMenu = sharedRead(menuReadKey, readScanMenu);
+
+export function assembleScanMenu(
   baseUrl: string,
   slug: string,
   token: string,
@@ -407,6 +413,10 @@ export async function assembleScanMenu(
    *  without it would silently offer no category anywhere. */
   orgId: string,
 ): Promise<ScanMenuEntry[]> {
+  return sharedScanMenu({ baseUrl, slug, token, orgId });
+}
+
+async function readScanMenu({ baseUrl, slug, token, orgId }: MenuRead): Promise<ScanMenuEntry[]> {
   const auth = { Authorization: `Bearer ${token}` };
   // Scan targets are DECLARED by the owning modules (registerScannable), not
   // hardcoded here — a new scannable module needs no matchmaker edit. Map each
@@ -606,6 +616,15 @@ export async function assembleScanMenu(
   return entries;
 }
 
+const sharedBundleMenu = sharedRead(menuReadKey, async ({ baseUrl, slug, token }: MenuRead): Promise<ScanMenuEntry[] | null> => {
+  const res = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/quickstart/bundle-menu`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const body = (await res.json()) as { items?: ScanMenuEntry[] };
+  return Array.isArray(body.items) ? body.items : [];
+});
+
 /**
  * Capture-first merged menu. Returns the user's LIVE instances when the
  * workspace has any — so established-workspace scan routing is byte-for-byte
@@ -631,12 +650,8 @@ export async function assembleMergedMenu(
   // toward earlier entries); bundle entries whose instance already exists live
   // are dropped as duplicates.
   try {
-    const res = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/quickstart/bundle-menu`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return live;
-    const body = (await res.json()) as { items?: ScanMenuEntry[] };
-    const bundle = Array.isArray(body.items) ? body.items : [];
+    const bundle = await sharedBundleMenu({ baseUrl, slug, token, orgId });
+    if (!bundle) return live;
     // Drop a bundle entry that duplicates a live table by KEY *or* by display
     // LABEL. If the workspace already has a "Bookshelf" (say `assets::bookshelf`),
     // don't ALSO offer to install a community "Bookshelf" bundle
@@ -896,6 +911,31 @@ export function pickFallbackEntry(
 export { makeLexicalScorer, GENERIC_NOUNS, rankFits, bestFit, type LexicalEvidence } from "@cobblr/platform-contract/table-fit";
 import { contradictedByCategory, fitsTheFloor, orderFits } from "@cobblr/platform-contract/table-fit";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
+import { SCAN_REVIEW_CONFIDENCE } from "@cobblr/platform-contract/scan-triage";
+import { receiptLineReadsAsFood } from "./line-is-food.js";
+
+const FOOD_EVIDENCE_CONFIDENCE = 0.3;
+const FOOD_EVIDENCE_NOTE = "The receipt suggests food, but its name doesn't say what this is.";
+
+/** The table a line goes to when its receipt says food and nothing else could
+ *  place it (line-is-food.ts), through the same category route a catalog's word
+ *  takes. Still a low route, so the row is still asked about. Null with no table
+ *  for food, and for an item already carrying a category of its own. */
+function foodRouteFor(item: PerceivedItem, menu: ScanMenuEntry[], why: AiFallback, reason?: MatchCandidate["ai_fallback_reason"]): MatchCandidate | null {
+  if (item.category || !receiptLineReadsAsFood(item.metadata)) return null;
+  const top = heuristicMatch({ ...item, category: "Groceries" }, menu, why, reason)[0];
+  if (!top || top.basis === "fallback") return null;
+  return { ...top, confidence: Math.min(top.confidence, FOOD_EVIDENCE_CONFIDENCE), notes: FOOD_EVIDENCE_NOTE };
+}
+
+/** A model that couldn't place a line either: what the receipt says goes first,
+ *  and the model's answer stays as the second choice. */
+export function withWhatTheReceiptSays(candidates: MatchCandidate[], item: PerceivedItem, menu: ScanMenuEntry[]): MatchCandidate[] {
+  const top = candidates[0];
+  if (!top || top.confidence >= SCAN_REVIEW_CONFIDENCE) return candidates;
+  const food = foodRouteFor(item, menu, "no-answer");
+  return food && food.kind !== top.kind ? [food, ...candidates].slice(0, 2) : candidates;
+}
 
 export function heuristicMatch(
   item: PerceivedItem,
@@ -949,6 +989,8 @@ export function heuristicMatch(
   // the no-AI path returns [] and every unmatched item lands in one undifferen-
   // tiated heap, which is the same scatter problem wearing a different hat.
   if (scored.length === 0) {
+    const food = foodRouteFor(item, menuIn, why, reason);
+    if (food) return [food];
     const fallback = pickFallbackEntry(item, menu);
     if (!fallback) return [];
     const fallbackFields: Record<string, string | number | boolean> = {};
@@ -1499,6 +1541,10 @@ export async function runMatchmaker(
   // place is the downgrade this whole path exists to stop — so keep what the row
   // already had and let the user re-identify if they want a fresh opinion.
   if (out.length === 0) return replay ? (replay.storedCandidates as MatchCandidate[]) : heuristicMatch(item, menu, "no-answer");
+  if (!replay) {
+    const steered = withWhatTheReceiptSays(out, item, menu);
+    out.splice(0, out.length, ...steered);
+  }
   // What the item IS rides on the top candidate, whichever table that is: the
   // model says it once, on its first answer, and that answer may not have
   // survived the menu check (#5065).

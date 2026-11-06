@@ -16,6 +16,7 @@ const aliases: Record<string, string[]> = {
   manufacturer: ["Manufacturer", "Maker"], x: ["PosX", "Center-X", "X"], y: ["PosY", "Center-Y", "Y"],
   rotation: ["Rot", "Rotation", "Angle"], side: ["Side", "Layer"], qty: ["Qty", "Quantity"], dnp: ["DNP", "Do Not Populate"],
 };
+const MAX_COORDINATE_MM = 10_000;
 const key = (v: string) => v.trim().toLowerCase();
 function table(text: string): string[][] {
   const clean = text.replace(/^\uFEFF/, "");
@@ -82,6 +83,8 @@ export function importBoardFiles(input: unknown): BoardFiles {
     const footprint = get("package", true);
     if (footprint !== line.package) throw new Error(`Placement ${ref} has a different footprint from its BOM line.`);
     const factor = p.units === "in" ? 25.4 : 1;
+    // Past the reach of any machine, and in inches past what a number holds: stored, it read back as nothing.
+    if (numeric.slice(0, 2).some(n => Math.abs(n * factor) > MAX_COORDINATE_MM)) throw new Error(`Placement ${ref} is more than ${MAX_COORDINATE_MM / 1000} metres from the origin. Check its coordinates and units.`);
     placements.push({ ref, x_mm: numeric[0]! * factor * (side === "bottom" && p.bottom_x_mirrored ? -1 : 1), y_mm: numeric[1]! * factor, rotation: ((numeric[2]! % 360) + 360) % 360, side, package: footprint });
   }
   for (const ref of references.keys()) if (!seen.has(ref)) throw new Error(`Missing placement for ${ref}.`);

@@ -9,6 +9,7 @@ import { readBoardStock, revision } from "./board-revisions.js";
 import { asyncHandler } from "./util.js";
 export interface AssemblyKitLine { part_id: string; kind: string; qty: number; placements: number; role: "component" | "blank"; lot_code?: string | null; allocation_id?: string }
 export interface AssemblyOrder {
+  consume_intent?: { kind: string; part_id: string; qty: number };
   finish_intent?: { run_id: string; source_id: string; input_kind: string; input_id: string; output_kind: string; output_id: string; accepted: number; rejected: number; by: string | null };
   inspection_machine?: { kind: string; id: string };
   finished?: { run_id: string; output_kind: string; output_id: string; accepted: number; rejected: number; by: string | null; at: string };
@@ -27,6 +28,18 @@ export async function inventoryKit(ctx: ActionInvokeContext, args: Record<string
   if (!result.ok) throw new ActionRefusal(typeof result.error === "string" ? result.error : "The kit did not change.");
   return result.data as { ready: boolean; reason: string | null; lines: Array<{ id: string; part_id: string; qty: string; status: string; context: { lot_code?: string | null } }>; stock: Array<{ id: string; name: string; lot_code: string | null; location_id: string | null }> };
 }
+/** The kit as inventory holds it, against the plan this order kitted. A line the
+ *  plan has and inventory no longer does went with a deleted reel, before such a
+ *  delete was refused; it never reads as ready. */
+export async function kitAgainstPlan(ctx: ActionInvokeContext, id: string, plan: readonly AssemblyKitLine[] | undefined) {
+  const kit = await inventoryKit(ctx, { target_id: id, operation: "check" });
+  const lost = kit.ready && (plan ?? []).some(line => !kit.lines.some(held => held.part_id === line.part_id));
+  return lost ? { ...kit, ready: false, reason: "Something reserved for this kit is no longer there. Cancel this order and make a new one." } : kit;
+}
+export async function requireKitReady(ctx: ActionInvokeContext, id: string, plan: readonly AssemblyKitLine[] | undefined) {
+  const kit = await kitAgainstPlan(ctx, id, plan);
+  if (!kit.ready) throw new ActionRefusal(kit.reason ?? "Check this kit before going on.");
+}
 export async function assemblyOrder(db: Kysely<BuildsDB>, id: string) {
   const row = await db.selectFrom("builds_planned").selectAll().where("id", "=", id).executeTakeFirst();
   if (!row?.assembly) throw new ActionRefusal("Choose an assembly work order.");
@@ -35,7 +48,7 @@ export async function assemblyOrder(db: Kysely<BuildsDB>, id: string) {
 export async function assemblyOrderView(ctx: ActionInvokeContext, id: string) {
   const db = await platform().tenants.getDb(ctx.orgId) as Kysely<BuildsDB>;
   const row = await assemblyOrder(db, id);
-  const kit = row.assembly.state === "draft" || row.assembly.state === "cancelled" ? null : await inventoryKit(ctx, { target_id: id, operation: "check" });
+  const kit = row.assembly.state === "draft" || row.assembly.state === "cancelled" ? null : await kitAgainstPlan(ctx, id, row.assembly.kit_plan);
   const lines = await Promise.all((row.assembly.kit_plan ?? []).map(async line => {
     const part = await platform().entities.lookup(ctx.orgId, line.kind, line.part_id, { userId: ctx.userId ?? undefined });
     return { ...line, name: part?.title ?? "Unavailable stock", location: String(part?.fields.location_name ?? "Unassigned"), lot_code: line.lot_code ?? null };
@@ -73,10 +86,30 @@ export function registerAssemblyOrderActions() {
   platform().actions.registerHandler("builds.change-assembly-order", async ctx => {
     const p = Change.parse(ctx.args);
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<BuildsDB>;
+    if (p.operation === "cancel") {
+      // The order says cancelled first: that is what lets inventory release its
+      // kit. A release that fails leaves a cancelled order, and pressing Cancel
+      // again finishes it.
+      await db.transaction().execute(async trx => {
+        const row = await trx.selectFrom("builds_planned").selectAll().where("id", "=", p.order_id).forUpdate().executeTakeFirst();
+        if (!row?.assembly) throw new ActionRefusal("Choose an assembly work order.");
+        const a = row.assembly;
+        if (a.state === "cancelled") return;
+        if (!["draft", "kitted", "released"].includes(a.state)) throw new ActionRefusal("This order has already used material and cannot be cancelled.");
+        await trx.updateTable("builds_planned").set({ status: "cancelled", assembly: { ...a, state: "cancelled" }, updated_at: new Date() }).where("id", "=", row.id).execute();
+      });
+      const kit = await inventoryKit(ctx, { target_id: p.order_id, operation: "check" });
+      if (kit.lines.length) await inventoryKit(ctx, { target_id: p.order_id, operation: "release" });
+      return { ok: true, changed: true, data: { order_id: p.order_id } };
+    }
     if (p.operation === "kit") await db.transaction().execute(async trx => {
       const row = await trx.selectFrom("builds_planned").selectAll().where("id", "=", p.order_id).forUpdate().executeTakeFirst();
       if (!row?.assembly) throw new ActionRefusal("Choose an assembly work order.");
-      if (row.assembly.state !== "draft" || row.assembly.kit_plan) return;
+      if (row.assembly.state !== "draft") return;
+      // A plan with nothing reserved yet is only an old answer: a kit that failed
+      // once (its blanks had not come) goes by what is on the shelf now. A reservation
+      // that exists is kept, for the retry of a reply lost after it was made.
+      if (row.assembly.kit_plan && (await inventoryKit(ctx, { target_id: row.id, operation: "check" })).lines.length) return;
       const { spec } = await revision(trx, row.build_id);
       if (!spec.blank_part_id) throw new ActionRefusal("Track and receive this revision's blank boards first.");
       const checked = checkBoardStock(spec.bom, Number(row.qty), await readBoardStock(ctx, spec));
@@ -89,14 +122,6 @@ export function registerAssemblyOrderActions() {
       const row = await trx.selectFrom("builds_planned").selectAll().where("id", "=", p.order_id).forUpdate().executeTakeFirst();
       if (!row?.assembly) throw new ActionRefusal("Choose an assembly work order.");
       const a = row.assembly;
-      if (p.operation === "cancel") {
-        if (a.state === "cancelled") return;
-        if (!["draft", "kitted", "released"].includes(a.state)) throw new ActionRefusal("This order has already used material and cannot be cancelled.");
-        const kit = await inventoryKit(ctx, { target_id: row.id, operation: "check" });
-        if (kit.lines.length) await inventoryKit(ctx, { target_id: row.id, operation: "release" });
-        await trx.updateTable("builds_planned").set({ status: "cancelled", assembly: { ...a, state: "cancelled" }, updated_at: new Date() }).where("id", "=", row.id).execute();
-        return;
-      }
       if (p.operation === "kit") {
         if (a.state === "kitted") return;
         if (a.state !== "draft" || !a.kit_plan) throw new ActionRefusal("Only a draft order can be kitted.");
@@ -106,7 +131,7 @@ export function registerAssemblyOrderActions() {
         return;
       }
       if (a.state !== "kitted" && a.state !== "released") throw new ActionRefusal("Kit this order before release.");
-      await inventoryKit(ctx, { target_id: row.id, operation: "check", require_ready: true });
+      await requireKitReady(ctx, row.id, a.kit_plan);
       if (a.state === "released") return;
       await trx.updateTable("builds_planned").set({ assembly: { ...a, state: "released", released_by: ctx.userId, released_at: new Date().toISOString() }, updated_at: new Date() }).where("id", "=", row.id).execute();
     });

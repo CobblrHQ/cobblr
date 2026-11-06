@@ -5,6 +5,22 @@
 @tailwind utilities;
 
 @layer base {
+  /* An unticked box is an outline with nothing in it. In a dark page an iPhone
+     draws it solid black, which reads as filled (#9269). Ticked stays the
+     system's, in the colour its accent-* class names. :where keeps the size
+     lower than any h-* or w-* on the box. */
+  :where(input[type="checkbox"]:not(:checked):not(:indeterminate)) {
+    width: 13px;
+    height: 13px;
+  }
+  input[type="checkbox"]:not(:checked):not(:indeterminate) {
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: transparent;
+    border: 1.5px solid #94a3b8;
+    border-radius: 3px;
+  }
+
   /* A link set in a sentence is underlined, not only coloured: "field
      builder" in a settings hint read 1.09:1 against the words around it, so
      a person who cannot tell the colours could not find it (#7857, WCAG

@@ -19,7 +19,7 @@ export interface MetricLike {
 
 const num = (v: string | null): number | null => (v == null ? null : Number(v));
 
-/** Direction-aware: has `value` met `goal`? Mirrors metrics.ts progress(). */
+/** Direction-aware: has `value` met `goal`? The bar in metrics.ts progress() is full on this same test. */
 export function goalReached(value: number, goal: number, dir: string): boolean {
   if (dir === "down") return value <= goal;
   if (dir === "up") return value >= goal;
@@ -28,9 +28,12 @@ export function goalReached(value: number, goal: number, dir: string): boolean {
 }
 
 /**
- * Insert one measurement, emit `measurement.logged`, and — if it meets the
- * metric's goal — emit `goal.reached` AND dispatch an in-app notification to
- * every workspace member (so a hit goal is never silent).
+ * Insert one measurement, emit `measurement.logged`, and, if it crosses the
+ * metric's goal, emit `goal.reached` AND dispatch an in-app notification to
+ * every workspace member (so a hit goal is never silent). Crossing means the
+ * newest reading now meets the goal and the one before it did not: a metric
+ * that stays past its goal told everyone again at every reading, and a reading
+ * dated last year crosses nothing today.
  */
 export async function logMeasurement(opts: {
   db: Kysely<TrackingDB>;
@@ -43,13 +46,27 @@ export async function logMeasurement(opts: {
   userId?: string | null;
 }): Promise<Selectable<MeasurementsTable>> {
   const { db, orgId, metric, value } = opts;
+  const goal = num(metric.goal_value);
+  const measuredAt = opts.measuredAt ?? new Date();
+  let crossed = false;
   const row = await platform().activity.transaction(orgId, db, async (trx, log) => {
+    if (goal != null && goalReached(value, goal, metric.goal_direction)) {
+      const newest = await trx
+        .selectFrom("tracking_measurements")
+        .select(["value", "measured_at"])
+        .where("metric_id", "=", metric.id)
+        .orderBy("measured_at", "desc")
+        .orderBy("created_at", "desc")
+        .limit(1)
+        .executeTakeFirst();
+      crossed = !newest || (new Date(newest.measured_at).getTime() <= measuredAt.getTime() && !goalReached(Number(newest.value), goal, metric.goal_direction));
+    }
     const row = await trx
       .insertInto("tracking_measurements")
       .values({
         metric_id: metric.id,
         value: String(value),
-        measured_at: opts.measuredAt ?? new Date(),
+        measured_at: measuredAt,
         note: opts.note ?? null,
       })
       .returningAll()
@@ -66,8 +83,7 @@ export async function logMeasurement(opts: {
   });
   void platform().events.emit("tracking.measurement.logged", { orgId, metricId: metric.id, value });
 
-  const goal = num(metric.goal_value);
-  if (goal != null && goalReached(value, goal, metric.goal_direction)) {
+  if (goal != null && crossed) {
     void platform().events.emit("tracking.goal.reached", { orgId, metricId: metric.id, value, goal });
     try {
       const memberIds = await platform().notifications.orgMemberIds(orgId);
@@ -99,4 +115,22 @@ export async function logMeasurement(opts: {
     }
   }
   return row;
+}
+
+/** Take one reading off, on the record, as logging it was. False when it is not there. */
+export async function removeMeasurement(opts: { db: Kysely<TrackingDB>; orgId: string; id: string; userId?: string | null }): Promise<boolean> {
+  const { db, orgId, id } = opts;
+  return platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx.deleteFrom("tracking_measurements").where("id", "=", id).returning(["id", "metric_id", "value"]).executeTakeFirst();
+    if (!row) return false;
+    const metric = await trx.selectFrom("tracking_metrics").select(["name"]).where("id", "=", row.metric_id).executeTakeFirst();
+    await log({
+      orgId,
+      userId: opts.userId ?? null,
+      action: "measurement_deleted",
+      ref: { module: "tracking", entityType: "measurement", entityId: row.id },
+      diff: { name: metric?.name ?? null, value: Number(row.value), metric_id: row.metric_id },
+    });
+    return true;
+  });
 }

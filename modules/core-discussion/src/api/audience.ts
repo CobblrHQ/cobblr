@@ -59,6 +59,9 @@ export function recipientsFor(args: {
   return { named, rest };
 }
 
+/** A follow row that says the opposite: this person said to stop hearing it. */
+export const MUTED = "muted";
+
 /** Everyone who should hear, minus the person who just spoke.
  *
  *  Followers AND prior participants: following is Phase-3 machinery and a
@@ -76,7 +79,7 @@ export async function audienceFor(
   const [followers, speakers] = await Promise.all([
     db
       .selectFrom("core_discussion_follows")
-      .select("user_id")
+      .select(["user_id", "reason"])
       .where("source_module", "=", args.source.source_module)
       .where("source_type", "=", args.source.source_type)
       .where("source_id", "=", args.source.source_id)
@@ -90,15 +93,17 @@ export async function audienceFor(
       .execute(),
   ]);
   const ids = new Set<string>();
-  for (const f of followers) ids.add(f.user_id);
-  for (const s of speakers) if (s.author_user_id) ids.add(s.author_user_id);
+  const stopped = new Set(followers.filter((f) => f.reason === MUTED).map((f) => f.user_id));
+  for (const f of followers) if (f.reason !== MUTED) ids.add(f.user_id);
+  for (const s of speakers) if (s.author_user_id && !stopped.has(s.author_user_id)) ids.add(s.author_user_id);
   if (args.exclude) ids.delete(args.exclude);
   return [...ids];
 }
 
 /** Follow a record, unless the user already follows it for a stronger reason.
  *  Commenting is an implicit follow; an EXPLICIT follow must not be downgraded
- *  by later commenting, or unfollowing would silently undo itself. */
+ *  by later commenting, or unfollowing would silently undo itself. Speaking
+ *  again after stopping is asking back in; being named by someone else is not. */
 export async function followRecord(
   db: Kysely<CoreDiscussionDB>,
   args: {
@@ -110,11 +115,12 @@ export async function followRecord(
   await db
     .insertInto("core_discussion_follows")
     .values({ ...args.source, user_id: args.userId, reason: args.reason })
-    .onConflict((oc) =>
-      oc
-        .columns(["source_module", "source_type", "source_id", "user_id"])
-        .doNothing(),
-    )
+    .onConflict((oc) => {
+      const row = oc.columns(["source_module", "source_type", "source_id", "user_id"]);
+      return args.reason === "commented"
+        ? row.doUpdateSet({ reason: args.reason }).where("core_discussion_follows.reason", "=", MUTED)
+        : row.doNothing();
+    })
     .execute();
 }
 

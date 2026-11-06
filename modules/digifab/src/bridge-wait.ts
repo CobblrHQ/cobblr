@@ -18,3 +18,14 @@ export async function bridgeAnswer<T>(work: Promise<T>, waitMs = BRIDGE_WAIT_MS)
     clearTimeout(timer);
   }
 }
+
+/** What went wrong with a bridge or what it answered, in words for the person at
+ *  the bench. A reading that fails its schema carries its sentence inside a zod
+ *  error, whose own message is JSON; a bridge that is gone is node's "fetch failed". */
+export function bridgeErrorText(error: unknown, otherwise: string): string {
+  if (!(error instanceof Error)) return otherwise;
+  const issues = (error as { name?: string; issues?: Array<{ message: string }> }).name === "ZodError" ? (error as unknown as { issues: Array<{ message: string }> }).issues : null;
+  if (issues?.length) return [...new Set(issues.map(issue => issue.message))].join(" ");
+  if (error.message === "fetch failed") return "The bridge did not answer. Check that it is running and on this network.";
+  return error.message;
+}

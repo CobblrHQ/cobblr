@@ -3,7 +3,8 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import type { SalesDB } from "./db.js";
 import { nextOrderNumber } from "./order-number.js";
-import { addLine } from "./order-lines.js";
+import { addLine, MOST_A_LINE_COSTS, MOST_ON_A_LINE } from "./order-lines.js";
+import { isSaleDay } from "./sale-day.js";
 import { orderHappened } from "./history.js";
 
 const text = z.string().trim().min(1).max(2000);
@@ -11,14 +12,14 @@ export const CreateOrder = z.object({
   instance: z.string().trim().min(1).max(200).default("sales"),
   order_number: text.optional(),
   status: z.enum(["draft", "confirmed"]).default("confirmed"),
-  order_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => !Number.isNaN(Date.parse(v))).optional(),
-  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => !Number.isNaN(Date.parse(v))).optional(),
+  order_date: z.string().refine(isSaleDay, "That is not a day a sale can be on.").optional(),
+  due_date: z.string().refine(isSaleDay, "That is not a day a sale can be on.").optional(),
   shipping_address: z.string().max(4000).optional(),
   notes: z.string().max(10000).optional(),
   metadata: z.record(z.unknown()).optional(),
   source: z.object({ name: text, ref: text, url: z.string().url().max(4000).refine((v) => /^https?:\/\//.test(v)).optional() }).optional(),
   customer: z.object({ name: text.optional(), email: z.string().trim().toLowerCase().email().optional(), phone: z.string().max(200).optional(), address: z.string().max(4000).optional() }).optional(),
-  items: z.array(z.object({ part_id: z.string().uuid().nullable().optional(), description: z.string().max(2000).nullable().optional(), qty: z.number().finite().positive(), unit_price: z.number().finite().nonnegative().nullable().optional(), metadata: z.record(z.unknown()).optional() })).min(1).max(200),
+  items: z.array(z.object({ part_id: z.string().uuid().nullable().optional(), description: z.string().max(2000).nullable().optional(), qty: z.number().finite().positive().max(MOST_ON_A_LINE), unit_price: z.number().finite().nonnegative().max(MOST_A_LINE_COSTS).nullable().optional(), metadata: z.record(z.unknown()).optional() })).min(1).max(200),
 });
 export type CreateOrderInput = z.infer<typeof CreateOrder>;
 

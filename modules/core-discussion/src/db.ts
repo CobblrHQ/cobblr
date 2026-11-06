@@ -59,7 +59,7 @@ export interface FollowsTable {
   source_type: string;
   source_id: string;
   user_id: string;
-  reason: Generated<"commented" | "mentioned" | "explicit">;
+  reason: Generated<"commented" | "mentioned" | "explicit" | "muted">;
   created_at: Generated<Date>;
 }
 

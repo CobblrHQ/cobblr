@@ -13,7 +13,9 @@ import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { askCobb, summonsCobb } from "./cobb.js";
 import { fanOutComment } from "./after-comment.js";
+import { MUTED } from "./audience.js";
 import { reconcileMentions } from "./reconcile.js";
+import { REPLY_ELSEWHERE, replyStaysInConversation } from "./reply-target.js";
 
 export const discussionRouter = Router({ mergeParams: true });
 
@@ -28,7 +30,7 @@ const Source = z.object({
 const BODY_MAX = 10_000;
 
 const PostBody = Source.extend({
-  body: z.string().min(1).max(BODY_MAX),
+  body: z.string().trim().min(1).max(BODY_MAX),
   in_reply_to: z.string().uuid().nullish(),
 });
 
@@ -151,8 +153,23 @@ discussionRouter.get(
       .where("source_id", "=", parsed.data.source_id)
       .executeTakeFirst();
 
+    // Asked of the record, not of its comments: following starts before anybody
+    // has said anything, and the inbox only lists what has been said.
+    const self = sessionUser(req)?.id;
+    const follow = self
+      ? await db
+          .selectFrom("core_discussion_follows")
+          .select("reason")
+          .where("source_module", "=", src.source_module)
+          .where("source_type", "=", src.source_type)
+          .where("source_id", "=", parsed.data.source_id)
+          .where("user_id", "=", self)
+          .executeTakeFirst()
+      : undefined;
+    const following = !!follow && follow.reason !== MUTED;
+
     if (!conv) {
-      res.json({ conversation: null, comments: [], count: 0 });
+      res.json({ conversation: null, comments: [], count: 0, following });
       return;
     }
 
@@ -181,6 +198,7 @@ discussionRouter.get(
       // Deleted comments are tombstones, not content: they must not inflate the
       // count on the record's inline preview.
       count: rows.filter((r) => !r.deleted_at).length,
+      following,
     });
   }),
 );
@@ -197,6 +215,11 @@ discussionRouter.post(
     const user = sessionUser(req);
     const db = tenantDb(req);
     const src = await normaliseSource(ctx.org.id, parsed.data);
+
+    if (parsed.data.in_reply_to && !(await replyStaysInConversation(db, { ...src, source_id: parsed.data.source_id }, parsed.data.in_reply_to))) {
+      res.status(400).json({ error: { code: "reply_elsewhere", message: REPLY_ELSEWHERE } });
+      return;
+    }
 
     const conversationId = await ensureConversation(db, {
       ...src,
@@ -278,7 +301,7 @@ async function contextOf(db: ReturnType<typeof tenantDb>, commentId: string) {
     .executeTakeFirst();
 }
 
-const EditBody = z.object({ body: z.string().min(1).max(BODY_MAX) });
+const EditBody = z.object({ body: z.string().trim().min(1).max(BODY_MAX) });
 
 // PATCH /:id — edit your own words.
 // AI-REACH: exempt — editing the record of what a person said is theirs to do,
@@ -471,12 +494,17 @@ discussionRouter.post(
         )
         .execute();
     } else {
+      // Kept as a row, not deleted: anyone who has spoken hears a conversation
+      // whether or not they follow it, so "not following" has to be something
+      // audienceFor can read.
       await db
-        .deleteFrom("core_discussion_follows")
-        .where("source_module", "=", where.source_module)
-        .where("source_type", "=", where.source_type)
-        .where("source_id", "=", where.source_id)
-        .where("user_id", "=", user.id)
+        .insertInto("core_discussion_follows")
+        .values({ ...where, user_id: user.id, reason: MUTED })
+        .onConflict((oc) =>
+          oc
+            .columns(["source_module", "source_type", "source_id", "user_id"])
+            .doUpdateSet({ reason: MUTED }),
+        )
         .execute();
     }
     res.json({ following: parsed.data.following });
@@ -548,6 +576,7 @@ discussionRouter.get(
     // Every conversation reaches the inbox, a page at a time with the total:
     // an unread one older than the newest page is still unread.
     const page = readListPage(req.query);
+    const needle = `%${likeEscape(q)}%`;
     const rows = await db
       .selectFrom("core_discussion_conversations as v")
       .innerJoin("core_discussion_comments as c", "c.conversation_id", "v.id")
@@ -574,7 +603,11 @@ discussionRouter.get(
         sql<string>`count(*) over()`.as(TOTAL_COLUMN),
       ])
       .where("c.deleted_at", "is", null)
-      .$if(q.length > 0, (qb) => qb.where("c.body", "ilike", `%${likeEscape(q)}%`))
+      // Which conversations, not which comments: filtering the joined rows made
+      // a search rewrite the count, the time and what read as unread.
+      .$if(q.length > 0, (qb) =>
+        qb.where(sql<boolean>`exists (select 1 from core_discussion_comments said where said.conversation_id = v.id and said.deleted_at is null and said.body ilike ${needle})`),
+      )
       .groupBy([
         "v.id",
         "v.source_module",
@@ -611,6 +644,7 @@ discussionRouter.get(
     const items = answer.items.map((r) => {
       const latest = r.latest_at ? new Date(r.latest_at as unknown as string) : null;
       const read = r.last_read_at ? new Date(r.last_read_at as unknown as string) : null;
+      const following = !!r.follow_reason && r.follow_reason !== MUTED;
       return {
         conversation_id: r.conversation_id,
         source_module: r.source_module,
@@ -623,8 +657,8 @@ discussionRouter.get(
         // exactly the thing an inbox exists to show you.
         unread: !!latest && (!read || latest > read),
         addressed_to_me: mentioned.has(r.conversation_id),
-        following: !!r.follow_reason,
-        follow_reason: r.follow_reason ?? null,
+        following,
+        follow_reason: following ? r.follow_reason : null,
       };
     });
     res.json({ ...answer, items });

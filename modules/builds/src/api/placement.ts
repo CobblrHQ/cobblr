@@ -6,7 +6,7 @@ import type { Kysely } from "kysely";
 import { buildPlacementProgram, PlacementProfileSchema, verifyFeederScan, type FeederAssignment } from "../placement-program.js";
 import { placementCoverageText, openpnpObserverScripts } from "../openpnp-observer.js";
 import { revision, readBoardStock } from "./board-revisions.js";
-import { assemblyOrder, assemblyOrderView, inventoryKit } from "./assembly-orders.js";
+import { assemblyOrder, assemblyOrderView, inventoryKit, requireKitReady } from "./assembly-orders.js";
 import { tenantContext, sessionUser, type BuildsDB } from "../db.js";
 import { asyncHandler } from "./util.js";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
@@ -115,7 +115,7 @@ export function registerPlacementActions() {
       if (resolved.outcome !== "resolved" || resolved.candidate.provider_id !== "minted-token") throw new ActionRefusal("Scan a reel's Cobblr QR label from this workspace.");
       let feeder;
       try { feeder = verifyFeederScan(placement.feeders, p.slot, resolved.candidate.entity_id); } catch (e) { throw new ActionRefusal((e as Error).message); }
-      await inventoryKit(ctx, { target_id: row.id, operation: "check", require_ready: true });
+      await requireKitReady(ctx, row.id, a.kit_plan);
       await trx.updateTable("builds_planned").set({ assembly: { ...a, placement: { ...placement, verified: { ...placement.verified, [p.slot]: { part_id: feeder.part_id, station_id: station.id, at: new Date().toISOString() } } } }, updated_at: new Date() }).where("id", "=", row.id).execute();
     });
     return { ok: true, changed: true, data: await assemblyOrderView(ctx, p.order_id) };
@@ -123,7 +123,7 @@ export function registerPlacementActions() {
   for (const operation of ["start", "finish"] as const) platform().actions.registerHandler(`builds.${operation}-placement`, async ctx => {
     await operator(ctx);
     const p = Step.parse(ctx.args), db = await platform().tenants.getDb(ctx.orgId) as Kysely<BuildsDB>;
-    await db.transaction().execute(async trx => {
+    const lastSide = await db.transaction().execute(async trx => {
       const row = await trx.selectFrom("builds_planned").selectAll().where("id", "=", p.order_id).forUpdate().executeTakeFirst();
       const a = row?.assembly, placement = a?.placement;
       if (!row || !a || !placement || !a.paste || !["pasted", "placing", "placed", "reflowed", "tested"].includes(a.state)) throw new ActionRefusal("Record usable paste and prepare this placement job first.");
@@ -134,24 +134,41 @@ export function registerPlacementActions() {
       if (!requiredSides.includes(p.side)) throw new ActionRefusal("This job has no placements on that side.");
       if (p.source === "openpnp" && (placement.profile.model !== "openpnp" || p.coverage_hash !== hash(placementCoverageText(program.placements, p.side, program.profile)))) throw new ActionRefusal("The OpenPnP job is incomplete or differs from the exported placements. Check enabled boards, references, parts and coordinates.");
       const side = placement.sides[p.side];
-      if (operation === "finish" && side?.completed_at) return;
+      if (operation === "finish" && side?.completed_at) return null;
       if (operation === "start" && side?.started_at) throw new ActionRefusal("This side has already started. Continue the existing run instead of starting it again.");
       if (a.state === "placed") throw new ActionRefusal("This work order has already finished placement.");
       if (placement.feeders.some(feeder => { const verified = placement.verified[feeder.slot]; return !verified || verified.part_id !== feeder.part_id || verified.station_id !== station.id; })) throw new ActionRefusal("Scan the correct reel at every feeder slot on this station before Start.");
       if (operation === "start") {
-        await inventoryKit(ctx, { target_id: row.id, operation: "check", require_ready: true });
+        await requireKitReady(ctx, row.id, a.kit_plan);
         const paste = await invoke<{ usable: boolean; reason: string | null }>(ctx, "inventory:paste-readiness", { partId: a.paste.part_id });
         if (!paste.usable) throw new ActionRefusal(paste.reason ?? "Check paste handling before Start.");
         const sides = { ...placement.sides, [p.side]: { started_at: new Date().toISOString(), operator_id: ctx.userId, station_id: station.id } };
         await trx.updateTable("builds_planned").set({ assembly: { ...a, state: "placing", placement: { ...placement, sides } }, updated_at: new Date() }).where("id", "=", row.id).execute();
-        return;
+        return null;
       }
       if (!side?.started_at || side.station_id !== station.id) throw new ActionRefusal("Start this side at the same station before recording completion.");
       const sides = { ...placement.sides, [p.side]: { ...side, completed_at: new Date().toISOString() } };
-      const complete = requiredSides.every(s => !!sides[s]?.completed_at);
-      if (complete) await inventoryKit(ctx, { target_id: row.id, operation: "consume", confirmed_placed: true, output: { kind: placement.output_kind, part_id: placement.output_id, qty: Number(row.qty) } });
-      await trx.updateTable("builds_planned").set({ assembly: { ...a, state: complete ? "placed" : "placing", placement: { ...placement, sides } }, updated_at: new Date() }).where("id", "=", row.id).execute();
+      // The last side records what it is about to consume and commits, so inventory
+      // can see it; the side reads finished only once the stock has moved, and
+      // pressing Finish again after a failure tries the same draw again.
+      if (requiredSides.every(s => !!sides[s]?.completed_at)) {
+        const consume_intent = { kind: placement.output_kind, part_id: placement.output_id, qty: Number(row.qty) };
+        await trx.updateTable("builds_planned").set({ assembly: { ...a, consume_intent }, updated_at: new Date() }).where("id", "=", row.id).execute();
+        return consume_intent;
+      }
+      await trx.updateTable("builds_planned").set({ assembly: { ...a, state: "placing", placement: { ...placement, sides } }, updated_at: new Date() }).where("id", "=", row.id).execute();
+      return null;
     });
+    if (lastSide) {
+      await inventoryKit(ctx, { target_id: p.order_id, operation: "consume", confirmed_placed: true, output: lastSide });
+      await db.transaction().execute(async trx => {
+        const row = await trx.selectFrom("builds_planned").selectAll().where("id", "=", p.order_id).forUpdate().executeTakeFirstOrThrow();
+        const a = row.assembly!, placement = a.placement!;
+        if (a.state !== "placing") return;
+        const side = placement.sides[p.side]!;
+        await trx.updateTable("builds_planned").set({ assembly: { ...a, state: "placed", placement: { ...placement, sides: { ...placement.sides, [p.side]: { ...side, completed_at: side.completed_at ?? new Date().toISOString() } } } }, updated_at: new Date() }).where("id", "=", row.id).execute();
+      });
+    }
     return { ok: true, changed: true, data: await assemblyOrderView(ctx, p.order_id) };
   });
 }

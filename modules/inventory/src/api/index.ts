@@ -189,6 +189,9 @@ export { partsRouter as primaryRouter };
 import { registerCategoryHandlers } from "./category-handlers.js";
 import { registerPullConnectedStockAction } from "./pull-connected-stock-action.js";
 import { registerAddUnitAction } from "./add-unit-action.js";
+import { registerClearExpiredAction } from "./clear-expired-action.js";
+
+registerClearExpiredAction();
 
 registerAddUnitAction();
 

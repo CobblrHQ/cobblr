@@ -116,7 +116,7 @@ function BuildsCollectionUI({ orgSlug, getToken }: Props) {
               if (
                 await confirm({
                   title: `Delete "${b.name}"?`,
-                  message: "This removes the build and its component list. Stock is not affected.",
+                  message: "This removes the build, its component list and its run history. Stock is not affected.",
                   confirmLabel: "Delete",
                   destructive: true,
                 })
@@ -269,7 +269,9 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
         ? `Built ${r.run.qty_built}: ${Number(r.run.qty_built) * (Number(detail.data?.build.output_qty) || 1)} added to ${out.name}, components taken from stock`
         : `Built ${r.run.qty_built}: components taken from stock, nothing added (this build makes no part)`;
       // A build pressed by mistake can be taken back from the message.
-      if (!offerUndo(toast, takeBack, { undo: r.undo, result: null }, { entityKind: "builds:build", entityId: buildId }, done)) toast.success(done);
+      // Parts were used and what they made did not arrive: never the green message.
+      if (r.output_not_added) toast.error(`Built ${r.run.qty_built} and the components were used, but nothing was added to ${out?.name ?? "stock"}. ${r.output_not_added}`);
+      else if (!offerUndo(toast, takeBack, { undo: r.undo, result: null }, { entityKind: "builds:build", entityId: buildId }, done)) toast.success(done);
       setSerial("");
       void qc.invalidateQueries({ queryKey: ["builds-runs", buildId] });
       invalidate();

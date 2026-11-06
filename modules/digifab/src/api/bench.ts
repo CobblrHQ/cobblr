@@ -9,6 +9,7 @@ import { benchMachine, benchNames, runBench } from "../bench.js";
 import { discoverBenchESPHome } from "../bench-discovery.js";
 import { BenchRequest } from "../bench-model.js";
 import { readBenchPage } from "../bench-page.js";
+import { bridgeErrorText } from "../bridge-wait.js";
 export const benchRouter=Router({mergeParams:true});
 // AI-ACTION: digifab:discover-esphome
 benchRouter.get("/discover",asyncHandler(async(req,res)=>{
@@ -31,5 +32,5 @@ benchRouter.get("/:machineId",asyncHandler(async(req,res)=>{
 benchRouter.post("/",asyncHandler(async(req,res)=>{
  if(!(await requireCapability(req, res, "digifab:instrument")))return;
  const parsed=BenchRequest.safeParse(req.body);if(!parsed.success)return badBody(res,parsed.error);
- try{res.json(await runBench(tenantDb(req),tenantContext(req).org.id,parsed.data,sessionUser(req)?.id || null));}catch(error){res.status(409).json({error:{code:"bench_refused",message:error instanceof Error?error.message:"The instrument did not answer."}});}
+ try{res.json(await runBench(tenantDb(req),tenantContext(req).org.id,parsed.data,sessionUser(req)?.id || null));}catch(error){res.status(409).json({error:{code:"bench_refused",message:bridgeErrorText(error,"The instrument did not answer.")}});}
 }));

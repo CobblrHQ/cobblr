@@ -1171,6 +1171,28 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.2.0",
   },
   {
+    // UI-SCREEN: /me/identity (a new password's confirmation, End them too)
+    group: "more",
+    id: "platform:end-my-api-tokens", changes: "setup",
+    // Anyone, on their own tokens only: the handler finds them by the caller.
+    min_role: "guest",
+    label: "End all my API tokens",
+    description:
+      "End every API token of yours that still works, in every workspace: a bridge or an automation using one stops at once. Your sign-in stays. Says which it ended.",
+    icon: "key",
+    scope: "workspace",
+    invoke_handler: "platform.end-my-api-tokens",
+    run_by: "member",
+    user_invokable: true,
+    // An ended token can't be brought back; the assistant asks the person first.
+    undoable: false,
+    examples: ["stop every API token of mine working", "revoke my API tokens, my password leaked"],
+    args_schema: {
+      reason: { label: "Why, for the activity log", type: "text", required: false },
+    },
+    version: "0.1.0",
+  },
+  {
     // UI-SCREEN: /me/communication (the device list's Send a test)
     group: "more",
     id: "platform:test-push-device", changes: "setup",

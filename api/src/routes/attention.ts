@@ -20,7 +20,7 @@ import { readAttentionCollection } from "./attention-reads.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { facesForKind } from "../platform/faces.js";
-import { listApplicable } from "../platform/actions.js";
+import { getActionScope, listApplicable } from "../platform/actions.js";
 import { detailPathForEntity, titleForEntity } from "../platform/entities.js";
 import { hasPrimaryRouter } from "../modules/mount.js";
 import { countdownWords, fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr/platform-contract";
@@ -88,6 +88,9 @@ interface AttentionCollection {
   /** The verbs that settle a due entry here, as the collection's applicable
    *  actions declare them (`finishes`): used up, thrown out, still good. */
   finish?: Array<{ action_id: string; label: string; finishes: "used" | "discarded" | "still-good" }>;
+  /** The one action that ends everything past its date here in a single step
+   *  (clearing a backlog), when this collection's actions offer it. */
+  clear?: { action_id: string; label: string };
 }
 
 interface AttentionRow {
@@ -395,6 +398,10 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           .map((a) => ({ action_id: a.id, label: a.label, finishes: a.finishes! }))
           .sort((a, b) => ORDER[a.finishes] - ORDER[b.finishes]);
         if (finish.length > 0) collection.finish = finish;
+        // The backlog door, where the collection has something that goes off (an
+        // expiry field): the one list-wide action that clears what is past its date.
+        const CLEAR = "inventory:clear-expired";
+        if (roles.has("expiry") && (await getActionScope(CLEAR).catch(() => null)) === "workspace") collection.clear = { action_id: CLEAR, label: "Clear what's past its date" };
         if (overdue.length > 0)
           rows.push({
             kind: "overdue",

@@ -36,6 +36,8 @@ export interface InvokeAsker {
   appEditKinds?: readonly string[];
   /** A personal token that may change only records. */
   tokenAccess?: string | null;
+  /** The one workspace this token is held to, if it is. */
+  tokenOrgId?: string | null;
   /** The door this request arrived through (assistant, mcp, ...). */
   via?: string | null;
   /** This request's answers, asked once: a list asks of every action, and
@@ -88,6 +90,8 @@ export async function doorRefusal(asker: InvokeAsker, actionId: string, target: 
   }
   // A personal token that may change only records never changes the workspace (#7138, #7343, #7356).
   if (asker.tokenAccess === "change" && actionChangesWorkspace(actionId)) return refuse(403, { code: "token_access", message: accessMessage("change") });
+  // A token held to one workspace never reaches past it: this ends the person's tokens everywhere.
+  if (asker.tokenOrgId && actionId === "platform:end-my-api-tokens") return refuse(403, { code: "token_workspace_only", message: "This token reaches one workspace, and ending a person's API tokens reaches all of them. Use your account or a token with no workspace." });
   // What only a person does is refused to every assistant door, confirmed or not.
   if (askedByAnAssistant(asker)) {
     const human = humanOnlyRefusal(actionId, args);

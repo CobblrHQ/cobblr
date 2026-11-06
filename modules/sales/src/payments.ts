@@ -14,12 +14,13 @@
 // change, for the readers that filter on it.
 
 import type { Kysely } from "kysely";
-import { isRealDay } from "@cobblr/platform-contract/day";
+import { platform } from "@cobblr/platform-contract";
 import { roundMoneyAmount } from "@cobblr/platform-contract/money";
 import type { SalesDB } from "./db.js";
 import { withOrderLock } from "./order-lock.js";
 import { orderHappened } from "./history.js";
 import { moneyOfOrders, type OrderMoney } from "./returns.js";
+import { dayAfter, isSaleDay } from "./sale-day.js";
 
 export type PaymentInput = { amount: number; method?: string | null; paid_on?: string | null };
 
@@ -43,6 +44,15 @@ export async function syncPaid(db: Kysely<SalesDB>, orderId: string, shopCurrenc
   return money;
 }
 
+/** After a line changed what the order comes to. An order that owes nothing and has no
+ *  payments keeps what a person ticked: only money owed, or paid in full, decides it. */
+export async function settlePaidAfterLines(db: Kysely<SalesDB>, orgId: string, orderId: string): Promise<void> {
+  const money = await moneyOf(db, orderId, await platform().money.currency(orgId));
+  if (!money) return;
+  const paid = money.state === "paid" ? true : money.owed > 0 ? false : null;
+  if (paid !== null) await db.updateTable("sales_orders").set({ paid } as never).where("id", "=", orderId).where("paid", "!=", paid).execute();
+}
+
 /** Record a payment on an order. */
 export async function recordPayment(db: Kysely<SalesDB>, orgId: string, userId: string | null, orderId: string, input: PaymentInput, shopCurrency: string, today: string): Promise<PaymentResult> {
   return withOrderLock(db, orgId, userId, orderId, async () => {
@@ -51,10 +61,11 @@ export async function recordPayment(db: Kysely<SalesDB>, orgId: string, userId: 
     const order = await db.selectFrom("sales_orders").select(["status"]).where("id", "=", orderId).executeTakeFirstOrThrow();
     if (order.status === "cancelled") return { ok: false, code: "cancelled", message: "This order is cancelled, so nothing can be paid on it." };
     const amount = Number(input.amount);
-    if (!Number.isFinite(amount) || !(amount > 0)) return { ok: false, code: "not_an_amount", message: "Say how much was paid." };
+    if (!Number.isFinite(amount) || !(roundMoneyAmount(amount, before.currency) > 0)) return { ok: false, code: "not_an_amount", message: "Say how much was paid." };
     if (amount > before.owed + 1e-9) return { ok: false, code: "too_much", message: before.owed > 0 ? `That is more than is owed: ${before.owed} is still to pay.` : "Nothing is owed on this order." };
     const paid_on = input.paid_on?.trim() || today;
-    if (!isRealDay(paid_on)) return { ok: false, code: "not_a_day", message: "That is not a day on the calendar." };
+    if (!isSaleDay(paid_on)) return { ok: false, code: "not_a_day", message: "That is not a day on the calendar." };
+    if (paid_on > dayAfter(today)) return { ok: false, code: "not_a_day", message: "That day has not come yet, and this records what was received." };
     const method = input.method?.trim().slice(0, 40) || "other";
     const row = await db
       .insertInto("sales_payments")

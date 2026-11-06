@@ -37,7 +37,8 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
     path: "/configuration/tokens",
     label: "API tokens",
     prefill: {},
-    why: "the assistant never mints or revokes credentials",
+    covered_by: ["platform:end-my-api-tokens"],
+    why: "only a person mints one",
   },
   {
     id: "backup",

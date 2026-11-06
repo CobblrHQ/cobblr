@@ -9,6 +9,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -28,6 +29,20 @@ function requireAdmin(req: Parameters<typeof requireAuth>[0], res: Parameters<ty
   }
   return true;
 }
+
+/** A role goes by its name on the matrix and in every picker, so "Sorter" and
+ *  "sorter" would be two rows no one can tell apart. */
+async function nameIsTaken(orgId: string, name: string, exceptRole?: string): Promise<boolean> {
+  let q = meta.selectFrom("workspace_roles").select("id").where("org_id", "=", orgId).where(sql<boolean>`lower(name) = ${name.toLowerCase()}`);
+  if (exceptRole) q = q.where("id", "!=", exceptRole);
+  return !!(await q.executeTakeFirst());
+}
+
+function refuseTakenName(res: Parameters<typeof requireAuth>[1], name: string): void {
+  res.status(409).json({ error: { code: "role_name_taken", message: `There is already a role called "${name}". Pick another name, or edit that one.` } });
+}
+
+const lostTheNameRace = (err: unknown) => (err as { code?: string }).code === "23505" && ((err as { constraint?: string }).constraint ?? "").includes("name");
 
 // GET /orgs/:slug/roles — list custom roles in this workspace with
 // their capability lists.
@@ -117,6 +132,7 @@ customRolesRouter.post(
         return;
       }
       const orgId = req.tenant!.org.id;
+      if (await nameIsTaken(orgId, parsed.data.name)) return void refuseTakenName(res, parsed.data.name);
       const created = await meta.transaction().execute(async (trx) => {
         const row = await trx
           .insertInto("workspace_roles")
@@ -137,6 +153,7 @@ customRolesRouter.post(
                 action_id: cap,
               })),
             )
+            .onConflict((oc) => oc.doNothing())
             .execute();
         }
         return row;
@@ -152,6 +169,7 @@ customRolesRouter.post(
         .catch((err) => console.error("[custom-roles] log failed:", err));
       res.status(201).json({ role: created, capabilities: parsed.data.capabilities });
     } catch (err) {
+      if (lostTheNameRace(err)) return void refuseTakenName(res, String((req.body as { name?: unknown }).name ?? "").trim());
       next(err);
     }
   },
@@ -182,6 +200,7 @@ customRolesRouter.patch(
       }
       const orgId = req.tenant!.org.id;
       const id = req.params.id!;
+      if (parsed.data.name !== undefined && (await nameIsTaken(orgId, parsed.data.name, id))) return void refuseTakenName(res, parsed.data.name);
       const found = await meta.transaction().execute(async (trx) => {
         // The capability rows carry no org_id, so every write below is
         // scoped through this owned, locked parent; the lock also makes two
@@ -233,6 +252,7 @@ customRolesRouter.patch(
       }
       res.status(204).end();
     } catch (err) {
+      if (lostTheNameRace(err)) return void refuseTakenName(res, String((req.body as { name?: unknown }).name ?? "").trim());
       next(err);
     }
   },

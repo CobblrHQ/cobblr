@@ -1,3 +1,4 @@
+import { apiTokensStillWorkingAfterChange } from "../platform/api-tokens-after-password.js";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { currencyFromLocale } from "@cobblr/platform-contract/money";
@@ -1713,7 +1714,7 @@ authRouter.post("/password/reset", async (req, res, next) => {
     }
 
     const out = await buildAuthResponse(row.user_id);
-    return res.json(out);
+    return res.json({ ...out, api_tokens: await apiTokensStillWorkingAfterChange(row.user_id) });
   } catch (err) {
     return next(err);
   }

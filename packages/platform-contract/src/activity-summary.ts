@@ -156,6 +156,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "production-test_finished": "finished testing",
   "make_deleted": "deleted",
   "measurement_created": "created",
+  "measurement_deleted": "deleted",
   "member_joined": "joined",
   "member_left": "left",
   "member_removed": "removed a member from",
@@ -218,6 +219,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "parts_imported": "imported stock into",
   "password_changed": "changed the password for",
   "password_reset": "reset the password for",
+  "api_tokens_ended": "ended the API tokens of",
   "password_reset_by_admin": "reset the password for",
   "person_added": "added",
   "personal_export_requested": "requested a copy of",
@@ -404,6 +406,7 @@ export const accountRowNamesTheWorkspace = (action: string): boolean => ACCOUNT_
 const ON_THEMSELVES: Readonly<Record<string, (their: string, them: string) => string>> = {
   password_changed: (their) => `changed ${their} password`,
   password_reset: (their) => `reset ${their} password`,
+  api_tokens_ended: (their) => `ended ${their} API tokens`,
   email_changed: (their) => `changed ${their} email address`,
   sessions_revoked: (their) => `signed out all ${their} sessions`,
   personal_export_requested: (their) => `requested a copy of ${their} data`,

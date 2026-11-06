@@ -10,13 +10,20 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.4.2",
+  version: "0.4.4",
   displayName: "Sales",
   description:
     "Customers and the orders they place; fulfilling an order takes what you sold out of stock.",
   icon: "shopping-cart",
   band: "stock",
   instanceability: "multi",
+  lifecycle: {
+    onBoot: async () => {
+      const { registerSaleRecordsHeal } = await import("./heal-sale-records.js");
+      registerSaleRecordsHeal();
+    },
+  },
+
 
   schema: {
     tablePrefix: "sales_",

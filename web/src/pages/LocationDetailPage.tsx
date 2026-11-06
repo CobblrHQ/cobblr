@@ -1,4 +1,4 @@
-import { RecordFormModal, editOf, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, OnceQuiet, stillAsking, useRecordActions, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob, useOnceQuiet } from "@cobblr/platform-web";
+import { RecordFormModal, editOf, useRecordAsOpened, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, OnceQuiet, stillAsking, useRecordActions, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob, useOnceQuiet } from "@cobblr/platform-web";
 // /locations/:id — full-entity detail view.
 //
 // Locations are now first-class entities (Punch-list #1 from
@@ -610,12 +610,13 @@ function interiorOf(kind: "area" | "container", dims: string[]): { x?: number; y
 }
 
 function EditLocationModal({
-  location,
+  location: shown,
   onClose,
 }: {
   location: Location;
   onClose: () => void;
 }) {
+  const location = useRecordAsOpened(shown);
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();

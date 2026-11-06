@@ -73,7 +73,9 @@ export function SessionPlaceChip(props: SessionPlaceChipProps) {
         // them. Amber "Location" over that read as "nothing has a home"
         // (2026-09-06); this says what will actually happen.
         // Never a bare count (#4582): one place is named, several say how many places.
-        <span className={names.length === 1 ? "min-w-0 max-w-[10rem] truncate" : undefined}>
+        // On a phone the pin alone: the line under the header names the place,
+        // and its words cost the session's name and count (#9269).
+        <span className={"max-sm:hidden " + (names.length === 1 ? "min-w-0 max-w-[10rem] truncate" : "")}>
           {names.length === 1 ? names[0] : names.length > 1 ? `${names.length} places` : suggested}
           {/* Why, never a bare "suggested" (#4933): one place says its
               reason; several say each item has its own. */}

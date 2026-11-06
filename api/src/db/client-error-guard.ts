@@ -346,8 +346,19 @@ function dialled(kind: string, connect: (...a: unknown[]) => unknown, a: unknown
 export function openConnections(): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [pool, kind] of openPools) if (pool.totalCount) out[kind] = (out[kind] ?? 0) + pool.totalCount;
+  // A pool counts a client from the moment it starts dialling, so a pool's dial
+  // moves from its total to its own row: added on top, each was said twice, and
+  // 391 clients read as "holds 782" (#9280).
+  for (const [key, n] of dialling) {
+    if (!n) continue;
+    out[key] = n;
+    const pooled = key.replace(/ dialling$/, "");
+    if (out[pooled]) {
+      out[pooled] = Math.max(0, out[pooled] - n);
+      if (!out[pooled]) delete out[pooled];
+    }
+  }
   for (const [kind, n] of openBare) if (n) out[kind] = (out[kind] ?? 0) + n;
-  for (const [kind, n] of dialling) if (n) out[kind] = (out[kind] ?? 0) + n;
   return out;
 }
 

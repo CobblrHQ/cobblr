@@ -18,7 +18,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { dehydrate, hydrate, useIsFetching, useQueryClient } from "@tanstack/react-query";
 import { browserOffline, holdPrimedReads, primeReads, primeTicket, releasePrimedReads } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, sessionIdentity } from "../lib/api";
 import { getImpersonationToken } from "../lib/impersonation";
 import { getShareViewToken } from "../lib/share-view";
 import { COPY_PREFIX, isPlainJson, readCopy, writeCopy } from "./device-copy";
@@ -182,12 +182,16 @@ export function DashboardSnapshotGate({
   // The copy the next visit draws from: what the page shows once it is still.
   useEffect(() => {
     if (!shown || !key) return;
-    const save = () =>
+    const whose = sessionIdentity();
+    const save = () => {
+      // Signed out, here or in another tab: the copy went with the session.
+      if (sessionIdentity() !== whose) return;
       writeCopy(key, {
         v: 1,
         at: Date.now(),
         state: dehydrate(qc, { shouldDehydrateQuery: (q) => q.state.status === "success" && q.getObserversCount() > 0 && isPlainJson(q.state.data) }),
       });
+    };
     const t = setTimeout(save, SAVE_AFTER_MS);
     window.addEventListener("pagehide", save);
     return () => {

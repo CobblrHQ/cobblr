@@ -155,6 +155,18 @@ export function packagingOf(row: ScanToolRow): Packaging | null {
 
 const hint = (relevance: ToolRelevance, reason: string): ToolHint => ({ relevance, reason });
 
+/** A line read off a receipt. */
+export function isReceiptLine(row: { source_kind?: string | null }): boolean {
+  return row.source_kind === "receipt";
+}
+
+/** The amount a line was sold by, as the receipt printed it ("2.62 lb"), or null.
+ *  Beside the quantity, which is the package: a count of 1 said nothing of it. */
+export function soldByWeightWords(meta: unknown): string | null {
+  const m = (meta ?? {}) as { weight?: unknown; weight_unit?: unknown };
+  return typeof m.weight === "number" && m.weight > 0 && typeof m.weight_unit === "string" && m.weight_unit ? `${m.weight} ${m.weight_unit}` : null; // count-unit-ok: a weight as the receipt printed it, a symbol ("lb"), never pluralised
+}
+
 export function scanToolRelevance(row: ScanToolRow, ctx: ScanToolContext = {}): ScanToolHints {
   const m = metaOf(row);
   const hasPicture = !!row.image_file_id;

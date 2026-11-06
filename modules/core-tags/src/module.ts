@@ -9,12 +9,19 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-tags",
-  version: "0.2.3",
+  version: "0.2.4",
   displayName: "Tags",
   description:
     "Label anything with the same tag, whatever it is, and see everything with that tag together.",
   icon: "tag",
   band: "foundational",
+  lifecycle: {
+    onBoot: async () => {
+      const { registerUnreadableTagsHeal } = await import("./heal-unreadable-tags.js");
+      registerUnreadableTagsHeal();
+    },
+  },
+
 
   // Browse-not-configure: this is a page you VISIT, so it owns a nav entry
   // and one canonical URL rather than living under /configuration.

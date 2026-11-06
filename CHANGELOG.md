@@ -2,6 +2,23 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-06
+
+### Security
+- Signing out now reaches every tab on the browser. A tab left open used to keep showing your data, and could put a copy of your dashboard back on the device after you had signed out. Other tabs now go to the sign-in page straight away, and when someone else signs in they switch to that person.
+
+### Features
+- Groceries can clear everything past its date in one step, as used up or thrown out, from the dashboard card or the top of the list, with one Undo; a cleanup teaches no shelf life and adds nothing to the shopping list
+
+### Improvements
+- A build refuses what it could not honestly do, stopping a conversation stops it, a comment reads as names everywhere, and pinned entries come first
+- A reserved reel cannot be deleted from under its kit, and the bench refuses in words
+- A report the reporter reopens no longer reads as resolved in the team's channel, and a reply held on a declined or open report can now be sent.
+- An edit form left open no longer puts back a change made in another tab or by someone else when you press Save: customers, metrics, tags, locations, vendors and an order line's Correct.
+- A sale says only what can be true: orders made together get their own numbers, a paid order that gains a line stops saying paid, and a blank customer or tag is refused
+- Tracking: a wrong reading can be removed and a metric edited on its page, and a goal tells people once, when it is crossed
+- An update across a module migration no longer runs a many-workspace server out of connections: the catch-up keeps to the api's share of the database, and health keeps answering while it runs.
+
 ## 2026-11-05
 
 ### Security

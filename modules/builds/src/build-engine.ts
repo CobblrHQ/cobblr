@@ -287,6 +287,9 @@ export const planInputs = (plan: BuildPlan): ComponentInput[] => [...plan.from_s
 
 /** Whether the shelf covers every required line of a plan (an optional one gives what it has). */
 async function covers(plan: BuildPlan, stockOf: (partId: string) => Promise<number>): Promise<boolean> {
+  // Nothing left to draw and something still to make: a sub-assembly with an
+  // empty list would otherwise cover any count, past the shelf's real stock.
+  if (!plan.leaves.some((c) => !c.optional && c.quantity > 0) && plan.sub_assemblies.some((s) => s.to_make > 0)) return false;
   for (const c of plan.leaves) if (!c.optional && c.quantity > 0 && (await stockOf(c.part_id)) < c.quantity) return false;
   return true;
 }

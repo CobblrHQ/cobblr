@@ -8,7 +8,7 @@
 // the type-specific lookups enrich dispatches to.
 
 // EGRESS-FILE: vendor-fixed - lookup hosts written in the code
-import { gtinChecksumOk, hasStoreCodePrefix, isStoreCode, type BarcodeHit } from "./barcode-lookup.js";
+import { gtinChecksumOk, hasStoreCodePrefix, isAdvertNotABook, isStoreCode, type BarcodeHit } from "./barcode-lookup.js";
 import { hitCassette, replayMiss, writeCatalogCassette } from "./catalog-replay.js";
 import type { ClassifiedCodeType } from "@cobblr/platform-contract/scan-copy";
 
@@ -159,34 +159,45 @@ async function openLibraryJson<T>(url: string): Promise<{ ok: true; body: T } | 
 }
 
 /** Two doors on the one catalog. The Books API answers one call with the
- *  whole bag; when it cannot be asked, the edition record (`/isbn/<isbn>.json`)
- *  carries the same title, date and publisher and names its authors by key,
- *  read one more call each. A catalog reached through either door and
- *  holding no entry is a null; neither door reachable is BookDoorUnavailable. */
+ *  whole bag; the edition record (`/isbn/<isbn>.json`) carries the same title,
+ *  date and publisher and names its authors by key, read one more call each.
+ *  A catalog reached through either door and holding no entry is a null;
+ *  neither door reachable is BookDoorUnavailable.
+ *
+ *  Open Library is a wiki, and the Books API answers with one of the editions
+ *  filed under an ISBN, so anyone can put a name on a book (#9225). A record
+ *  crediting an author is taken as it stands: 17 of 18 real books measured on
+ *  2026-11-06 credit one and the advert did not. One that does not is checked
+ *  against the edition door (#9259). */
 async function resolveIsbnLive(clean: string): Promise<BarcodeHit | null> {
   const books = await openLibraryJson<Record<string, OpenLibraryBook>>(
     `https://openlibrary.org/api/books?bibkeys=ISBN:${clean}&format=json&jscmd=data`,
   );
-  if (books.ok) {
-    const b = books.body[`ISBN:${clean}`];
-    return b?.title ? bookHit(b, clean) : null;
-  }
+  const first = books.ok ? books.body[`ISBN:${clean}`] : undefined;
+  if (books.ok && !first?.title) return null;
+  const firstHit = first ? bookHit(first, clean) : null;
+  const usable = firstHit && !isAdvertNotABook(firstHit) ? firstHit : null;
+  if (usable && first?.authors?.length) return usable;
+
   const edition = await openLibraryJson<OpenLibraryEdition>(`https://openlibrary.org/isbn/${clean}.json`);
   if (!edition.ok) {
+    if (usable) return usable;
     // A 404 here can be an ISBN the catalog does not hold, but with the Books
-    // door already down there is no second opinion, so it reads as
-    // unreachable: the safe direction, since nothing is cached or stamped on it.
-    throw new BookDoorUnavailable(`books door: ${books.why}; edition door: ${edition.why}`);
+    // door down or answering with an advert there is no second opinion, so it
+    // reads as unreachable: the safe direction, since nothing is cached or
+    // stamped on it.
+    throw new BookDoorUnavailable(`books door: ${books.ok ? "an advert" : books.why}; edition door: ${edition.why}`);
   }
   const e = edition.body;
-  if (!e?.title) return null;
+  if (!e?.title) return usable;
+  if (usable && titlesAgree(usable.title, e.title)) return usable;
   const authors: { name: string }[] = [];
   for (const a of (e.authors ?? []).slice(0, 4)) {
     const author = await openLibraryJson<{ name?: string }>(`https://openlibrary.org${a.key}.json`);
     if (author.ok && author.body?.name) authors.push({ name: author.body.name });
   }
   const cover = e.covers?.[0];
-  return bookHit(
+  const built = bookHit(
     {
       title: e.title,
       subtitle: e.subtitle,
@@ -199,6 +210,37 @@ async function resolveIsbnLive(clean: string): Promise<BarcodeHit | null> {
     },
     clean,
   );
+  const editionHit = isAdvertNotABook(built) ? null : built;
+  if (!usable) return editionHit;
+  if (!editionHit) return usable;
+  return bookTheAuthorsWrote(clean, usable, editionHit);
+}
+
+/** Two editions of one book differ in spelling and subtitle ("Hitch Hiker's",
+ *  "Hitchhiker's"), so titles agree when most of the shorter one's words are in
+ *  the other. An advert and the book it hides shared none. */
+function titlesAgree(a: string | null | undefined, b: string | null | undefined): boolean {
+  const words = (t: string | null | undefined) => new Set((t ?? "").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+  const [x, y] = [words(a), words(b)];
+  if (!x.size || !y.size) return false;
+  const shared = [...x].filter((w) => y.has(w)).length;
+  return shared / Math.min(x.size, y.size) >= 0.5;
+}
+
+/** The doors name two different things, and neither has more authority: the
+ *  search index says which one a work credits to an author. Its own title is
+ *  the work's ("Nineteen Eighty-Four" for "1984", the Russian for a translation
+ *  of Crime and Punishment), so it picks between the doors and never names
+ *  the book. Neither credited is a blank: a person or a photo can name it. */
+async function bookTheAuthorsWrote(clean: string, one: BarcodeHit, other: BarcodeHit): Promise<BarcodeHit | null> {
+  const found = await openLibraryJson<{ docs?: { title?: string; author_name?: string[] }[] }>(
+    `https://openlibrary.org/search.json?isbn=${clean}&limit=5&fields=title,author_name`,
+  );
+  if (!found.ok) throw new BookDoorUnavailable(`the doors disagree and search could not settle it: ${found.why}`);
+  const credited = (found.body.docs ?? []).filter((d) => d.author_name?.length);
+  const named = (hit: BarcodeHit) => credited.some((d) => titlesAgree(d.title, hit.title));
+  if (named(one) === named(other)) return null;
+  return named(one) ? one : other;
 }
 
 function bookHit(b: OpenLibraryBook, clean: string): BarcodeHit {
@@ -217,6 +259,7 @@ function bookHit(b: OpenLibraryBook, clean: string): BarcodeHit {
     decoder_id: ISBN_DECODER_ID,
   };
 }
+
 
 /** The decoded bag for an ISBN hit that came from a tier that does not carry
  *  one (the shared resolver's Open Library mirror returns the composed title

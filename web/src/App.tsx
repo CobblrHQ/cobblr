@@ -232,6 +232,7 @@ import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { ShareViewBanner } from "./components/ShareViewBanner";
 const AdminLayout = lazy(() => import("./components/AdminLayout").then((m) => ({ default: m.AdminLayout })));
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { PageNotFound } from "./components/PageNotFound";
 import { ConnectivityBanner } from "./components/ConnectivityBanner";
 import { WaitingWritesSender } from "./components/WaitingWritesSender";
 const PortalLayout = lazy(() => import("./components/PortalLayout").then((m) => ({ default: m.PortalLayout })));
@@ -1089,7 +1090,7 @@ function ActiveOrgScopedRoutes() {
               instancesQ.isLoading ? (
                 <div className="p-8 text-sm text-muted dark:text-slate-400">Loading…</div>
               ) : (
-                <Navigate to="/" replace />
+                <PageNotFound />
               )
             }
           />

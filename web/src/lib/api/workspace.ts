@@ -113,6 +113,8 @@ export interface AttentionFeedItem {
     due: "goes-off" | "window" | "deadline";
     /** The verbs that settle a due entry, as the collection's actions declare. */
     finish?: Array<{ action_id: string; label: string; finishes: "used" | "discarded" | "still-good" }>;
+    /** The action that ends everything past its date here in one step, when offered. */
+    clear?: { action_id: string; label: string };
   };
   /** Every record the row counts, for an action on all of them. */
   all_ids?: string[];

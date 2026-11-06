@@ -9,15 +9,18 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { likeEscape, platform } from "@cobblr/platform-contract";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const customersRouter = Router({ mergeParams: true });
 
+const blankIsNone = (max: number) => z.string().trim().max(max).transform((text) => text || null).nullable().optional();
+
 const CustomerCreate = z.object({
-  name: z.string().min(1).max(200),
-  email: z.string().max(320).nullable().optional(),
-  phone: z.string().max(80).nullable().optional(),
+  name: readableNameField(200),
+  email: z.string().trim().max(320).refine((text) => !text || z.string().email().safeParse(text).success, "That is not an email address.").transform((text) => text || null).nullable().optional(),
+  phone: blankIsNone(80),
   address: z.string().max(2_000).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),

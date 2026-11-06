@@ -1,3 +1,4 @@
+import type { TokensStillWorking } from "./account";
 import type { SessionUser } from "./account";
 import type { OrgMembership } from "./members";
 import { request, setToken } from "./client";
@@ -168,7 +169,7 @@ export const authApi = {
       dev_link?: string;
     }>("POST", "/auth/password/forgot", body),
   passwordReset: (body: { token: string; password: string }) =>
-    request<AuthResponse>("POST", "/auth/password/reset", body),
+    request<AuthResponse & { api_tokens?: TokensStillWorking | null }>("POST", "/auth/password/reset", body),
   /** The new address's link: makes the change; every session ends. */
   confirmEmailChange: (body: { token: string }) => request<{ email: string }>("POST", "/auth/email-change/confirm", body),
   /** The old address's link: takes the account back, and answers the reset

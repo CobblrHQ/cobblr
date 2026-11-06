@@ -11,6 +11,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
 import { postFeedbackCard } from "./feedback-card-post.js";
+import { addFollowUp, FOLLOW_UP_COLUMNS } from "./feedback-follow-up.js";
 import { reportingOrgId } from "../platform/feedback-org.js";
 import { feedbackReachability } from "../platform/feedback-reachability.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
@@ -56,7 +57,7 @@ export async function appendFeedbackReply(input: {
   }
   const fb = await meta
     .selectFrom("feedback")
-    .select(["id", "status", "user_id"])
+    .select([...FOLLOW_UP_COLUMNS, "user_id"])
     .where("id", "=", feedbackId)
     .executeTakeFirst();
   if (!fb || !fb.user_id) {
@@ -68,16 +69,7 @@ export async function appendFeedbackReply(input: {
   }
   const entry = { at: new Date().toISOString(), from: u.display_name ?? "reporter", text: parsed.data.text, role: "user" as const };
   const reopened = fb.status === "resolved" || fb.status === "wontfix";
-  await meta
-    .updateTable("feedback")
-    .set({
-      followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
-      ...(reopened ? { status: "in_progress" as never } : {}),
-      triaged_at: null,
-    })
-    .where("id", "=", fb.id)
-    .execute();
-  pokeTriage(fb.id);
+  await addFollowUp(fb, entry, { reopen: reopened, retriage: true });
   return { status: 200, body: { ok: true, feedback_id: fb.id, reopened } };
 }
 
@@ -313,7 +305,7 @@ feedbackRouter.post("/:id/reply", async (req, res, next) => {
     }
     const fb = await meta
       .selectFrom("feedback")
-      .select(["id", "user_id", "status"])
+      .select([...FOLLOW_UP_COLUMNS, "user_id"])
       .where("id", "=", req.params.id)
       .executeTakeFirst();
     if (!fb || fb.user_id !== userId) {
@@ -323,16 +315,7 @@ feedbackRouter.post("/:id/reply", async (req, res, next) => {
     const u = await meta.selectFrom("users").select("display_name").where("id", "=", userId).executeTakeFirst();
     const entry = { at: new Date().toISOString(), from: u?.display_name ?? "you", text: parsed.data.text, role: "user" as const };
     const reopened = fb.status === "resolved" || fb.status === "wontfix";
-    await meta
-      .updateTable("feedback")
-      .set({
-        followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
-        ...(reopened ? { status: "in_progress" as never } : {}),
-        triaged_at: null, // re-judge with the new context
-      })
-      .where("id", "=", fb.id)
-      .execute();
-    pokeTriage(fb.id);
+    await addFollowUp(fb, entry, { reopen: reopened, retriage: true });
     res.json({ ok: true, reopened });
   } catch (err) {
     next(err);

@@ -88,9 +88,10 @@ export function SessionHeadline({
 }) {
   const ref = orderRef ? `${SEP}#${orderRef}` : null;
   const items = count == null ? null : `${count} item${count === 1 ? "" : "s"}`;
-  // What gives way, in order, once the order number has nothing left: the word
-  // "items", then the count, then the date. After the last, the name shrinks.
-  const steps = [...(items ? (["countShort", "countGone"] as const) : []), ...(date ? (["dateGone"] as const) : [])];
+  // What gives way, in order: the order number whole (the line under the header
+  // says it; squeezed it left "Lidl .."), the date, the word "items", the count.
+  // The name and "N items" come first because a bare "9" says nothing (#9269).
+  const steps = [...(orderRef ? (["refGone"] as const) : []), ...(date ? (["dateGone"] as const) : []), ...(items ? (["countShort", "countGone"] as const) : [])];
   const [given, setGiven] = useState(0);
   const box = useRef<HTMLSpanElement>(null);
   const key = [name, nameFits?.join("\u0000"), orderRef, date, count].join("\u0001");
@@ -124,7 +125,7 @@ export function SessionHeadline({
           {name}
         </span>
       )}
-      {ref &&
+      {ref && !gone.has("refGone") &&
         (onEditRef ? (
           <button
             type="button"
@@ -134,12 +135,12 @@ export function SessionHeadline({
               onEditRef();
             }}
             title={`#${orderRef} - edit the order / invoice number`}
-            className="min-w-0 shrink-[100000] truncate font-medium text-muted hover:text-accent transition"
+            className="shrink-0 whitespace-nowrap font-medium text-muted hover:text-accent transition"
           >
             {ref}
           </button>
         ) : (
-          <span data-headline-ref title={`#${orderRef}`} className="min-w-0 shrink-[100000] truncate font-medium text-muted">
+          <span data-headline-ref title={`#${orderRef}`} className="shrink-0 whitespace-nowrap font-medium text-muted">
             {ref}
           </span>
         ))}

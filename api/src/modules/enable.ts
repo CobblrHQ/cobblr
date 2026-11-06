@@ -614,6 +614,11 @@ export function deferredMigrations(): DeferredMigrations | null {
   };
 }
 
+/** Whether the after-listen catch-up still has this workspace. */
+export function isBeingCaughtUp(orgId: string): boolean {
+  return deferred.has(orgId) || deferredInFlight.has(orgId);
+}
+
 /** A failure that says the server had no connection to give, not that the
  *  migration is wrong: the workspace is tried again, later. */
 const outOfConnections = (err: unknown) => isConnectionRefusal(err) || isPoolAcquireTimeout(err);

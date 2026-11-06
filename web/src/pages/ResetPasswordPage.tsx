@@ -6,7 +6,8 @@ import { useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { KeyRound } from "lucide-react";
 import { usePageTitle, PasswordInput } from "@cobblr/platform-web";
-import { ApiError, api, setToken } from "../lib/api";
+import { ApiError, api, setToken, type TokensStillWorking } from "../lib/api";
+import { TokensStillWork } from "../components/TokensStillWork";
 import { CobblestoneMark } from "../CobblestoneMark";
 
 export function ResetPasswordPage() {
@@ -16,6 +17,7 @@ export function ResetPasswordPage() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stillWork, setStillWork] = useState<TokensStillWorking | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -32,6 +34,11 @@ export function ResetPasswordPage() {
     try {
       const res = await api.passwordReset({ token, password: next });
       setToken(res.token);
+      if (res.api_tokens?.count) {
+        setStillWork(res.api_tokens);
+        setBusy(false);
+        return;
+      }
       // Hard-redirect so the AuthContext loads the new session.
       window.location.href = "/";
     } catch (err) {
@@ -53,7 +60,7 @@ export function ResetPasswordPage() {
           </div>
         </div>
 
-        <form onSubmit={submit} className="space-y-3">
+        {stillWork ? <TokensStillWork tokens={stillWork} onDone={() => { window.location.href = "/"; }} /> : <form onSubmit={submit} className="space-y-3">
           <label className="block">
             <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               New password (8+ chars)
@@ -94,7 +101,7 @@ export function ResetPasswordPage() {
           >
             {busy ? "Setting…" : "Reset password and sign in"}
           </button>
-        </form>
+        </form>}
 
         <p className="text-center text-[11px] text-faint dark:text-slate-500">
           <a href="/" className="hover:text-accent transition">Back to sign in</a>

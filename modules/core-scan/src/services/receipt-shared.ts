@@ -2,6 +2,14 @@
 // parsers (receipt-deterministic.ts) and the AI shaper (receipt.ts). Kept in
 // its own module so neither imports the other (no cycle).
 
+/** One printed line of a product the receipt printed more than once. */
+export interface SourceLine {
+  qty: number;
+  line_total: number | null;
+  discount: number | null;
+  order_discount: number | null;
+}
+
 export interface ReceiptLine {
   description: string;
   qty: number;
@@ -71,6 +79,9 @@ export interface ReceiptLine {
    *  takes, so the record's fields fill through the same decode roles a
    *  scanned VIN fills. */
   decoded?: { decoder_id: string; code: string; fields: Record<string, string | number> };
+  /** The lines this one stands for, when the receipt printed the product more
+   *  than once (same-receipt-lines.ts). */
+  source_lines?: SourceLine[];
 }
 
 /** How many of the thing a line is. One, when it was sold by weight: 4.14 lb of
@@ -151,6 +162,13 @@ export function receiptSessionLabel(vendor: string | null | undefined, orderRef?
 /** Inverse of receiptSessionLabel — recover the vendor from an existing session
  *  label. Used when editing the order # of a session created before vendor got its
  *  own column, so we can recompute the label. Null for a plain "Receipt". */
+/** A screenshot's first line is the phone's clock and icons, whatever the engine
+ *  makes of them ("9:12 mm R |", "5:03¢ vl a8"), not a shop. One rule for every
+ *  door that takes a shop from a receipt's first lines (#9272). */
+export function isPhoneStatusBar(line: string): boolean {
+  return /^\d{1,2}:\d{2}\b/.test(line.trim());
+}
+
 export function vendorFromLabel(label: string | null | undefined): string | null {
   const m = (label ?? "").match(/^Receipt · (.+?)(?:\s+#\S+)?$/);
   return m?.[1]?.trim() || null;

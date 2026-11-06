@@ -14,6 +14,7 @@ import { TagRestoreRefused, mergeTagKept, restoreTag } from "../tag-writes.js";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { attachTag, detachTag, ensureTag } from "../tag-writes.js";
 import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
+import { canBeAName } from "@cobblr/platform-contract/readable-text";
 
 let registered = false;
 
@@ -38,6 +39,7 @@ export function registerTagActionHandlers(): void {
     const entity = requireActionEntity(ctx);
     const tagName = String((ctx.args as { tag_name?: unknown } | null)?.tag_name ?? "").trim();
     if (!tagName) return { ok: false, error: "tag_name required" };
+    if (!canBeAName(tagName) || tagName.length > 60) return { ok: false, error: "A tag's name is up to 60 characters, something to read, on one line." };
     const src = splitKind(entity.kind);
     // ALLOW-INTERNAL-NOUN: echoes the caller's own word for a kind that is not here; there are no words for it
     if (!src) return { ok: false, error: `no kind of record called "${entity.kind}" here` };

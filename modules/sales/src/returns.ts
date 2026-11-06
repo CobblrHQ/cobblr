@@ -118,6 +118,7 @@ export async function recordReturn(db: Kysely<SalesDB>, orgId: string, userId: s
 
     const before = orderMoney(got.order, got.lines, got.returns.map((r) => Number(r.refund_amount ?? 0)), shopCurrency, got.payments);
     if (refund !== null && refund > 0) {
+      if (!(roundMoneyAmount(refund, before.currency) > 0)) return { ok: false, code: "nothing_to_record", message: "Say what came back or how much was refunded." };
       if (!(before.paid_amount > 0)) return { ok: false, code: "nothing_paid", message: "Nothing has been paid on this order, so there is nothing to refund." };
       const left = roundMoneyAmount(before.paid_amount - before.refunded, before.currency);
       if (refund > left + 1e-9) return { ok: false, code: "too_much_refund", message: left > 0 ? `A refund can't be more than was paid: ${left} is left to refund.` : "The whole amount paid has already been refunded." };

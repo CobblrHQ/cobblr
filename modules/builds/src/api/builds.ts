@@ -15,10 +15,6 @@ import { madeByWorkOrder } from "../work-orders.js";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import {
   readComponentStock,
-  computeBuildable,
-  computeShortfall,
-  consumeComponents,
-  explodeLeafComponents,
   buildableOf,
   consumePlan,
   planBuild,
@@ -35,11 +31,12 @@ import { addComponent, addStep, changePlan, changeStep, logStepCount, logStepTim
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { shortageSentence } from "../shortage.js";
 import { buildUndoStep } from "../build-undo.js";
+import { moveStock, outputPartIsHere, OUTPUT_PART_GONE } from "./stock-moves.js";
 
 export const buildsRouter = Router({ mergeParams: true });
 
 const BuildCreate = z.object({
-  name: z.string().min(1).max(200),
+  name: z.string().trim().min(1).max(200),
   description: z.string().max(8_000).nullable().optional(),
   output_part_id: z.string().uuid().nullable().optional(),
   /** What the build makes, by name: the inventory part with that name, made
@@ -70,7 +67,7 @@ const ComponentCreate = z
   });
 
 const OperationCreate = z.object({
-  name: z.string().min(1).max(200),
+  name: z.string().trim().min(1).max(200),
   description: z.string().max(8_000).nullable().optional(),
   est_minutes: z.number().nonnegative().nullable().optional(),
   resource_module: z.string().max(64).nullable().optional(),
@@ -78,7 +75,7 @@ const OperationCreate = z.object({
   resource_id: z.string().max(200).nullable().optional(),
 });
 const OperationUpdate = z.object({
-  name: z.string().min(1).max(200).optional(), // none-refused-ok: an operation always has a name
+  name: z.string().trim().min(1).max(200).optional(), // none-refused-ok: an operation always has a name
   description: z.string().max(8_000).nullable().optional(),
   status: z.enum(["todo", "doing", "done", "skipped"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   seq: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
@@ -323,6 +320,17 @@ buildsRouter.delete(
     const db = tenantDb(req);
     const order = await db.selectFrom("builds_planned").select("id").where("build_id", "=", req.params.id!).where("assembly", "is not", null).executeTakeFirst();
     if (order) throw new ActionRefusal("This revision has assembly work order history. Keep it for traceability.");
+    // The line that uses it would go with it, and the build above would go on
+    // pressing with one thing fewer on its list, without a word.
+    const usedBy = await db
+      .selectFrom("builds_components")
+      .innerJoin("builds_builds", "builds_builds.id", "builds_components.build_id")
+      .select("builds_builds.name as name")
+      .where("builds_components.sub_assembly_build_id", "=", req.params.id!)
+      .distinct()
+      .orderBy("name")
+      .execute();
+    if (usedBy.length) throw new ActionRefusal(`${usedBy.map((u) => u.name).join(", ")} ${usedBy.length === 1 ? "uses" : "use"} this as a sub-assembly. Take it off ${usedBy.length === 1 ? "that build" : "those builds"} first.`);
     await db.deleteFrom("builds_builds").where("id", "=", req.params.id!).execute();
     res.status(204).end();
   }),
@@ -337,7 +345,7 @@ buildsRouter.post(
     const parsed = ComponentCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     try {
-      res.status(201).json(await addComponent(tenantDb(req), req.params.id!, parsed.data));
+      res.status(201).json(await addComponent(tenantDb(req), tenantContext(req).org.id, req.params.id!, parsed.data));
     } catch (e) {
       if (e instanceof ActionRefusal) return void res.status(400).json({ error: { code: "invalid_subassembly", message: e.message } });
       throw e;
@@ -549,6 +557,7 @@ buildsRouter.post(
       return;
     }
     if ((build.metadata as { assembly?: unknown }).assembly) throw new ActionRefusal("Use an assembly work order to place, reflow and inspect this board revision.");
+    if (build.output_part_id && !(await outputPartIsHere(ctx.org.id, build.output_part_id))) throw new ActionRefusal(OUTPUT_PART_GONE);
     // Stocked sub-assemblies first, the rest exploded to leaf parts; consume both.
     const plan = await planBuild(ctx.org.id, build.id, qty);
     const consumed = await consumePlan(ctx.org.id, session?.id ?? null, build.id, plan);
@@ -595,23 +604,11 @@ buildsRouter.post(
     }
 
     // If this build produces a tracked part, increment it.
+    let outputNotAdded: string | undefined;
     if (build.output_part_id) {
       const made = (Number(build.output_qty) || 1) * qty;
-      await platform()
-        .actions.invoke("inventory:adjust-stock", {
-          orgId: ctx.org.id,
-          userId: session?.id ?? null,
-          entity: { kind: "inventory:part", id: build.output_part_id },
-          event: {
-            name: "builds.build.completed",
-            payload: {},
-            actor: { user_id: session?.id ?? null, display_name: null, auth_method: "session" },
-            timestamp: new Date().toISOString(),
-            trigger_type: "event",
-          },
-          args: { partId: build.output_part_id, delta: made, reason: `build-output:${build.id}` },
-        })
-        .catch((e) => console.error("[builds] output adjust-stock failed:", (e as Error).message));
+      const moved = await moveStock({ orgId: ctx.org.id, userId: session?.id ?? null, partId: build.output_part_id, delta: made, reason: `build-output:${build.id}`, event: "builds.build.completed" });
+      if (!moved.ok) outputNotAdded = moved.error;
     }
 
     await platform().events.emit("builds.build.completed", {
@@ -623,7 +620,7 @@ buildsRouter.post(
     // Return the run + the fresh buildable so the UI updates without a round-trip.
     const { plan: _next, ...buildable } = await buildableOf(ctx.org.id, build.id);
     // The way back, as the build action hands it: the sheet offers it as an Undo.
-    res.status(201).json({ run, buildable, plan: planLines(plan), undo: buildUndoStep(build.id, qty) });
+    res.status(201).json({ run, buildable, plan: planLines(plan), undo: buildUndoStep(build.id, qty), ...(outputNotAdded ? { output_not_added: outputNotAdded } : {}) });
   }),
 );
 

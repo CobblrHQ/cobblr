@@ -924,9 +924,33 @@ export const CAPABILITIES: Capability[] = [
       "'resolved' card hours later (2026-09-07). A post that forgets its id cannot be found again, and every later edit " +
       "silently falls back to a fresh card",
     owner: "api/src/routes/feedback-card-post.ts",
-    scope: ["api/src/routes/feedback.ts", "api/src/routes/super-admin.ts", "api/src/routes/feedback-card.ts"],
+    scope: ["api/src/routes/feedback.ts", "api/src/routes/super-admin.ts", "api/src/routes/super-admin/*.ts", "api/src/routes/feedback-card.ts"],
     detect: /announce(ReturningMessage)?\(\s*["']feedback\.new["']/,
     use: "postFeedbackCard(feedbackId, payload) from routes/feedback-card-post.ts",
+  },
+  {
+    kind: "owns",
+    id: "feedback:a-follow-up-and-what-it-moves",
+    what: "adding a reporter's words to their feedback item, with the reopen, the re-triage, the card and the time that go with them",
+    why:
+      "four doors wrote the thread and the status themselves and only the chat thread also moved the Discord card, so a " +
+      "reporter answering 'it is still broken' in the app left the team's channel saying resolved",
+    owner: "api/src/routes/feedback-follow-up.ts",
+    scope: ["api/src/routes/feedback.ts", "api/src/routes/super-admin.ts", "api/src/routes/super-admin/*.ts"],
+    detect: /status:\s*"in_progress"\s+as never/,
+    use: "addFollowUp(item, entry, { reopen, retriage }) from routes/feedback-follow-up.ts",
+  },
+  {
+    kind: "owns",
+    id: "builds:a-stock-move-and-its-answer",
+    what: "a stock move builds makes on its own account, with inventory's answer read",
+    why:
+      "inventory refuses with { ok: false } and fails by throwing; three call sites caught the throw, ignored the refusal and " +
+      "went on to say the output had been added and the parts given back, so a build could use its parts and add nothing, in silence",
+    owner: "modules/builds/src/api/stock-moves.ts",
+    scope: ["modules/builds/src/api/*.ts"],
+    detect: /"inventory:adjust-stock"/,
+    use: "moveStock({ orgId, userId, partId, delta, reason, event }) from modules/builds/src/api/stock-moves.ts",
   },
   {
     kind: "owns",

@@ -62,11 +62,13 @@ async function stockRecord(ctx: ActionInvokeContext, db: Kysely<BuildsDB>, id: s
     const spec = specOf(build.metadata);
     if (!spec) throw new ActionRefusal("Choose a board revision.");
     const field = kind === "blank" ? "blank_part_id" : "stencil_id";
-    if (spec[field]) {
+    const targetKind = kind === "blank" ? spec.blank_kind : spec.stencil_kind;
+    // A record deleted since it was linked is no link: holding on to its id answered
+    // Linked for ever, and paste went on asking for a stencil to be linked.
+    if (spec[field] && await platform().entities.lookup(ctx.orgId, targetKind, spec[field]!, { userId: ctx.userId ?? undefined })) {
       if (partId && spec[field] !== partId || style && spec.stencil_style !== style) throw new ActionRefusal("This revision already has a different stencil. Make a new revision for the change.");
       return spec[field]!;
     }
-    const targetKind = kind === "blank" ? spec.blank_kind : spec.stencil_kind;
     const stockKind = await platform().entities.resolveKind(ctx.orgId, targetKind);
     if (!stockKind.instance) throw new ActionRefusal("Choose a named stock collection for this board revision.");
     const writer = await platform().entities.getWriter(ctx.orgId, targetKind);
@@ -107,7 +109,7 @@ export function registerBoardRevisionActions() {
       await sql`select pg_advisory_xact_lock(hashtextextended(${`board-revision:${p.project_id}:${p.revision}`}, 0))`.execute(trx);
       const old = await trx.selectFrom("builds_builds").select(["id", "metadata"]).where(sql<boolean>`metadata->'assembly'->>'project_id' = ${p.project_id} and metadata->'assembly'->>'revision' = ${p.revision}`).executeTakeFirst();
       if (old) {
-        if (specOf(old.metadata)?.fingerprint !== fingerprint) throw new ActionRefusal("That revision already has different files. Give the changed board a new revision name.");
+        if (specOf(old.metadata)?.fingerprint !== fingerprint) throw new ActionRefusal("That revision already has different files or notes. Give the changed board a new revision name.");
         return { build_id: old.id, already_imported: true };
       }
       const build = await trx.insertInto("builds_builds").values({ name: `${project.title} rev ${p.revision}`, notes: p.notes ?? null, metadata: { assembly: spec } } as never).returning("id").executeTakeFirstOrThrow();

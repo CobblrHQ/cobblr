@@ -9,6 +9,7 @@ import { type Kysely } from "kysely";
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { CoreDiscussionDB } from "../db.js";
 import { fanOutComment } from "./after-comment.js";
+import { REPLY_ELSEWHERE, replyStaysInConversation } from "./reply-target.js";
 import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
 
 let registered = false;
@@ -52,6 +53,8 @@ export function registerDiscussionActionHandlers(): void {
     if (!src) return { ok: false, error: `no kind of record called "${entity.kind}" here` };
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreDiscussionDB>;
+    const inReplyTo = typeof args.in_reply_to === "string" && args.in_reply_to.trim() ? args.in_reply_to.trim() : null;
+    if (inReplyTo && !(await replyStaysInConversation(db, { ...src, source_id: entity.id }, inReplyTo))) return { ok: false, error: REPLY_ELSEWHERE };
     const conv = await db
       .insertInto("core_discussion_conversations")
       .values({ ...src, source_id: entity.id })
@@ -74,7 +77,7 @@ export function registerDiscussionActionHandlers(): void {
       .insertInto("core_discussion_comments")
       .values({
         conversation_id: conversationId,
-        in_reply_to: typeof args.in_reply_to === "string" ? args.in_reply_to : null,
+        in_reply_to: inReplyTo,
         author_kind: "user",
         author_user_id: ctx.userId ?? null,
         body,

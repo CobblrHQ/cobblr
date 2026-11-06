@@ -16,6 +16,7 @@ import { FiledQuantity, filedQuantityOf } from "../../services/filed-quantity.js
 import { sql } from "kysely";
 import { z } from "zod";
 import { claimOrderLine } from "../../services/receipt-order.js";
+import { absorbedOrderLines } from "../../services/combine-rows.js";
 import { platform, isActionStep, type ActionUndoStep } from "@cobblr/platform-contract";
 import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
 import { scanPurpose, scanPurposeReview, FILED_INTO_KEY, isPaperworkRow, scanMatchTier } from "@cobblr/platform-contract/scan-triage";
@@ -536,6 +537,16 @@ attachRouter.post(
             partId: null,
           });
           if (released) note = note ? `${note} Its line on the purchase order is unclaimed again.` : "Its line on the purchase order is unclaimed again.";
+          for (const line of await absorbedOrderLines(db, id)) {
+            await claimOrderLine({
+              baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+              slug: ctx.org.slug,
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              orderId: line.orderId,
+              itemId: line.lineId,
+              partId: null,
+            });
+          }
         }
       }
       // Ran out's list line comes off with it (#6526): Undo leaves nothing it added.

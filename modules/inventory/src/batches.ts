@@ -116,6 +116,21 @@ export function consumeOldest(
   return { batches: out.filter((b) => b.qty > 0), consumed };
 }
 
+/**
+ * Everything past its date, ended: every unit of every lot dated before
+ * `today`. A lot dated today is still good today, and a lot with no date has no
+ * claim on a warning, so both stay, as does any fresher lot.
+ */
+export function clearPastDate(
+  batches: Batch[],
+  today: string,
+): { batches: Batch[]; cleared: Batch[]; units: number } {
+  const past = (b: Batch) => b.qty > 0 && !!b.expires_on && b.expires_on < today;
+  const cleared = sortBatches(batches).filter(past).map((b) => ({ ...b }));
+  const kept = sortBatches(batches.filter((b) => !past(b)).map((b) => ({ ...b })));
+  return { batches: kept, cleared, units: batchQty(cleared) };
+}
+
 /** Take `count` back off the lots that arrived last: what a cancelled
  *  purchase put there is the newest stock, so undoing it must not eat the
  *  older lot and leave the cancelled purchase's date on the item (#7877).

@@ -14,9 +14,12 @@
 //   synchronous step, so concurrent callers cannot overshoot together);
 // - at the limit, the least-recently-used fully idle pool the caller allows is
 //   ended to make room, or the caller waits for a connection to come back;
-// - a caller never waits forever: past `waitMs` it opens anyway and says so,
-//   which is the old behaviour, so a caller holding one workspace while it
-//   waits for another can never deadlock the api;
+// - a caller never waits forever: past `waitMs` it may open past the limit, so
+//   a caller holding one workspace while it waits for another can never
+//   deadlock the api, but only into a small `overdraft`. Past that, it waits
+//   as long again and is refused as a pool's timeout refuses. "Opens anyway"
+//   had no bound, so every caller queued at the limit opened at once 15 s
+//   later: 380 connects in flight against a server of 100 (#9280);
 // - a checkout still waiting when its pool is ended is refused at once with
 //   PoolEndedError, never left to pg's timer: pg-pool's end() serves nothing
 //   still queued, so a read that queued just before the limit or a release
@@ -76,6 +79,11 @@ export async function connectThroughEnds(first: Pool, live: () => Promise<Pool>,
   }
 }
 
+/** pg-pool's own words, so a caller reads this refusal as it reads pg-pool's
+ *  (isPoolAcquireTimeout): the workspace comes back later, or the request is
+ *  told the server is busy. */
+const POOL_ACQUIRE_TIMEOUT = "timeout exceeded when trying to connect";
+
 export interface ConnectionLimitOptions {
   /** Connections this api may hold across every workspace pool. */
   limit: () => number;
@@ -86,6 +94,8 @@ export interface ConnectionLimitOptions {
   /** End this pool (it is fully idle when called). */
   evict: (key: string) => Promise<unknown>;
   waitMs?: number;
+  /** How far past the limit a caller that has waited out `waitMs` may open. */
+  overdraft?: () => number;
   onOverrun?: (open: number, limit: number) => void;
 }
 
@@ -111,7 +121,8 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
 
   /** Open a connection on `pool` once the api has room for it. */
   async function connect(key: string, pool: Pool, doConnect: () => Promise<PoolClient>): Promise<PoolClient> {
-    const deadline = Date.now() + (opts.waitMs ?? 15_000);
+    const waitMs = opts.waitMs ?? 15_000;
+    const deadline = Date.now() + waitMs;
     for (;;) {
       if (pool.idleCount > 0 || open() < opts.limit()) return doConnect();
       const v = victim(key);
@@ -119,10 +130,14 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
         await opts.evict(v);
         continue;
       }
-      const left = deadline - Date.now();
+      let left = deadline - Date.now();
       if (left <= 0) {
-        opts.onOverrun?.(open(), opts.limit());
-        return doConnect();
+        if (open() < opts.limit() + (opts.overdraft?.() ?? 1)) {
+          opts.onOverrun?.(open(), opts.limit());
+          return doConnect();
+        }
+        left += waitMs;
+        if (left <= 0) throw new Error(POOL_ACQUIRE_TIMEOUT);
       }
       blocked++;
       try {

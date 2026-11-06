@@ -1,4 +1,4 @@
-import { fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, useToast, useConfirm, usePageTitle, editOf, useRoleAtLeast } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, useToast, useConfirm, usePageTitle, editOf, useRoleAtLeast, useRecordAsOpened } from "@cobblr/platform-web";
 import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 // tracking UI — host mounts <TrackingUI /> at /tracking. A grid of metrics
 // (each with a progress bar + sparkline); clicking one opens a detail MODAL to
@@ -9,8 +9,8 @@ import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { TrendingUp, Plus, Trash2 } from "lucide-react";
-import { TrackingApi, type MetricSummary, type Measurement, type GoalDirection, TrackingApiError } from "./api.js";
+import { TrendingUp, Plus, Trash2, Pencil } from "lucide-react";
+import { TrackingApi, type MetricSummary, type MetricDetail, type Measurement, type GoalDirection, TrackingApiError } from "./api.js";
 import { valueWithUnit } from "@cobblr/platform-contract/money";
 
 export const navItems = [{ label: "Tracking", path: "/tracking", icon: TrendingUp }];
@@ -67,7 +67,7 @@ export function TrackingUI({ orgSlug, getToken }: Props) {
         ))}
       </div>
 
-      {creating && <CreateMetricModal api={api} orgSlug={orgSlug} onClose={() => setCreating(false)} />}
+      {creating && <MetricFormModal api={api} orgSlug={orgSlug} onClose={() => setCreating(false)} />}
       {open && <MetricDetailModal metricId={open} api={api} orgSlug={orgSlug} onClose={() => setOpen(null)} />}
     </div>
   );
@@ -133,23 +133,36 @@ function MetricCard({ metric, api, orgSlug, onOpen, onDelete }: { metric: Metric
   );
 }
 
-function CreateMetricModal({ api, orgSlug, onClose }: { api: TrackingApi; orgSlug: string; onClose: () => void }) {
+/** A new metric, or with `metric` the one being edited. */
+export function MetricFormModal({ api, orgSlug, metric: shown, onClose }: { api: TrackingApi; orgSlug: string; metric?: MetricDetail; onClose: () => void }) {
+  const metric = useRecordAsOpened(shown);
   const qc = useQueryClient();
   const toast = useToast();
-  const [name, setName] = useState("");
-  const [unit, setUnit] = useState("");
-  const [goal, setGoal] = useState("");
-  const [dir, setDir] = useState<GoalDirection>("down");
+  const [name, setName] = useState(metric?.name ?? "");
+  const [unit, setUnit] = useState(metric?.unit ?? "");
+  const [goal, setGoal] = useState(metric?.goal_value != null ? String(metric.goal_value) : "");
+  const [dir, setDir] = useState<GoalDirection>(metric?.goal_direction ?? "down");
 
   const create = useMutation({
-    mutationFn: () => api.createMetric({ name: name.trim(), unit: unit.trim() || undefined, goal_value: goal ? Number(goal) : undefined, goal_direction: dir }),
-    onSuccess: () => { toast.success("Metric created"); void qc.invalidateQueries({ queryKey: ["tracking", orgSlug] }); onClose(); },
+    mutationFn: async () => {
+      if (metric) {
+        await api.updateMetric(metric.id, editOf(metric, { name: name.trim(), unit: unit.trim() || null, goal_value: goal === "" ? null : Number(goal), goal_direction: dir }));
+      } else {
+        await api.createMetric({ name: name.trim(), unit: unit.trim() || undefined, goal_value: goal === "" ? undefined : Number(goal), goal_direction: dir });
+      }
+    },
+    onSuccess: () => {
+      toast.success(metric ? "Metric saved" : "Metric created");
+      void qc.invalidateQueries({ queryKey: ["tracking", orgSlug] });
+      if (metric) void qc.invalidateQueries({ queryKey: ["tracking-detail", metric.id] });
+      onClose();
+    },
     onError: (e) => toast.error(e instanceof TrackingApiError ? e.message : String(e)),
   });
 
   const field = "w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm";
   return (
-    <RecordFormModal open onClose={onClose} title="New metric">
+    <RecordFormModal open onClose={onClose} title={metric ? "Edit metric" : "New metric"}>
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (name.trim()) create.mutate(); }}>
         <FieldPack maxCols={3} items={[
           { need: fieldNeed("name", { control: "text", label: "Name" }), node: <input aria-label="Name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Weight" className={field} /> },
@@ -168,7 +181,7 @@ function CreateMetricModal({ api, orgSlug, onClose }: { api: TrackingApi; orgSlu
         </label>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded bg-subtle dark:bg-slate-800">Cancel</button>
-          <button type="submit" disabled={!name.trim() || create.isPending} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Create</button>
+          <button type="submit" disabled={!name.trim() || create.isPending} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">{metric ? "Save" : "Create"}</button>
         </div>
       </form>
     </RecordFormModal>
@@ -198,8 +211,15 @@ function Sparkline({ points, goal }: { points: Measurement[]; goal: number | nul
 function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: string; api: TrackingApi; orgSlug: string; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const [val, setVal] = useState("");
-  const detail = useQuery({ queryKey: ["tracking-detail", metricId], queryFn: () => api.getMetric(metricId) });
+  const [editing, setEditing] = useState(false);
+  const detail = useQuery({
+    queryKey: ["tracking-detail", metricId],
+    queryFn: () => api.getMetric(metricId),
+    // An address with no metric at it stays that way; asking again only delays saying so.
+    retry: (failures, e) => !(e instanceof TrackingApiError && e.status < 500) && failures < 2,
+  });
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["tracking-detail", metricId] });
@@ -216,14 +236,31 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
     onError: (e) => toast.error(e instanceof TrackingApiError ? e.message : String(e)),
   });
 
+  const remove = useMutation({
+    mutationFn: (id: string) => api.removeMeasurement(id),
+    onSuccess: () => { toast.success("Reading removed"); invalidate(); },
+    onError: (e) => toast.error(e instanceof TrackingApiError ? e.message : String(e)),
+  });
+
   const d = detail.data;
+  if (d && editing) return <MetricFormModal api={api} orgSlug={orgSlug} metric={d} onClose={() => setEditing(false)} />;
+  if (detail.isError) {
+    const missing = detail.error instanceof TrackingApiError && detail.error.status < 500;
+    return (
+      <RecordFormModal open onClose={onClose} title="Metric">
+        <p className="text-sm text-muted">{missing ? "There is no metric at this address. It may have been deleted." : `This metric could not be read: ${detail.error.message}`}</p>
+      </RecordFormModal>
+    );
+  }
   return (
     <RecordFormModal open onClose={onClose} title={d?.name ?? "Metric"} subtitle={d?.goal_value != null ? `goal ${valueWithUnit(Number(d.goal_value), d.unit)} (${d.goal_direction})` : undefined}>
       <div className="space-y-3">
-        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (val !== "") log.mutate(Number(val)); }}>
-          <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} type="number" step="any" placeholder={`Log a value${d?.unit ? ` (${d.unit})` : ""}…`} className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
+        {!d && <div className="text-sm text-muted">Loading…</div>}
+        {d && <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (val !== "") log.mutate(Number(val)); }}>
+          <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} type="number" step="any" aria-label={`Log a value for ${d.name}`} placeholder={`Log a value${d.unit ? ` (${d.unit})` : ""}…`} className="min-w-0 flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
           <button type="submit" disabled={val === "" || log.isPending} className="px-3 py-2 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Log</button>
-        </form>
+          <button type="button" onClick={() => setEditing(true)} className="inline-flex items-center gap-1 px-3 py-2 text-xs rounded bg-subtle dark:bg-slate-800"><Pencil size={12} /> Edit</button>
+        </form>}
 
         {d && <ProgressBar p={d.progress} />}
         {d && <Sparkline points={d.measurements} goal={d.goal_value} />}
@@ -231,9 +268,26 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
         {d && d.measurements.length > 0 && (
           <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded max-h-48 overflow-auto">
             {[...d.measurements].reverse().map((m: Measurement) => (
-              <li key={m.id} className="flex justify-between px-3 py-1.5 text-sm">
-                <span className="font-medium">{valueWithUnit(Number(m.value), d.unit)}</span>
-                <span className="text-xs text-muted">{new Date(m.measured_at).toLocaleDateString()}</span>
+              <li key={m.id} className="flex items-start gap-2 px-3 py-1.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium [overflow-wrap:anywhere]">{valueWithUnit(Number(m.value), d.unit)}</div>
+                  {m.note && <div className="text-xs text-muted [overflow-wrap:anywhere]">{m.note}</div>}
+                </div>
+                <span className="shrink-0 text-xs text-muted">{new Date(m.measured_at).toLocaleDateString()}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove the reading ${valueWithUnit(Number(m.value), d.unit)} from ${new Date(m.measured_at).toLocaleDateString()}`}
+                  disabled={remove.isPending}
+                  title="Remove this reading"
+                  className="-my-1.5 inline-flex h-11 w-11 shrink-0 items-center justify-center text-slate-400 hover:text-red-500"
+                  onClick={async () => {
+                    if (await confirm({ title: `Remove ${valueWithUnit(Number(m.value), d.unit)}?`, message: "This takes the reading off the metric.", confirmLabel: "Remove", destructive: true })) {
+                      remove.mutate(m.id);
+                    }
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
               </li>
             ))}
           </ul>

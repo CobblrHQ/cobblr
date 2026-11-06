@@ -6,6 +6,7 @@ import { routeWhereKept, type KeptTable } from "./kept-route.js";
 import type { CoreScanDB } from "../db.js";
 import type { Kysely } from "kysely";
 import { selfOrigin } from "@cobblr/platform-contract/self-api";
+import { advertNamesCandidate, filedBooksStillNamedByAnAdvert } from "../heal-books-named-by-an-advert.js";
 
 export function tidyHome(item: PerceivedItem, current: ScanMenuEntry, menu: ScanMenuEntry[], twins: KeptTable[]): ScanMenuEntry | null {
   const candidates = heuristicMatch(item, menu);
@@ -68,6 +69,10 @@ async function bestHomes(ctx: TidyFinderContext): Promise<TidyCandidate[]> {
 
 export function registerScanTidyFinders(): void {
   platform().tidy.registerFinder({ id: "core-scan.best-homes", module: "core-scan", find: bestHomes });
+  platform().tidy.registerFinder({ id: "core-scan.advert-named-books", module: "core-scan", async find(ctx) {
+    const db = await platform().tenants.getDb(ctx.orgId);
+    return advertNamesCandidate(await filedBooksStillNamedByAnAdvert(ctx.orgId, db as never));
+  } });
   platform().tidy.registerFinder({ id: "core-scan.unfiled", module: "core-scan", async find(ctx) {
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreScanDB>;
     const rows = await db.selectFrom("core_scan_inbox_items").select(["id", "suggested_name"]).where("status", "=", "pending").where("created_at", "<", new Date(ctx.now.getTime() - 3 * 86400000)).execute();

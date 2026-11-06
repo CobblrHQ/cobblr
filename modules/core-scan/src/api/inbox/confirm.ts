@@ -25,6 +25,7 @@ import { type Request } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { claimOrderLine } from "../../services/receipt-order.js";
+import { absorbedOrderLines } from "../../services/combine-rows.js";
 import { mapRoledFacts, platform, roledFactsPatch, roledNativePatch, traitAxisValue } from "@cobblr/platform-contract";
 import { entityKindOf } from "@cobblr/platform-contract/entity-kind";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -1047,6 +1048,20 @@ confirmRouter.post(
           partId: created.id,
           subjectKind: kindKey,
         });
+      }
+      // Lines folded into this row are filed with it.
+      if (tok) {
+        for (const line of await absorbedOrderLines(db, row.id)) {
+          await claimOrderLine({
+            baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+            slug: ctx.org.slug,
+            headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+            orderId: line.orderId,
+            itemId: line.lineId,
+            partId: created.id,
+            subjectKind: kindKey,
+          });
+        }
       }
     }
 

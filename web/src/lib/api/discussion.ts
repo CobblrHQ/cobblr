@@ -114,6 +114,8 @@ export const discussionApi = {
       conversation: DiscussionConversation | null;
       comments: DiscussionComment[];
       count: number;
+      /** Whether you hear about new comments here. */
+      following: boolean;
     }>(
       "GET",
       `/orgs/${slug}/modules/core-discussion/comments?${new URLSearchParams(src).toString()}`,

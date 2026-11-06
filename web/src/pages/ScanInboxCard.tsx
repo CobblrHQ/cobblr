@@ -1,5 +1,5 @@
 import { productName, AllergenPills } from "@cobblr/platform-web";
-import { sessionSaidPlace, sessionSaidVendor, type SessionSays } from "../lib/sessionSays";
+import { sessionSaidCategory, sessionSaidPlace, sessionSaidVendor, sessionSharesWhy, type SessionSays } from "../lib/sessionSays";
 import { NumberStepper, RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
 import { RAN_OUT_HINT, RAN_OUT_LABEL, useRanOut } from "./scanRanOut";
 // The scan inbox's DESKTOP card, and the pieces only it renders: the
@@ -86,7 +86,7 @@ import { ScanItemScreen, screenIcons, type ScanItemScreenAction } from "./ScanIt
 import { scanNotesPlacement } from "../lib/scanNotes";
 import { ScanCardCommit } from "../components/ScanCardCommit";
 import { ScanToolMenu } from "../components/ScanToolMenu";
-import { BOX_STATE_EFFECT } from "@cobblr/platform-contract/scan-tools";
+import { BOX_STATE_EFFECT, soldByWeightWords } from "@cobblr/platform-contract/scan-tools";
 import { displayIdentity, displayName, modelNameBeside, compactCardFields, humanFieldLabel } from "@cobblr/platform-contract/display-identity";
 import { useHeldField, useHeldRecord } from "../lib/scanHeldField";
 import { ScanTitleInPlace } from "./ScanTitleInPlace";
@@ -2444,9 +2444,11 @@ export function InboxCard({
     if (filedInto) {
       if (!sessionSaidPlace(sessionSays, filingLabel(filedInto))) segs.push(`📍 ${filingLabel(filedInto)}`);
     } else if (item.scan_area) segs.push(`📍 ${item.scan_area}`);
-    else if (suggested && !sessionSaidPlace(sessionSays, suggested.place)) segs.push(`📍 ${suggested.place} · ${suggested.why}`);
+    else if (suggested && !sessionSaidPlace(sessionSays, suggested.place)) segs.push(sessionSharesWhy(sessionSays, suggested.why) ? `📍 ${suggested.place}` : `📍 ${suggested.place} (${suggested.why})`);
     const ps = (item.suggested_metadata as { pack_size?: number } | null)?.pack_size;
     if (ps) segs.push(`${ps}-pack`);
+    const sold = soldByWeightWords(item.suggested_metadata);
+    if (sold) segs.push(sold);
     if (boxState) segs.push(boxState === "empty-box" ? "📦 empty box" : "📦 in box");
     if ((item.suggested_metadata as { split_from?: string } | null)?.split_from) segs.push("✂ from split");
     return segs;
@@ -2740,7 +2742,7 @@ export function InboxCard({
       Object.entries(liveFields)
         .filter(([k, v]) => {
           if (v == null || String(v).trim() === "") return false;
-          if (isQuietDefault(k, v) || isImpliedByPeer(k, v, liveFields)) return false;
+          if (isQuietDefault(k, v) || isImpliedByPeer(k, v, liveFields) || sessionSaidCategory(sessionSays, String(v))) return false;
           return !isStatedByReceipt(k, v, item.suggested_metadata as { receipt_date?: unknown; receipt_vendor?: unknown } | null);
         })
         .map(([k, v]) => ({ name: k, label: dest ? menuFieldLabel(menu, dest, k) : null, value: v })),

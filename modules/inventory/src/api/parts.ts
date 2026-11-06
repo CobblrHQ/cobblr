@@ -17,7 +17,7 @@ import { z } from "zod";
 import { imagePathField } from "@cobblr/platform-contract/image-reference";
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import { csvCell } from "@cobblr/platform-contract/csv";
-import { daysUntilField, platform, stockDisclosureFromConfig, unreadableFieldsOf, type FilterPredicate } from "@cobblr/platform-contract";
+import { ActionRefusal, daysUntilField, platform, stockDisclosureFromConfig, unreadableFieldsOf, type FilterPredicate } from "@cobblr/platform-contract";
 import { asMeasure } from "@cobblr/platform-contract/measure";
 import { formatMoneyPlain, moneyStorageOf, roundMoneyAmount, storedCents } from "@cobblr/platform-contract/money";
 import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
@@ -1688,6 +1688,12 @@ partsRouter.delete(
     const session = sessionUser(req);
 
     const deleted = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      // Taking the row takes its reservations with it, and a kit that loses a
+      // reel still reads ready and goes on to build without it. A kit's
+      // reservation locks this row first, so the two cannot cross.
+      await trx.selectFrom("inventory_parts").select("id").where("id", "=", id).where("instance", "=", instanceOf(req)).forUpdate().executeTakeFirst();
+      const held = await trx.selectFrom("inventory_allocations").select(["target_line"]).where("part_id", "=", id).where("status", "=", "reserved").execute();
+      if (held.length) throw new ActionRefusal(held.some((r) => r.target_line === "assembly-kit") ? "An assembly work order has this reserved. Cancel that order first, then delete it." : "This is reserved. Release its reservation first, then delete it.");
       const row = await trx
         .deleteFrom("inventory_parts")
         .where("id", "=", id)

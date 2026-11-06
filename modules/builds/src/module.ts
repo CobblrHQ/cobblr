@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.3.1",
+  version: "0.3.2",
   displayName: "Builds",
   description:
     "Describe what you make as a recipe of parts, see how many you could build right now and what runs out first, and take the parts from stock when you build one.",
@@ -45,7 +45,7 @@ export default defineModule({
       {
         // AI-CRUD: native assembly actions create and advance these planned work orders; generic edits cannot replace their workflow.
         id: "builds:work-order", displayName: "Assembly work order", displayNamePlural: "Assembly work orders", icon: "clipboard-list", profile: "digital-record", getEndpoint: "/assembly-orders/{id}",
-        fields: [{ name: "name", type: "text", role: "title", required: true }, { name: "state", type: "text" }, { name: "assembly_finish_proof", type: "object", readOnly: true }], exposableFields: ["name", "state", "assembly_finish_proof"],
+        fields: [{ name: "name", type: "text", role: "title", required: true }, { name: "state", type: "text" }, { name: "assembly_finish_proof", type: "object", readOnly: true }, { name: "assembly_kit_proof", type: "object", readOnly: true }], exposableFields: ["name", "state", "assembly_finish_proof", "assembly_kit_proof"],
       },
       {
         id: "builds:build",

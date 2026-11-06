@@ -18,11 +18,10 @@ import { api, type AttentionFeedItem } from "../lib/api";
 import { datedCounts, type DatedCardModel, type DatedGroup } from "../lib/attention-cards";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { countOf } from "@cobblr/platform-contract/plural";
+import { STALE_DAYS } from "@cobblr/platform-contract/day";
+import { useClearExpired } from "./ClearExpired";
 // The merge sheet loads when it is opened (#4945).
 const DuplicateRecordsSheet = lazy(() => import("../pages/DuplicateRecordsSheet").then((m) => ({ default: m.DuplicateRecordsSheet })));
-
-/** Days past its date after which a row is stale: "+3 days" stops being offered. */
-const STALE_DAYS = 14;
 
 type Entry = NonNullable<AttentionFeedItem["entries"]>[number];
 /** An action's way back: the invoke route answers a list of steps, run in
@@ -49,6 +48,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
   const toast = useToast();
   const confirm = useConfirm();
   const routeFor = useDetailRoute(slug);
+  const clearExpired = useClearExpired(slug, card.collection.key, card.collection.clear?.action_id);
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const { collection } = card;
   // Two of these rows for one thing ("Roma Tomatoes" and "Tomatoes Roma",
@@ -133,6 +133,16 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
     const ids = (card.overdue?.all_ids ?? []).filter((id) => !gone.has(id));
     const kind = card.overdue?.entries?.[0]?.record?.kind;
     if (!kind || ids.length === 0) return;
+    // Where the collection goes off, one step ends every unit of every lot past
+    // its date, in one transaction with one Undo (the per-record loop below
+    // ended one unit each, and a dropped connection left it half done).
+    if (collection.clear) {
+      setBusy(`all:${f.finishes}`);
+      const cleared = await clearExpired({ partIds: ids }, f.finishes === "used" ? "used" : "spoiled");
+      setBusy(null);
+      for (const id of cleared) hide(id, true);
+      return;
+    }
     const verb = f.finishes === "used" ? "used up" : "tossed";
     const ok = await confirm({
       title: `Mark all ${ids.length} as ${verb}?`,

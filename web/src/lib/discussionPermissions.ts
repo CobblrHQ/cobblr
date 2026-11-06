@@ -36,3 +36,15 @@ export function canEditComment(
     comment.status === "posted"
   );
 }
+
+/** You may remove your own comment; an owner or admin may remove anyone's. The
+ *  server's DELETE /:id rule, so nobody is offered a refusal. */
+export function canRemoveComment(
+  comment: Pick<DiscussionComment, "author_kind" | "author_user_id" | "deleted_at">,
+  selfUserId: string | null | undefined,
+  role: string | null | undefined,
+): boolean {
+  if (comment.deleted_at) return false;
+  if (roleSatisfies(role, ["admin"])) return true;
+  return !!selfUserId && comment.author_user_id === selfUserId;
+}

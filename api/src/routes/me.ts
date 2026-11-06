@@ -7,6 +7,8 @@ import { childTerms } from "../auth/token-lineage.js";
 import { OPERATOR_ONLY_ACTIONS, IMPORT_ROW } from "../platform/activity.js";
 import { activityPresentation } from "@cobblr/platform-contract/activity-summary";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
+import { apiTokensStillWorkingAfterChange } from "../platform/api-tokens-after-password.js";
+import { endApiTokensRouter } from "./me/end-api-tokens.js";
 import { nameActivityRows } from "../platform/activity-subjects.js";
 import { describeChanges } from "../platform/history-describe.js";
 import { historyBag } from "../platform/record-history.js";
@@ -70,6 +72,7 @@ import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 import { REPLY_ACTION_ID, REPLY_MAX } from "@cobblr/platform-contract/notifications";
 
 export const meRouter = Router();
+meRouter.use(endApiTokensRouter);
 
 meRouter.get("/me", requireAuth, async (req, res) => {
   const userId = req.session!.id;
@@ -426,7 +429,7 @@ meRouter.post("/me/password", requireAuth, async (req, res, next) => {
     // Return the re-minted token so the client can keep THIS session alive
     // (all prior tokens were just revoked). Clients that ignore it simply get
     // logged out on their next request — also safe.
-    res.status(200).json({ token: freshToken });
+    res.status(200).json({ token: freshToken, api_tokens: await apiTokensStillWorkingAfterChange(req.session!.id) });
   } catch (err) {
     next(err);
   }

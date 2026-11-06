@@ -25,6 +25,7 @@ import type { OrderPageSummary } from "@cobblr/platform-contract/order-page-link
 import { readFailureFrom, readFailureHistory, readHistoryAfterSuccess } from "../../services/receipt-read-state.js";
 import { cleanOrderRef, receiptDedupKey, receiptContentKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod, type ReceiptSource } from "../../services/receipt-shared.js";
 import { doubtedChecks, priceDoubted, sellerDoubted } from "../../services/receipt-facts.js";
+import { withSameLinesCombined } from "../../services/same-receipt-lines.js";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
 import { optionalField, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 import { INTERNAL_API } from "./shared.js";
@@ -61,6 +62,12 @@ function checkValuesOf(receipt: { vendor?: string | null; seller?: string | null
 // every line rides the same matchmaker + confirm flow a barcode/photo scan
 // does — a receipt becomes N parts without retyping. The file is uploaded
 // separately via core-files (like image_file_id), keeping this body small.
+
+/** The receipt as its rows and its purchase are made from: the same product at
+ *  the same price is one line, whichever door brought it in (#9268). */
+function oneLinePerProduct(receipt: ParsedReceipt, lineImages: readonly EmailLineImage[] | null): ParsedReceipt {
+  return withSameLinesCombined(receipt, lineImagesFor(receipt.items.map((l) => (l.kind ? "" : l.description)), lineImages ?? []));
+}
 
 /** Insert one inbox row per receipt line (source_kind "receipt", shared
  *  receipt_group_id, attached to the receipt's own batch) and kick off matching —
@@ -198,6 +205,7 @@ async function materializeReceiptLines(opts: {
           ...(photos[lineAt] ? { order_line_image: photos[lineAt] } : {}),
           unit_price: line.unit_price,
           line_total: line.line_total,
+          ...(line.source_lines ? { source_lines: line.source_lines } : {}),
           ...(line.weight !== null && line.weight !== undefined
             ? { weight: line.weight, weight_unit: line.weight_unit }
             : {}),
@@ -390,7 +398,8 @@ export async function fileReceiptRead(
   // A code taken off the whole order is shared across its lines, so each
   // line's cost is what it cost (shareOrderDiscount, #5350).
   const { method } = result;
-  const receipt = shareOrderDiscount(result.receipt);
+  const printed = shareOrderDiscount(result.receipt);
+  const receipt = oneLinePerProduct(printed, parsed.data.line_images ?? null);
   noteScanCaptured(ctx.org.id, session.id, "receipt");
   const orderRef = cleanOrderRef(receipt.order_ref);
 
@@ -400,7 +409,8 @@ export async function fileReceiptRead(
   // count (a batch with at least one non-discarded item); a receipt you threw
   // away re-imports. `force` (user chose "import anyway") skips the guard.
   const dupKey = receiptDedupKey(receipt.vendor, orderRef);
-  const contentKey = receiptContentKey(receipt);
+  // As printed, so a copy read before lines were combined is still recognised.
+  const contentKey = receiptContentKey(printed);
   if (!parsed.data.force) {
     const prior = await priorSessionOfOrder(db as never, dupKey, contentKey, parsed.data.file_id);
     if (prior) {
@@ -746,7 +756,7 @@ receiptsRouter.post(
     // A code taken off the whole order is shared across its lines, so each
     // line's cost is what it cost (shareOrderDiscount, #5350).
     const { method } = result;
-    const receipt = shareOrderDiscount(result.receipt);
+    const receipt = oneLinePerProduct(shareOrderDiscount(result.receipt), Array.isArray(batch.line_images) ? (batch.line_images as EmailLineImage[]) : null);
 
     // Drop only the still-pending lines of this batch (keep confirmed/discarded
     // history), refresh the session label from the new vendor, then re-insert.

@@ -100,6 +100,8 @@ export interface BuildRunResult {
   buildable: Buildable;
   /** The way back, as the build action hands it: run to take the build back. */
   undo?: { action_id: string; args?: Record<string, unknown>; entity_kind?: string; entity_id?: string };
+  /** Why what this run made did not reach stock, when it did not. */
+  output_not_added?: string;
 }
 
 // Genealogy / traceability (rung 8)

@@ -1,4 +1,5 @@
 import { FieldAggregateSchema } from "@cobblr/platform-contract/field-aggregate";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { CLARIFIER_SUFFIX, FIELD_KEY_PATTERN, isReservedFieldKey } from "@cobblr/platform-contract/field-key";
 import { forgetPerRequest, perReadRequest } from "../lib/request-context.js";
 // The ONE place that answers "which custom field defs apply to this entity kind?"
@@ -218,6 +219,13 @@ export const FieldRenderer = z.enum([
   "qr",
 ]);
 
+/** A dropdown's choices as a person means them: a blank offers nothing to pick,
+ *  and the same one twice is one. Bounded because every form draws them all. */
+export const FieldChoices = z
+  .array(z.string().max(120))
+  .max(5000)
+  .transform((list) => [...new Set(list.map((c) => c.trim()).filter(Boolean))]);
+
 export const FieldDefCreate = z.object({
   entity_kind: z.string(),
   // `_note` is reserved: a choice field's one-off clarifier lives at
@@ -230,12 +238,12 @@ export const FieldDefCreate = z.object({
     .refine((n) => !isReservedFieldKey(n), {
       message: `field names cannot end in ${CLARIFIER_SUFFIX} (reserved for a choice field's clarifier)`,
     }),
-  display_label: z.string().min(1),
+  display_label: readableNameField(160),
   type: FieldTypeSchema,
   required: z.boolean().optional(),
   position: z.number().int().optional(),
   /** When type='text', renders as a dropdown of these choices. */
-  choices: z.array(z.string().max(120)).optional(),
+  choices: FieldChoices.optional(),
   /** Built-in renderer id for how the value should be drawn on
    *  detail pages + list rows. Null/omit = plain text. */
   renderer: FieldRenderer.nullable().optional(),
@@ -481,13 +489,13 @@ async function duplicateFieldMessage(orgId: string, entityKind: string, label: s
 export const RETYPEABLE: ReadonlySet<string> = new Set(RETYPEABLE_FIELD_TYPES);
 
 export const FieldDefPatch = z.object({
-  display_label: z.string().min(1).optional(),
+  display_label: readableNameField(160).optional(),
   /** Change the field's type (see RETYPEABLE). Values already stored stay as
    *  they are; the retype preview says first which ones would not fit. */
   type: FieldTypeSchema.optional(),
   required: z.boolean().optional(),
   position: z.number().int().optional(),
-  choices: z.array(z.string().max(120)).nullable().optional(),
+  choices: FieldChoices.nullable().optional(),
   renderer: FieldRenderer.nullable().optional(),
   template: z.string().max(2000).nullable().optional(),
   /** Only meaningful on type='number' defs — validated against the row's

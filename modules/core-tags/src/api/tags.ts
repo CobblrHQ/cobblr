@@ -10,6 +10,7 @@ import { TagRestoreRefused, deleteTagKept, mergeTagKept, restoreTag } from "../t
 import { isQuiet, quietReason, rankTags, type TagUsage } from "../relevance.js";
 import { attachTag, createTag, detachTag, ensureTag, TagNameTaken, updateTag, type Writer } from "../tag-writes.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 
 const writer = (req: Parameters<typeof tenantContext>[0]): Writer => ({ orgId: tenantContext(req).org.id, userId: sessionUser(req)?.id ?? null });
 
@@ -20,8 +21,16 @@ function nameTaken(res: import("express").Response, err: TagNameTaken): void {
 
 export const tagsRouter = Router({ mergeParams: true });
 
+/** A parent has to be a tag that is there. Answers for the route when it is not. */
+async function parentIsThere(req: Parameters<typeof tenantDb>[0], res: import("express").Response, parentId: string | null | undefined): Promise<boolean> {
+  if (!parentId) return true;
+  if (await tenantDb(req).selectFrom("core_tags_tags").select("id").where("id", "=", parentId).executeTakeFirst()) return true;
+  res.status(400).json({ error: { code: "invalid_parent", message: "That parent tag is not here any more." } });
+  return false;
+}
+
 const TagCreate = z.object({
-  name: z.string().min(1).max(60),
+  name: readableNameField(60),
   color: z.string().max(40).nullable().optional(),
   parent_id: z.string().uuid().nullable().optional(),
   icon: z.string().max(16).nullable().optional(),
@@ -35,7 +44,7 @@ const TagMerge = z.object({ into_tag_id: z.string().uuid() });
 
 
 const AttachBody = z.object({
-  tag_name: optionalField(z.string().min(1).max(60)),
+  tag_name: optionalField(readableNameField(60)),
   tag_id: z.string().uuid().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   color: z.string().max(40).nullable().optional(),
   source_module: z.string().min(1).max(80),
@@ -53,6 +62,7 @@ tagsRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = TagCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
+    if (!(await parentIsThere(req, res, parsed.data.parent_id))) return;
     try {
       res.status(201).json(await createTag(tenantDb(req), writer(req), parsed.data));
     } catch (err) {
@@ -148,6 +158,7 @@ tagsRouter.patch(
         res.status(400).json({ error: { code: "invalid_parent", message: "A tag can't be its own parent." } });
         return;
       }
+      if (!(await parentIsThere(req, res, newParent))) return;
       let cursor: string | null = newParent;
       const seen = new Set<string>();
       while (cursor) {

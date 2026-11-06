@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "tracking",
-  version: "0.2.1",
+  version: "0.2.3",
   displayName: "Tracking",
   description:
     "Log a number over time toward a goal (weight, runs, a budget) and see the trend.",
@@ -25,6 +25,13 @@ export default defineModule({
   schema: { tablePrefix: "tracking_", migrationsDir: "./migrations" },
 
   api: () => import("./api/index.js"),
+
+  lifecycle: {
+    onBoot: async () => {
+      const { registerUnreadableMetricsHeal } = await import("./heal-unreadable-metrics.js");
+      registerUnreadableMetricsHeal();
+    },
+  },
 
   dependencies: [],
 

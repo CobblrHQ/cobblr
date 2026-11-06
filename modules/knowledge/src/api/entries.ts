@@ -1,7 +1,7 @@
 // knowledge CRUD — Knowledge Base entries. Mounted at
 //   /api/v1/orgs/:slug/modules/knowledge/
 // Routes:
-//   GET    /entries            list entries, a page at a time (newest first;
+//   GET    /entries            list entries, a page at a time (pinned first, then newest;
 //                              ?pinned=1, ?kind=…, ?q=…, ?limit, ?offset) + total
 //   POST   /entries            create an entry
 //   GET    /entries/:id        one entry
@@ -32,13 +32,14 @@ entriesRouter.get(
     if (typeof req.query.kind === "string" && req.query.kind) q = q.where("kind", "=", req.query.kind);
     if (typeof req.query.q === "string" && req.query.q.trim()) {
       const like = `%${likeEscape(req.query.q.trim())}%`;
-      q = q.where((eb) => eb.or([eb("title", "ilike", like), eb("body", "ilike", like)]));
+      q = q.where((eb) => eb.or([eb("title", "ilike", like), eb("body", "ilike", like), eb("code", "ilike", like)]));
     }
     // A page and the collection's count: a knowledge base past 500 entries
     // used to answer the newest 500 and nothing else.
     const page = readListPage(req.query);
     const rows = await q
       .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
+      .orderBy("pinned", "desc")
       .orderBy("updated_at", "desc")
       .orderBy("id")
       .limit(page.limit)
@@ -180,11 +181,12 @@ entriesRouter.post(
     if (!requireRole(req, res, "member")) return;
     const file = uploadedFile(req);
     if (!file) return void res.status(400).json({ error: { code: "no_file", message: "No file uploaded." } });
+    if (!(file.mimetype || "").startsWith("image/")) return void res.status(415).json({ error: { code: "not_an_image", message: "That file is not a picture. Choose a PNG, JPEG or WebP." } });
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const exists = await db
       .selectFrom("knowledge_entries")
-      .select("id")
+      .selectAll()
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
     if (!exists) return void res.status(404).json({ error: { code: "not_found", message: "Entry not found." } });
@@ -194,11 +196,22 @@ entriesRouter.post(
     });
     if (!w) return void res.status(500).json({ error: { code: "write_failed", message: "Could not store the image." } });
     const image_path = `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${w.fileId}/raw`;
-    await db
-      .updateTable("knowledge_entries")
-      .set({ image_path, updated_at: new Date() })
-      .where("id", "=", req.params.id!)
-      .execute();
+    await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      await trx
+        .updateTable("knowledge_entries")
+        .set({ image_path, updated_at: new Date() })
+        .where("id", "=", req.params.id!)
+        .execute();
+      await log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "entry_updated",
+        ref: { module: "knowledge", entityType: "entry", entityId: exists.id },
+        diff: { image_path },
+        before: exists,
+      });
+    });
+    void platform().events.emit("knowledge.entry.updated", { orgId: ctx.org.id, entryId: exists.id });
     res.json({ image_path });
   }),
 );

@@ -74,6 +74,9 @@ export interface ScanIntakeOptions {
    *  the `?batch=` the page is scoped to); "fresh": a new session for this
    *  selection, minted here. */
   session: "inbox" | "fresh";
+  /** The page shows the new row at once, so a toast would only cover the rows
+   *  beneath it (#9269). */
+  rowSaysSo?: boolean;
   /** The `?batch=` the inbox is scoped to, when it is: uploads join it. */
   batchId?: string | null;
   /** `identify_available` from /ai-status, for the one case that asks. */
@@ -205,7 +208,9 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
       const looking = opts.identifyAvailable !== false;
       // A picture the read already knows is a receipt is never announced as a
       // photo being identified: the toast and the row say one thing.
-      if (ok === 1 && receipts === 1) toast.success("Receipt added - reading its lines");
+      if (opts.rowSaysSo) {
+        // The row is the announcement.
+      } else if (ok === 1 && receipts === 1) toast.success("Receipt added - reading its lines");
       else if (ok === 1) toast.success(looking ? "Photo added - AI is identifying it" : "Photo added - name it in the inbox");
       else if (ok > 1) toast.success(looking ? `${ok} photos added as one batch - AI is identifying them` : `${ok} photos added as one batch - name them in the inbox`);
     } finally {

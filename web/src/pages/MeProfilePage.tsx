@@ -12,6 +12,8 @@
 // Sections + leaves live in lib/account-nav.ts, so the hub cannot drift from
 // the routes.
 
+import { TokensStillWork } from "../components/TokensStillWork";
+import type { TokensStillWorking } from "../lib/api";
 import { useOfferedAccountFeatures } from "../lib/accountFeatures";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -540,6 +542,7 @@ function LayoutSection() {
 }
 
 function PasswordSection({ onChanged }: { onChanged: () => void }) {
+  const [stillWork, setStillWork] = useState<TokensStillWorking | null>(null);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -547,11 +550,12 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
   const change = useMutation({
     mutationFn: () =>
       api.changeMyPassword({ current_password: current, new_password: next }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       onChanged();
       setCurrent("");
       setNext("");
       setConfirm("");
+      setStillWork(res?.api_tokens?.count ? res.api_tokens : null);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -569,6 +573,7 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
       <h2 className="text-sm font-medium text-content dark:text-slate-300 flex items-center gap-2">
         <KeyRound size={14} /> Password
       </h2>
+      {stillWork && <TokensStillWork tokens={stillWork} onDone={() => setStillWork(null)} />}
       <label className="block">
         <div className="text-xs text-muted mb-1">Current password</div>
         <PasswordInput

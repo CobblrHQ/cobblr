@@ -27,15 +27,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useLater, useSentWords, useToast, useConfirm, relativeTime, ContextChip, discussionRecordOf, openDiscussion, walkPages } from "@cobblr/platform-web";
+import { useLater, useSentWords, useToast, useConfirm, relativeTime, ContextChip, discussionRecordOf, openDiscussion } from "@cobblr/platform-web";
 import { clearChatSelection, useChatSelection } from "../lib/chat-context";
 import { api, ApiError, type DiscussionComment } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
-import { canEditComment, canResolveConversation } from "../lib/discussionPermissions";
+import { canEditComment, canRemoveComment, canResolveConversation } from "../lib/discussionPermissions";
 import { useCurrentRecord } from "../lib/useCurrentRecord";
 import { RailTabContent, useRailTab } from "./SideRail";
-import { MentionText, useMentionPicker } from "./MentionText";
+import { MentionText, mentionWords, useMentionPicker } from "./MentionText";
 import { workspaceRoomSource, isWorkspaceRoom } from "@cobblr/platform-contract/workspace-room";
 import { discordConnectable } from "../lib/discord-connect";
 import { useDiscordStatus } from "../lib/useDiscordStatus";
@@ -142,7 +142,7 @@ function Quote({
             <span className="font-medium">
               {target.author_kind === "assistant" ? "Cobb" : target.author_kind === "guest" ? (target.author_name ?? "Someone you share with") : names(target.author_user_id ?? "")}
             </span>
-            : {target.body}
+            : {mentionWords(target.body, names)}
           </>
         )}
       </span>
@@ -401,24 +401,9 @@ export function DiscussionTab() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't change that."),
   });
 
-  // The inbox already computes this per record; reading it from there avoids a
-  // second endpoint that could answer differently.
-  const inbox = useQuery({
-    queryKey: ["discussion-inbox", activeSlug],
-    // Every page: a record further down the inbox is followed all the same.
-    queryFn: () => walkPages((offset, limit) => api.discussionInbox(activeSlug, undefined, { offset, limit })),
-    enabled: !!activeSlug && active,
-    staleTime: 30_000,
-  });
-  // `src` is null on a page that is not a record, which is exactly the case
-  // this hook has to keep running for: the hook count must not depend on it.
-  const following = !!inbox.data?.items.find(
-    (i) =>
-      !!src &&
-      i.source_module === src.source_module &&
-      i.source_type === src.source_type &&
-      i.source_id === src.source_id,
-  )?.following;
+  // From the conversation's own answer. It was read off the inbox, which lists
+  // only what has comments, so a bell pressed on a quiet record never lit.
+  const following = !!conv.data?.following;
 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteComment(activeSlug, id),
@@ -779,23 +764,25 @@ export function DiscussionTab() {
                         <Pencil size={13} />
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const ok = await confirm({
-                          title: "Remove this comment?",
-                          message: "The text goes. Anyone who replied to it keeps their reply.",
-                          confirmLabel: "Remove",
-                          destructive: true,
-                        });
-                        if (ok) remove.mutate(c.id);
-                      }}
-                      className="p-1 rounded text-faint hover:text-ember-500 hover:bg-subtle/60 dark:hover:bg-slate-800/60 transition"
-                      aria-label="Remove comment"
-                      title="Remove"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    {canRemoveComment(c, selfUserId, activeOrg?.role) && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: "Remove this comment?",
+                            message: "The text goes. Anyone who replied to it keeps their reply.",
+                            confirmLabel: "Remove",
+                            destructive: true,
+                          });
+                          if (ok) remove.mutate(c.id);
+                        }}
+                        className="p-1 rounded text-faint hover:text-ember-500 hover:bg-subtle/60 dark:hover:bg-slate-800/60 transition"
+                        aria-label="Remove comment"
+                        title="Remove"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </span>
                 )}
               </div>
@@ -813,7 +800,7 @@ export function DiscussionTab() {
                   if (!t) return "replying";
                   const who =
                     t.author_kind === "assistant" ? "Cobb" : t.author_kind === "guest" ? (t.author_name ?? "Someone you share with") : nameOfUser(t.author_user_id ?? "");
-                  return `${who}: ${t.body}`;
+                  return `${who}: ${mentionWords(t.body, nameOfUser)}`;
                 })()}
               </span>
               <button
@@ -958,6 +945,17 @@ export function DiscussionPreview({
 
   const count = conv.data?.count ?? 0;
   const latest = [...(conv.data?.comments ?? [])].reverse().find((c) => !c.deleted_at);
+  // The same cached member list the tab reads, only once there is a comment to name.
+  const members = useQuery({
+    queryKey: ["members", activeSlug],
+    queryFn: () => api.listMembers(activeSlug),
+    enabled: !!activeSlug && !!latest && !compact,
+    staleTime: 5 * 60_000,
+  });
+  const nameOf = (id: string) => {
+    const m = members.data?.items.find((x) => x.user_id === id);
+    return m ? m.display_name || m.email : "someone";
+  };
 
   // A PILL when there is nothing to read, whatever the caller asked for.
   //
@@ -1002,7 +1000,7 @@ export function DiscussionPreview({
         {latest ? (
           <>
             <span className="text-sm text-content dark:text-mortar-200 line-clamp-2 break-words">
-              {latest.body}
+              {mentionWords(latest.body, nameOf)}
             </span>
             <span className="block text-[10px] uppercase tracking-widest text-faint mt-1">
               {count === 1 ? "1 comment" : `${count} comments`} · open to reply

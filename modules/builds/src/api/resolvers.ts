@@ -16,7 +16,7 @@ export function registerBuildsResolvers(): void {
   platform().entities.registerResolver("builds:work-order", async (orgId, id) => {
     const db = await platform().tenants.getDb(orgId) as Kysely<BuildsDB>;
     const row = await db.selectFrom("builds_planned").selectAll().where("id", "=", id).executeTakeFirst();
-    return row?.assembly ? { kind: "builds:work-order", id: row.id, title: countOf(Number(row.qty), "board"), detailUrl: `/builds/${row.build_id}?order=${row.id}`, fields: { name: countOf(Number(row.qty), "board"), state: row.assembly.state, assembly_finish_proof: row.assembly.finish_intent ?? null } } : null;
+    return row?.assembly ? { kind: "builds:work-order", id: row.id, title: countOf(Number(row.qty), "board"), detailUrl: `/builds/${row.build_id}?order=${row.id}`, fields: { name: countOf(Number(row.qty), "board"), state: row.assembly.state, assembly_finish_proof: row.assembly.finish_intent ?? null, assembly_kit_proof: { reserve: row.assembly.state === "draft" ? row.assembly.kit_plan ?? null : null, release: row.assembly.state === "cancelled", consume: row.assembly.consume_intent ?? null } } } : null;
   });
   platform().entities.registerResolver("builds:inspection", async (orgId, id) => {
     const db = await platform().tenants.getDb(orgId) as Kysely<BuildsDB>;

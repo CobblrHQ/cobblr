@@ -8,7 +8,8 @@
 // canary). It takes the link's own token, so it can do nothing the caller
 // could not already do with the link in hand, and it only ever shortens a
 // link: one already used or already expired is left as it is, and nothing
-// here makes a link live again.
+// here makes a link live again. An invite to a workspace goes the same way:
+// the members route rightly refuses to make one that has already ended.
 
 import { createHash } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
@@ -39,6 +40,18 @@ export async function expireLinkDoor(req: Request, res: Response, next: NextFunc
         res.json({ expired: table });
         return;
       }
+    }
+    const invite = await meta
+      .updateTable("workspace_invites")
+      .set({ expires_at: past })
+      .where("token", "=", token)
+      .where("consumed_at", "is", null)
+      .where("revoked_at", "is", null)
+      .where("expires_at", ">", new Date())
+      .executeTakeFirst();
+    if (Number(invite.numUpdatedRows) > 0) {
+      res.json({ expired: "workspace_invites" });
+      return;
     }
     res.status(404).json({ error: { code: "not_found", message: "No live link has that token: unknown, already used, or already expired." } });
   } catch (err) {

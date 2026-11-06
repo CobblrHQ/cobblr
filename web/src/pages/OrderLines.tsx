@@ -319,11 +319,22 @@ export function OrderLineControls({ slug, order, item, onStartReturn }: { slug: 
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
+  // This row stays mounted, so the form opens when Correct is pressed, on the
+  // line as it is then: its fields and what Save is judged against, together.
+  const [opened, setOpened] = useState(item);
   const [description, setDescription] = useState(item.description ?? "");
   const [qty, setQty] = useState(String(Number(item.qty)));
   const mainCurrency = useMoneyCurrency();
   const [currency, setCurrency] = useState(item.currency || order.currency || mainCurrency);
   const [unitCost, setUnitCost] = useState<number | null>(item.unit_cost == null ? null : Number(item.unit_cost));
+  const startCorrecting = () => {
+    setOpened(item);
+    setDescription(item.description ?? "");
+    setQty(String(Number(item.qty)));
+    setCurrency(item.currency || order.currency || mainCurrency);
+    setUnitCost(item.unit_cost == null ? null : Number(item.unit_cost));
+    setEditing(true);
+  };
   const settled = lineCountSettled(order, item);
   const actions = usePurchaseLineActions(slug, order, item);
   const refresh = () => {
@@ -336,7 +347,7 @@ export function OrderLineControls({ slug, order, item, onStartReturn }: { slug: 
     // tab saved while this was open stands, or this save says it changed
     // (#8118, #7925).
     mutationFn: () => {
-      const edit = editOf(item, {
+      const edit = editOf(opened, {
         description: description.trim() || null,
         ...(settled ? {} : { qty: Number(qty) }),
         unit_cost: unitCost,
@@ -378,7 +389,7 @@ export function OrderLineControls({ slug, order, item, onStartReturn }: { slug: 
         <OrderLineParcel order={order} item={item} />
         <OrderLineKind slug={slug} order={order} item={item} />
         {onStartReturn && actions.startReturn.offered && <StartReturnButton onClick={onStartReturn} />}
-        <button type="button" onClick={() => setEditing(true)} aria-label="Correct this line" title="Correct this line" className="p-1.5 rounded text-faint hover:text-accent hover:bg-subtle dark:hover:bg-slate-800">
+        <button type="button" onClick={startCorrecting} aria-label="Correct this line" title="Correct this line" className="p-1.5 rounded text-faint hover:text-accent hover:bg-subtle dark:hover:bg-slate-800">
           <Pencil size={13} />
         </button>
         <button type="button" onClick={() => void askRemove()} aria-label="Remove this line" title="Remove this line" className="p-1.5 rounded text-faint hover:text-ember-500 hover:bg-subtle dark:hover:bg-slate-800">

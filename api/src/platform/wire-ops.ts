@@ -7,6 +7,7 @@
 
 import { z } from "zod";
 import { sql } from "kysely";
+import rrulePkg from "rrule";
 import { platform } from "@cobblr/platform-contract";
 import { BindingAsk, BindingLabel } from "@cobblr/platform-contract/binding-ask";
 import { meta } from "../db/meta.js";
@@ -15,6 +16,8 @@ import * as activity from "./activity.js";
 import { parseWireFilter } from "./wire-filter.js";
 import { isLifecycleTrigger, lifecycleRefusal } from "./wire-lifecycle.js";
 import { typedWireArgs, wireCheckRefusal } from "./actions.js";
+
+const { rrulestr } = rrulePkg;
 
 // Q1 wire target — see docs/architecture/wires-and-bundles.md.
 // Mirror of the WireTarget schema in @cobblr/platform-contract; kept
@@ -149,6 +152,46 @@ export async function lifecycleWireRefusal(orgId: string, sourceKind: string, tr
   return lifecycleRefusal(base, triggerType, !!instance);
 }
 
+/** Why a wire on this schedule can never fire, or null: the scheduler logs a
+ *  rule it cannot read and moves on, every minute, for ever, while the wire
+ *  looks alive. Only what is plain from the rule itself: walking its dates to
+ *  find an impossible one could take as long as the rule asks. */
+export function scheduleRefusal(triggerType: string, schedule: string | null | undefined, now = new Date()): string | null {
+  if (triggerType !== "schedule") return null;
+  if (!schedule) return "A scheduled wire needs a schedule, so this one would never run.";
+  try {
+    const rule = rrulestr(schedule);
+    const until = rule.options.until;
+    if (rule.origOptions.freq === undefined) return `"${schedule}" doesn't say how often, so this wire would never run. Try FREQ=DAILY;BYHOUR=9.`;
+    if (until && until <= now) return `The schedule "${schedule}" has already ended, so this wire would never run.`;
+    return null;
+  } catch {
+    return `"${schedule}" isn't a schedule this can read, so this wire would never run. Try FREQ=DAILY;BYHOUR=9.`;
+  }
+}
+
+/** Why a wire on this action cannot run, or null. A wire keeps its action by
+ *  id, so a mistyped one saved and then failed every time it fired. */
+async function unknownActionRefusal(actionId: string): Promise<string | null> {
+  const row = await meta.selectFrom("entity_actions").select("id").where("id", "=", actionId).executeTakeFirst();
+  return row ? null : unknownActionSaid(actionId);
+}
+
+const unknownActionSaid = (actionId: string) => `There is no action called "${actionId}", so this wire could never run. Pick one from the list.`;
+
+/** What the list of wires says about the ones already saved: one saved before
+ *  these checks, or whose action has since gone away. */
+export async function wiresThatNeverRun(rows: ReadonlyArray<{ id: string; action_id: string; trigger_type: string; trigger_schedule: string | null }>): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (rows.length === 0) return out;
+  const known = new Set((await meta.selectFrom("entity_actions").select("id").where("id", "in", [...new Set(rows.map((r) => r.action_id))]).execute()).map((a) => a.id));
+  for (const r of rows) {
+    const why = scheduleRefusal(r.trigger_type, r.trigger_schedule) ?? (known.has(r.action_id) ? null : unknownActionSaid(r.action_id));
+    if (why) out.set(r.id, why);
+  }
+  return out;
+}
+
 type Refused = { ok: false; status: number; code: string; message: string };
 type WireRow = NonNullable<Awaited<ReturnType<typeof readWire>>>;
 
@@ -171,6 +214,14 @@ export async function createWire(orgId: string, userId: string | null, data: z.i
   const dead = await lifecycleWireRefusal(orgId, data.source_kind, data.trigger_type);
   if (dead) {
     return { ok: false, status: 400, code: "wire_never_runs", message: dead };
+  }
+  const badSchedule = scheduleRefusal(data.trigger_type, data.trigger_schedule);
+  if (badSchedule) {
+    return { ok: false, status: 400, code: "wire_never_runs", message: badSchedule };
+  }
+  const noAction = await unknownActionRefusal(data.action_id);
+  if (noAction) {
+    return { ok: false, status: 400, code: "wire_cannot_run", message: noAction };
   }
   const cannot = await wireCheckRefusal(data.action_id, orgId, data.args ?? {});
   if (cannot) {
@@ -248,6 +299,26 @@ export async function updateWire(orgId: string, id: string, data: z.infer<typeof
       if (dead) {
         return { ok: false, status: 400, code: "wire_never_runs", message: dead };
       }
+    }
+  }
+  // What it waits for, as it would be after this edit: a create checks this in
+  // its body, but an edit sees only the fields it was sent.
+  if (data.trigger_type !== undefined || data.trigger_event !== undefined || data.trigger_schedule !== undefined) {
+    const was = await readWire(orgId, id);
+    if (was) {
+      const type = data.trigger_type ?? was.trigger_type;
+      const event = data.trigger_event !== undefined ? data.trigger_event : was.trigger_event;
+      const schedule = data.trigger_schedule !== undefined ? data.trigger_schedule : was.trigger_schedule;
+      const never = type === "event" && !event ? "A wire on an event needs to say which event, so this one would never run." : scheduleRefusal(type, schedule);
+      if (never) {
+        return { ok: false, status: 400, code: "wire_never_runs", message: never };
+      }
+    }
+  }
+  if (data.action_id !== undefined) {
+    const noAction = await unknownActionRefusal(data.action_id);
+    if (noAction) {
+      return { ok: false, status: 400, code: "wire_cannot_run", message: noAction };
     }
   }
   // A changed action or arguments is checked as a new wire is (#6070).

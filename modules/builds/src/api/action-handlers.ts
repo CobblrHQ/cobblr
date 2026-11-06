@@ -11,6 +11,7 @@ import type { BuildsDB } from "../db.js";
 import { consumePlan, explodeLeafComponents, planBuild, planLines, withoutParts } from "../build-engine.js";
 import { closeFilledWorkOrders, madeByWorkOrder } from "../work-orders.js";
 import { buildUndoStep } from "../build-undo.js";
+import { moveStock, outputPartIsHere, OUTPUT_PART_GONE } from "./stock-moves.js";
 
 let registered = false;
 
@@ -50,6 +51,7 @@ export function registerBuildsActionHandlers(): void {
       .executeTakeFirst();
     if (!build) return { ok: false, skipped: "build not found" };
     if ((build.metadata as { assembly?: unknown } | null)?.assembly) return { ok: false, error: "Use this board revision’s assembly work order to record production." };
+    if (build.output_part_id && !deferOutput && !(await outputPartIsHere(ctx.orgId, build.output_part_id))) return { ok: false, error: OUTPUT_PART_GONE };
 
     // Stocked sub-assemblies first, the rest exploded down to leaf parts; consume both.
     // A print's measured spool is charged by the print; its recipe line is not charged again (#8757).
@@ -90,23 +92,11 @@ export function registerBuildsActionHandlers(): void {
         .execute();
     }
 
+    let outputNotAdded: string | undefined;
     if (build.output_part_id && !deferOutput) {
       const made = (Number(build.output_qty) || 1) * qty;
-      await platform()
-        .actions.invoke("inventory:adjust-stock", {
-          orgId: ctx.orgId,
-          userId: ctx.userId,
-          entity: { kind: "inventory:part", id: build.output_part_id },
-          event: {
-            name: "builds.build.completed",
-            payload: {},
-            actor: { user_id: ctx.userId, display_name: null, auth_method: "session" },
-            timestamp: ctx.event?.timestamp ?? new Date().toISOString(),
-            trigger_type: "event",
-          },
-          args: { partId: build.output_part_id, delta: made, reason: `build-output:${buildId}` },
-        })
-        .catch((e) => console.error("[builds] output adjust-stock failed:", (e as Error).message));
+      const moved = await moveStock({ orgId: ctx.orgId, userId: ctx.userId, partId: build.output_part_id, delta: made, reason: `build-output:${buildId}`, event: "builds.build.completed", at: ctx.event?.timestamp });
+      if (!moved.ok) outputNotAdded = moved.error;
     }
 
     void platform().events.emit("builds.build.completed", {
@@ -116,7 +106,16 @@ export function registerBuildsActionHandlers(): void {
       viaWire: ctx.event?.trigger_type === "event",
     });
     const lines = planLines(plan);
-    return { ok: true, runId: run.id, buildId, qtyBuilt: qty, consumed, outputDeferred: deferOutput, ...(lines.length ? { summary: `Built ${qty} ${build.name}. ${lines.join("; ")}.` } : {}) };
+    return {
+      ok: true,
+      runId: run.id,
+      buildId,
+      qtyBuilt: qty,
+      consumed,
+      outputDeferred: deferOutput,
+      ...(lines.length ? { summary: `Built ${qty} ${build.name}. ${lines.join("; ")}.` } : {}),
+      ...(outputNotAdded ? { outputNotAdded, summary: `Built ${qty} ${build.name}, and what it made was not added to stock: ${outputNotAdded}` } : {}),
+    };
   });
 
   // The output leg of a deferred build-one: N builds came out good, so their
@@ -143,20 +142,17 @@ export function registerBuildsActionHandlers(): void {
     if (!build.output_part_id) { await credited(0); return { ok: true, skipped: "the build has no output part" }; }
 
     const made = (Number(build.output_qty) || 1) * qty;
-    const res = (await platform().actions.invoke("inventory:adjust-stock", {
+    const res = await moveStock({
       orgId: ctx.orgId,
       userId: ctx.userId,
-      entity: { kind: "inventory:part", id: build.output_part_id },
-      event: {
-        name: "builds.build.completed",
-        payload: {},
-        actor: { user_id: ctx.userId, display_name: null, auth_method: "session" },
-        timestamp: ctx.event?.timestamp ?? new Date().toISOString(),
-        trigger_type: "event",
-      },
-      args: { partId: build.output_part_id, delta: made, reason: `build-output:${buildId}`, ...(jobId ? { once: true, sourceKind: "digifab:job-output", sourceId: jobId } : {}) },
-    })) as { ok?: boolean; error?: string } | null;
-    if (!res?.ok) return { ok: false, error: res?.error ?? "the output could not be added to stock" };
+      partId: build.output_part_id,
+      delta: made,
+      reason: `build-output:${buildId}`,
+      event: "builds.build.completed",
+      at: ctx.event?.timestamp,
+      ...(jobId ? { once: { sourceKind: "digifab:job-output", sourceId: jobId } } : {}),
+    });
+    if (!res.ok) return { ok: false, error: res.error };
     await credited(made);
     return { ok: true, buildId, made };
   });
@@ -318,6 +314,18 @@ export function registerBuildsActionHandlers(): void {
       .executeTakeFirst();
     if (!build) return { ok: false, skipped: "build not found" };
 
+    // What it made goes first, and all of it or nothing: a count the floor
+    // clamps to what is left would give every component back for parts already
+    // used elsewhere, which is stock from nowhere.
+    if (build.output_part_id && takeBackOutput) {
+      const unmade = (Number(build.output_qty) || 1) * qty;
+      const part = await platform().entities.lookup(ctx.orgId, "inventory:part", build.output_part_id);
+      const left = Number(part?.fields?.qty ?? 0) || 0;
+      if (left < unmade) return { ok: false, error: `This build made ${unmade} of ${part?.title ?? "its part"} and ${left} ${left === 1 ? "is" : "are"} left, so it cannot be taken back. Nothing moved.` };
+      const back = await moveStock({ orgId: ctx.orgId, userId: ctx.userId, partId: build.output_part_id, delta: -unmade, reason: `build-output-reversed:${buildId}`, event: "builds.build.reversed", at: ctx.event?.timestamp });
+      if (!back.ok) return { ok: false, error: `What this build made could not be taken back: ${back.error} Nothing else moved.` };
+    }
+
     // What the latest run took, per unit, comes back: a sub-assembly taken from
     // the shelf goes back as itself, not as the parts it would have been made of.
     // A build never run through Cobblr gives back its exploded parts, as before.
@@ -340,25 +348,13 @@ export function registerBuildsActionHandlers(): void {
     const share = typeof ev.unprintedShare === "number" && Number.isFinite(ev.unprintedShare) ? Math.min(1, Math.max(0, ev.unprintedShare)) : 1;
     const comesBack = share < 1 ? await recoverableParts(db, buildId) : new Set<string>();
     const returned: Array<{ part_id: string; quantity: number }> = [];
+    const notReturned: Array<{ part_id: string; quantity: number; error: string }> = [];
     for (const c of comps) {
       const inc = c.quantity * qty * (comesBack.has(c.part_id) ? 1 : share);
       if (inc <= 0) continue;
-      await platform()
-        .actions.invoke("inventory:adjust-stock", {
-          orgId: ctx.orgId,
-          userId: ctx.userId,
-          entity: { kind: "inventory:part", id: c.part_id },
-          event: {
-            name: "builds.build.reversed",
-            payload: {},
-            actor: { user_id: ctx.userId, display_name: null, auth_method: "session" },
-            timestamp: ctx.event?.timestamp ?? new Date().toISOString(),
-            trigger_type: "event",
-          },
-          args: { partId: c.part_id, delta: inc, reason: `build-reversed:${buildId}` },
-        })
-        .catch((e) => console.error("[builds] reverse adjust-stock failed:", (e as Error).message));
-      returned.push({ part_id: c.part_id, quantity: inc });
+      const moved = await moveStock({ orgId: ctx.orgId, userId: ctx.userId, partId: c.part_id, delta: inc, reason: `build-reversed:${buildId}`, event: "builds.build.reversed", at: ctx.event?.timestamp });
+      if (moved.ok) returned.push({ part_id: c.part_id, quantity: inc });
+      else notReturned.push({ part_id: c.part_id, quantity: inc, error: moved.error });
     }
 
     const run = await db
@@ -372,32 +368,13 @@ export function registerBuildsActionHandlers(): void {
       .returning(["id"])
       .executeTakeFirstOrThrow();
 
-    if (build.output_part_id && takeBackOutput) {
-      const unmade = (Number(build.output_qty) || 1) * qty;
-      await platform()
-        .actions.invoke("inventory:adjust-stock", {
-          orgId: ctx.orgId,
-          userId: ctx.userId,
-          entity: { kind: "inventory:part", id: build.output_part_id },
-          event: {
-            name: "builds.build.reversed",
-            payload: {},
-            actor: { user_id: ctx.userId, display_name: null, auth_method: "session" },
-            timestamp: ctx.event?.timestamp ?? new Date().toISOString(),
-            trigger_type: "event",
-          },
-          args: { partId: build.output_part_id, delta: -unmade, reason: `build-output-reversed:${buildId}` },
-        })
-        .catch((e) => console.error("[builds] output reverse adjust-stock failed:", (e as Error).message));
-    }
-
     void platform().events.emit("builds.build.reversed", {
       orgId: ctx.orgId,
       buildId,
       qtyReversed: qty,
       viaWire: ctx.event?.trigger_type === "event",
     });
-    return { ok: true, runId: run.id, buildId, qtyReversed: qty, returned };
+    return { ok: true, runId: run.id, buildId, qtyReversed: qty, returned, ...(notReturned.length ? { notReturned } : {}) };
   });
 }
 

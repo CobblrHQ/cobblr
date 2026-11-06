@@ -9,19 +9,10 @@
 // WHY IT EXISTS: a name's UTF-8 bytes were read as Latin-1, so "café.txt" was kept as "cafÃ©.txt" and any name in
 // Japanese became unreadable. A loop of folders hangs from nothing, so it and its files drop out of the tree.
 
+import { mangledNameRepaired } from "@cobblr/platform-contract/mangled-name";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 import { sql, type Kysely } from "kysely";
 import type { CoreFilesDB } from "./db.js";
-
-/** The name it should have been, or null when this isn't UTF-8 read as Latin-1. PURE. A real "é" alone isn't valid
- *  UTF-8 once read back as a byte, so a correct name in French or German is left alone. */
-export function mangledNameRepaired(name: string): string | null {
-  if (!/[\u0080-ÿ]/.test(name) || /[^\u0000-ÿ]/.test(name)) return null;
-  const bytes = Buffer.from(name, "latin1");
-  const fixed = bytes.toString("utf8");
-  // Bytes that aren't valid UTF-8 don't survive the round trip: this was never a mangled name.
-  return Buffer.from(fixed, "utf8").equals(bytes) && fixed !== name ? fixed : null;
-}
 
 /** The one folder to lift to the top from each loop of parents. PURE. */
 export function foldersToBreakLoops(folders: ReadonlyArray<{ id: string; parent_id: string | null }>): string[] {

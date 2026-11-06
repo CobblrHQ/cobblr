@@ -15,7 +15,7 @@ import { decryptCreds } from "./crypto.js";
 import type { TenantDB } from "./tenant-schema.js";
 import { mayFastClose } from "./pool-release-rule.js";
 import { createPool } from "./client-error-guard.js";
-import { IDLE_RELEASE_MS } from "./connection-budget.js";
+import { appliedBudget, IDLE_RELEASE_MS } from "./connection-budget.js";
 import { poolCounts, type PoolCounts } from "./pool-stats.js";
 import { connectThroughEnds, createConnectionLimit, poolIsIdle } from "./tenant-connection-limit.js";
 
@@ -152,6 +152,12 @@ const tenantConnections = createConnectionLimit({
   pools: () => [...livePools.entries()].sort((a, b) => (lastAccess.get(a[0]) ?? 0) - (lastAccess.get(b[0]) ?? 0)),
   evictable: (orgId) => Date.now() - (rawAt.get(orgId) ?? 0) >= RELEASE_GRACE_MS,
   evict: (orgId) => evictTenantPool(orgId),
+  // What the budget has left past its worst case, so a caller past the wait
+  // never takes this api beyond its share of the server.
+  overdraft: () => {
+    const budget = appliedBudget();
+    return budget ? Math.max(1, budget.perApi - budget.worstCase) : TENANT_POOL_MAX;
+  },
   onOverrun: (open, limit) => {
     if (Date.now() - lastOverrunLog < 60_000) return;
     lastOverrunLog = Date.now();

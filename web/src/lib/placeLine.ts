@@ -13,14 +13,15 @@ export interface LineRun {
 
 const PIN = "📍";
 const SEP = " · ";
+const WHY = " (";
 
 /** A card's line cut into runs: the place (from its pin to the next " · ")
  *  and the text around it. */
 export function lineRuns(line: string): LineRun[] {
   const at = line.indexOf(PIN);
   if (at < 0) return line ? [{ text: line, place: false }] : [];
-  const end = line.indexOf(SEP, at);
-  const stop = end < 0 ? line.length : end;
+  const ends = [line.indexOf(SEP, at), line.indexOf(WHY, at)].filter((n) => n >= 0);
+  const stop = ends.length ? Math.min(...ends) : line.length;
   return [
     ...(at > 0 ? [{ text: line.slice(0, at), place: false }] : []),
     { text: line.slice(at, stop), place: true },

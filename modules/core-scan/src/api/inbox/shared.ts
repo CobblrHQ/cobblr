@@ -24,7 +24,8 @@ import { reportReceived } from "../../services/receipt-order.js";
 import { planDecodeFill, platform, traitAxisValue, type DecodeFillTarget } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { displayed as displayedNote, cardNote, withoutRoutingSentences } from "../../services/routing-note.js";
-import { needsScanReview, scanHeldForReview, scanRowState, scanReviewReason, scanWaitingDays, type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, type FiledInto, filedIntoOf, scanFitItem } from "@cobblr/platform-contract/scan-triage";
+import { pictureAfterMatchAllowed } from "../../services/line-is-food.js";
+import { SCAN_REVIEW_CONFIDENCE, needsScanReview, scanHeldForReview, scanRowState, scanReviewReason, scanWaitingDays, type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, type FiledInto, filedIntoOf, scanFitItem } from "@cobblr/platform-contract/scan-triage";
 import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../../services/resolve-offers.js";
@@ -38,6 +39,7 @@ import { matchQuery, scanPlaceOf, trackedMatchStampAt } from "../../services/tra
 import { candidateTableOf, destinationTables, filingDestination, type DestinationRow } from "../../services/destination.js";
 import { colouredTitleFor } from "../../services/auto-rank.js";
 import { assembleScanMenu, assembleMergedMenu, withProposedCategories, categoriesFromCandidateRows, runMatchmaker, heuristicMatch, reconcileSeriesSecondaries, type MatchCandidate, type ScanMenuEntry, perceiveRow } from "../../services/matchmaker.js";
+import { sharedRead } from "../../services/shared-menu-read.js";
 import { candidatesForNamelessRow, isCuratedBarcodeIdentification, shouldAdoptCandidateName } from "../../services/adopt-name.js";
 import { guardReplayCandidates } from "../../services/replay-guard.js";
 import { catalogTitleCorroborated, decodedIsbnOf, lookupBookByTitle } from "../../services/book-lookup.js";
@@ -350,6 +352,14 @@ export async function withGroupImages<T extends { suggested_metadata?: unknown }
   return groupImagesFor(tenantDb(req), rows);
 }
 
+const sharedModuleList = sharedRead(
+  ({ slug, token }: { slug: string; token: string }) => `${slug} ${token}`,
+  async ({ slug, token }: { slug: string; token: string }): Promise<Array<{ name: string; enabled?: boolean }> | null> => {
+    const r = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules`, { headers: { Authorization: `Bearer ${token}` } });
+    return r.ok ? ((await r.json()) as { items: Array<{ name: string; enabled?: boolean }> }).items : null;
+  },
+);
+
 /** The workspace's tables, read once per request however many rows it serves. */
 /** The person asking, as the row resolver reads them, for a server count
  *  that must agree with the card: whether they may turn an app on, and
@@ -365,8 +375,7 @@ export async function scanViewerFor(req: Request): Promise<ScanRowStateContext> 
     let modules: Array<{ name: string; enabled?: boolean }> | null = null;
     if (token) {
       try {
-        const r = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${tenantContext(req).org.slug}/modules`, { headers: { Authorization: `Bearer ${token}` } });
-        if (r.ok) modules = ((await r.json()) as { items: Array<{ name: string; enabled?: boolean }> }).items;
+        modules = await sharedModuleList({ slug: tenantContext(req).org.slug, token });
       } catch {
         /* unknown: nothing is excluded on its account */
       }
@@ -1596,7 +1605,10 @@ export async function matchItemNow(opts: MatchItemOpts): Promise<unknown[] | nul
     // The row's plan says whether its picture waits for the match (a receipt
     // line, a typed phrase or identifier: the category sharpens the search);
     // a row admitted before the plan reads by its columns (services/intake.ts).
-    const pictureNow = pictureSearchAfterMatch(rowShape(row)) && !row.catalog_image_file_id && !row.catalog_image_url;
+    // Below the floor the name is a guess, and a picture found for a guess is
+    // worse than none: "Assorted Thin" came home with sewing needles (#9270).
+    const sureEnough = pictureAfterMatchAllowed(candidates[0]?.confidence, SCAN_REVIEW_CONFIDENCE);
+    const pictureNow = pictureSearchAfterMatch(rowShape(row)) && sureEnough && !row.catalog_image_file_id && !row.catalog_image_url;
     if (adoptName || pictureNow) {
       const nameForCover = adoptName ? candName : row.suggested_name ?? "";
       const category =

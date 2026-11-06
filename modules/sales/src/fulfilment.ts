@@ -131,7 +131,7 @@ export async function planFulfilment(
       const line = stocked.find((l) => l.part_id === id);
       shortages.push({
         part_id: id,
-        name: info?.name ?? line?.description ?? "a part that is no longer tracked",
+        name: info?.name ?? line?.description ?? NO_LONGER_TRACKED,
         needed: need,
         on_hand: have,
         ...((heldForOthers.get(id) ?? 0) > 0 ? { held: heldForOthers.get(id) } : {}),
@@ -143,10 +143,13 @@ export async function planFulfilment(
   return { take, shortages, onHand };
 }
 
+const NO_LONGER_TRACKED = "a part that is no longer tracked";
+
 /** The sentence a person reads when an order is short. */
 export function shortageSentence(shortages: Shortage[]): string {
   if (shortages.length === 1) {
     const s = shortages[0]!;
+    if (s.name === NO_LONGER_TRACKED) return `This order needs ${s.name}, so it can't come out of stock. Change the line to say what is being sold.`;
     const where = s.held ? ` free (${s.held} held for other orders)` : " in stock";
     return s.on_hand === 0
       ? `There are no ${s.name}${where}, and this order needs ${s.needed}.`

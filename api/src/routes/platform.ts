@@ -3,7 +3,7 @@ import { actionDetail, nameRequest } from "../platform/compute-ledger.js";
 import { wiresSaid } from "../platform/wire-said.js";
 import { editableFieldsOf } from "../platform/update-record-fields.js";
 import { previewWire, relationshipsInUse } from "../platform/wire-preview.js";
-import { BindingCreate, BindingPatch, createWire, declaredWireEvents, deleteWire, lifecycleWireRefusal, updateWire } from "../platform/wire-ops.js";
+import { BindingCreate, BindingPatch, createWire, declaredWireEvents, deleteWire, lifecycleWireRefusal, updateWire, wiresThatNeverRun } from "../platform/wire-ops.js";
 import { isLendable, listOpenLoans } from "../platform/custody.js";
 import { sayLoan } from "@cobblr/platform-contract/loan";
 import { presentPanels } from "../platform/panel-presence.js";
@@ -80,7 +80,9 @@ import {
   resolveFieldDefsForKind,
   updateFieldDef,
   previewRetype,
+  FieldChoices,
 } from "../platform/field-defs.js";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { upsertNativeFieldOverride } from "../platform/native-field-overrides.js";
 import { getScannableForModule } from "../platform/scan-registry.js";
 import { FIELD_PRESETS, presetState } from "../platform/field-presets.js";
@@ -730,6 +732,7 @@ function askerOf(req: Request): InvokeAsker {
     appScope: req.session?.app_scope ?? null,
     appEditKinds: req.session?.app_edit_kinds ?? [],
     tokenAccess: req.session?.token_access ?? null,
+    tokenOrgId: req.session?.token_org_id ?? null,
     via: currentVia()?.kind ?? null,
   };
 }
@@ -1288,12 +1291,13 @@ platformOrgRouter.get(
       // Each wire in words beside its ids: the record it watches, the
       // action's label and its arguments (#6110).
       const said = await wiresSaid(req.tenant!.org.id, rows);
+      const neverRuns = await wiresThatNeverRun(rows);
       const items = [];
       for (const [n, r] of rows.entries()) {
         items.push({
           ...r,
           said: said[n],
-          never_runs: await lifecycleWireRefusal(req.tenant!.org.id, r.source_kind, r.trigger_type),
+          never_runs: (await lifecycleWireRefusal(req.tenant!.org.id, r.source_kind, r.trigger_type)) ?? neverRuns.get(r.id) ?? null,
           trigger_silent: r.trigger_type === "event" && !!r.trigger_event && !declared.has(r.trigger_event),
         });
       }
@@ -1628,7 +1632,7 @@ platformOrgRouter.get("/:slug/field-sections", requireAuth, withTenant, async (r
   }
 });
 
-const SectionCreate = z.object({ entity_kind: z.string().min(1), name: z.string().min(1).max(120) });
+const SectionCreate = z.object({ entity_kind: z.string().min(1), name: readableNameField(120) });
 // AI-ACTION: platform:group-fields
 platformOrgRouter.post("/:slug/field-sections", requireAuth, withTenant, async (req, res, next) => {
   try {
@@ -1658,7 +1662,7 @@ platformOrgRouter.post("/:slug/field-sections", requireAuth, withTenant, async (
   }
 });
 
-const SectionPatch = z.object({ name: z.string().min(1).max(120).optional(), position: z.number().int().optional() });
+const SectionPatch = z.object({ name: readableNameField(120).optional(), position: z.number().int().optional() });
 // AI-ACTION: platform:group-fields
 platformOrgRouter.patch("/:slug/field-sections/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
@@ -1722,6 +1726,16 @@ platformOrgRouter.post("/:slug/field-defs/reorder", requireAuth, withTenant, asy
     }
     const orgId = req.tenant!.org.id;
     const kind = p.data.entity_kind;
+    // A heading on this kind in this workspace. The foreign key alone answered
+    // a server error for a gone one, and took another workspace's without a word.
+    const headings = [...new Set((p.data.fields ?? []).flatMap((f) => (f.section_id ? [f.section_id] : [])))];
+    if (headings.length > 0) {
+      const known = await meta.selectFrom("field_sections").select("id").where("org_id", "=", orgId).where("entity_kind", "=", kind).where("id", "in", headings).execute();
+      if (known.length !== headings.length) {
+        res.status(400).json({ error: { code: "unknown_section", message: "That heading isn't on this kind of record any more. Reload and try again." } });
+        return;
+      }
+    }
     await meta.transaction().execute(async (trx) => {
       for (const s of p.data.sections ?? []) {
         await trx
@@ -1989,12 +2003,14 @@ platformOrgRouter.get(
 const NativeFieldOverrideBody = z.object({
   entity_kind: z.string().min(1),
   name: z.string().min(1),
-  display_label: z.string().max(160).nullable().optional(),
+  // Blank goes back to the field's own label, the same as null: an empty one
+  // leaves a form row with nothing to call it.
+  display_label: z.string().max(160).nullable().optional().transform((v) => (v === undefined ? v : v?.trim() || null)),
   hidden: z.boolean().optional(),
   position: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   // 1b — custom dropdown choices that override the field's own. null = clear
   // (fall back to the base choices). Omitted = leave the blob's choices as-is.
-  choices: z.array(z.string().max(120)).nullable().optional(),
+  choices: FieldChoices.nullable().optional(),
 });
 
 // AI-ACTION: platform:edit-field

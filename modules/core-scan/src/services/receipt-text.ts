@@ -25,6 +25,7 @@ import {
   enrichReceiptFromText,
   weightUnit,
   isMailTitle,
+  isPhoneStatusBar,
   isoDate,
   type ParsedReceipt,
 } from "./receipt-shared.js";
@@ -109,6 +110,21 @@ function parseQtyAt(s: string): { qty: number; unit_price: number; unit: string 
   return { qty, unit_price: unit, unit: m[2] ?? null };
 }
 
+/** "2.62 lb 0 $ 3.25/lb": a weight and a rate with the "@" misread. The weight's
+ *  unit and the "$" say what this is, and the caller checks the two multiply out
+ *  to the line above before believing it (#9270). */
+const WEIGHED_RATE = /^(\d+[.,]\d+)\s*(1b|ib|b|lbs?|kg|g|oz)\b\s*\S?\s*[$€£¥]\s*(\d+[.,]\d{2})\b/i;
+const OCR_LB_WORD = /^(?:1b|ib|b|lbs?)$/i;
+
+function parseWeighedRate(s: string, lineTotal: number | null): { weight: number; unit: string; rate: number } | null {
+  const m = s.trim().match(WEIGHED_RATE);
+  if (!m || lineTotal === null) return null;
+  const weight = Number(m[1]!.replace(",", "."));
+  const rate = Number(m[3]!.replace(",", "."));
+  if (!(weight > 0) || Math.abs(weight * rate - lineTotal) > 0.02) return null;
+  return { weight, unit: OCR_LB_WORD.test(m[2]!) ? "lb" : m[2]!.toLowerCase(), rate };
+}
+
 /** "2.0 @ 3.49" alone on a line: the count and rate of the item above, the rate
  *  sitting where the money reader looks for an amount. The engine reads the "@"
  *  as "0", "@0" or a stray mark, so the separator is loose here; what makes that
@@ -122,10 +138,6 @@ const RATE_DETAIL = /^(\d+(?:[.,]\d+)?)\s*[@0©®e]+\s*[$€£¥]?\s*(\d+[.,]\d{
 const DATE_ONLY = /^(?:[a-z]{3,9}\.?\s+\d{1,2},?\s+\d{2,4}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})$/i;
 /** The column headings of a receipt's table, not a shop. */
 const COLUMN_HEADING = /^(?:description|item|items|qty|quantity|price|amount)(?:\s+(?:\$|€|£|¥|s|qty|quantity|price|amount|total))*$/i;
-
-/** A screenshot's first line is the phone's clock and icons, whatever the engine
- *  makes of them ("9:12 mm R |"), not a shop. */
-const PHONE_STATUS_BAR = /^\d{1,2}:\d{2}\b/;
 
 /** A discount row with no name of its own, printed under the item it comes off. */
 const BARE_DISCOUNT = /^discount\b/i;
@@ -200,7 +212,7 @@ export function detectVendor(lines: string[]): string | null {
     if (isMailTitle(s)) continue;
     if (/^\d+\s/.test(s)) continue; // street address
     if (/\b(tel|phone|fax|www\.|http|store\s*#)\b/i.test(s)) continue;
-    if (DATE_ONLY.test(s) || NAMED_DATE.test(s) || COLUMN_HEADING.test(s) || PHONE_STATUS_BAR.test(s)) continue;
+    if (DATE_ONLY.test(s) || NAMED_DATE.test(s) || COLUMN_HEADING.test(s) || isPhoneStatusBar(s)) continue;
     if (readTrailingAmount(s)) continue;
     return s;
   }
@@ -275,6 +287,14 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
           last.weight = qa.qty;
           last.weight_unit = qa.unit!;
         }
+        continue;
+      }
+      const weighed = last && !itemsClosed ? parseWeighedRate(line, last.line_total) : null;
+      if (weighed && last) {
+        last.qty = weighed.weight;
+        last.unit_price = weighed.rate;
+        last.weight = weighed.weight;
+        last.weight_unit = weighed.unit;
         continue;
       }
       const bare = stripSku(line).replace(/[\s.:-]+$/, "").trim();

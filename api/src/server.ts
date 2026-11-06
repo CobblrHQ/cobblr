@@ -1,3 +1,4 @@
+import { argumentRefusal } from "@cobblr/platform-contract";
 import { GateProbeStop, stopAtGate } from "./lib/gate-probe.js";
 import { observeRolePasses } from "@cobblr/platform-contract/org-roles";
 import { startRequest } from "./platform/compute-ledger.js";
@@ -665,6 +666,13 @@ export function completeApp(app: Application): void {
         res.status(400).json({
           error: { code: "invalid_input", message: "Malformed identifier or value." },
         });
+        return;
+      }
+      // A route's own `.parse()` of its query or body: the caller's to fix, in words,
+      // at every route, so no route has to remember safeParse.
+      const badArguments = argumentRefusal(err);
+      if (badArguments) {
+        res.status(400).json({ error: { code: "invalid_input", message: badArguments } });
         return;
       }
       // A character Postgres can't store (a NUL byte, most often): the caller's

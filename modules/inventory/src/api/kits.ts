@@ -18,6 +18,19 @@ export function registerKitActions() {
     const args = ctx.args ?? {};
     const p = Request.parse({ ...args, lines: args.lines === undefined ? undefined : readJsonArg(args, "lines"), output: args.output === undefined ? undefined : readJsonArg(args, "output") });
     const [targetModule, targetType] = p.target_kind.split(":") as [string, string];
+    // Reading a kit is open. Changing one is the work order's: it records what it
+    // is about to do, and inventory acts only on that, as finish-assembly-stock
+    // does. Asked directly, a release left the order saying kitted with nothing
+    // held, a consume moved stock for boards nobody placed, and a reserve held
+    // stock for an order that never was.
+    if (p.operation !== "check") {
+      const owner = await platform().entities.lookup(ctx.orgId, p.target_kind, p.target_id, { userId: ctx.userId ?? undefined });
+      const proof = owner?.fields.assembly_kit_proof as { reserve?: Array<{ part_id: string; qty: number }> | null; release?: boolean; consume?: { kind: string; part_id: string; qty: number } | null } | undefined;
+      const allowed = p.operation === "release" ? proof?.release === true
+        : p.operation === "reserve" ? !!proof?.reserve && !!p.lines && kitFingerprint(groupKitLines(proof.reserve)) === kitFingerprint(groupKitLines(p.lines))
+        : !!proof?.consume && !!p.output && proof.consume.kind === p.output.kind && proof.consume.part_id === p.output.part_id && proof.consume.qty === p.output.qty;
+      if (!allowed) throw new ActionRefusal("Change this kit from its work order.");
+    }
     if (p.operation === "consume") {
       if (!p.output) throw new ActionRefusal("Choose the placed-board output before consuming the kit.");
       const output = await platform().entities.lookup(ctx.orgId, p.output.kind, p.output.part_id, { userId: ctx.userId ?? undefined });

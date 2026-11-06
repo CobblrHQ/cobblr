@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.22.11",
+  version: "0.23.0",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -1251,6 +1251,27 @@ export default defineModule({
         argsSchema: {
           serial_number: { label: "Its serial number", type: "text" },
           name: { label: "Its name (empty: the item's name and serial)", type: "text" },
+        },
+      },
+      {
+        group: "stock",
+        id: "inventory:clear-expired",
+        changes: "records",
+        runBy: "member",
+        examples: ["clear out everything expired", "bin everything that's past its date", "mark all the old groceries as used up"],
+        undoable: true,
+        label: "Clear what's past its date",
+        description: "Ends every unit of every lot past its date, for the records named or a whole list, in one step; any fresher lot stays. Used up or Threw out. A cleanup teaches no shelf life and puts nothing on the shopping list. Args: { partIds? | instance?, ended? (used or spoiled), timezone?, dry_run? }.",
+        // A list-wide cleanup, not something done TO one record: not a button on an item's page.
+        scope: "workspace",
+        invokeHandler: "inventory.clear-expired",
+        userInvokable: true,
+        argsSchema: {
+          partIds: { label: "The items to clear, by id (else a whole list)", type: "list" },
+          instance: { label: "The list to clear, by its name, when no items are named", type: "text" },
+          ended: { label: "Used up (used) or threw out (spoiled); used when absent", type: "text" },
+          timezone: { label: "Timezone to date it in", type: "text" },
+          dry_run: { label: "true to only say what would be cleared", type: "text" },
         },
       },
     ],

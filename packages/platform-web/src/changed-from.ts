@@ -8,6 +8,7 @@
 // this form changed carries its opened value, so the server refuses the save
 // when someone changed that same field since (edited-from.ts).
 
+import { useState } from "react";
 import { EDITED_FROM_HEADER, encodeEditedFrom, sameStored } from "@cobblr/platform-contract/edited-from";
 
 const bag = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
@@ -50,4 +51,13 @@ export function editOf<T extends object>(opened: object | null | undefined, next
     }
   }
   return { body: body as Partial<T>, headers: Object.keys(body).length ? { [EDITED_FROM_HEADER]: encodeEditedFrom(was) } : {} } as Edit<T>;
+}
+
+/** The record as an edit form opened on it, held still for as long as the form
+ *  is open. The list or query behind the form refreshes (a tab regaining focus
+ *  is enough), and handing editOf that newer copy reads the form's own older
+ *  value as this form's change: Save puts back what another tab just saved and
+ *  answers Saved. Pass what this returns to editOf, and seed the fields from it. */
+export function useRecordAsOpened<T>(record: T): T {
+  return useState(record)[0];
 }

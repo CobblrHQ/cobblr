@@ -67,3 +67,21 @@ export function MetaParts({ parts }: { parts: ReadonlyArray<Part> }) {
     </>
   );
 }
+
+/** Facts that wrap as whole units with no separator left at either end of a
+ *  line: each carries its " · " in front of it, and the box clips the one that
+ *  starts a line (#9269). */
+export function MetaFlow({ parts }: { parts: ReadonlyArray<Part> }) {
+  return (
+    <span className="block overflow-hidden">
+      <span className="-ml-[1em] flex flex-wrap">
+        {distinctParts(parts).map((p, i) => (
+          <span key={i} className="relative min-w-0 max-w-full pl-[1em]">
+            {i > 0 && <span aria-hidden className="absolute left-0 w-[1em] text-center"> · </span>}
+            {p}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+}

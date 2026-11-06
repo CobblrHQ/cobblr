@@ -2,15 +2,15 @@
 // Split from api/inbox.ts by route group (#7385); inbox.ts mounts the groups in order.
 import { Router } from "express";
 import { appendScanHistory } from "../../services/scan-history.js";
-import { isMachineReadCode } from "../../services/barcode-source.js";
 import { filedQuantityOf } from "../../services/filed-quantity.js";
 import { sql } from "kysely";
 import { z } from "zod";
-import { platform, countOf } from "@cobblr/platform-contract";
+import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb } from "../../db.js";
 import { asyncHandler, requireRole } from "../util.js";
 import { dropMeta, mergeMeta } from "../../services/metadata.js";
-import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantityOf, type CombineItem, type CombineCandidate } from "../../services/combine-merge.js";
+import { pickPrimaryId, traitsHaveUnique, type CombineItem, type CombineCandidate } from "../../services/combine-merge.js";
+import { combineInboxRows } from "../../services/combine-rows.js";
 import { SCAN_UNDO_ACTIONS } from "@cobblr/platform-contract/scan-recovery";
 import { uncombinePlan, type CombineUndo } from "../../services/uncombine.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
@@ -60,14 +60,6 @@ combineRouter.post(
       res.status(400).json({ error: { code: "too_few", message: "need ≥2 pending items to combine" } });
       return;
     }
-    const others = rows.filter((r) => r.id !== primary.id);
-    // UNION the fields: the primary keeps its own values and fills its GAPS from the
-    // others (same table only). So merging a plate photo into a VIN vehicle carries
-    // the colour + plate across instead of discarding them.
-    const unionedCandidates = unionCandidateFields(
-      primary as unknown as CombineItem,
-      others as unknown as CombineItem[],
-    );
     // A unique-tracked kind (a vehicle, a machine — declared traits, never the
     // name) captured twice is ONE thing seen two ways, not two units: don't sum
     // sightings into phantom quantity. Fungible stock still sums (×4 soap).
@@ -82,77 +74,7 @@ combineRouter.post(
         /* trait lookup is best-effort — fall back to the summing default */
       }
     }
-    // A case label beside one of its items is the case's count (#3729).
-    const totalQty = combinedQuantityOf(rows.map((r) => ({ quantity: filedQuantityOf(r.quantity), barcode_text: r.barcode_text })), uniqueKind);
-    const barcodes = Array.from(new Set(rows.map((r) => r.barcode_text).filter(Boolean))) as string[];
-    const meta = (primary.suggested_metadata ?? {}) as Record<string, unknown>;
-    // Barcode authority: if the kept item's own barcode was READ BY AI (OCR, can
-    // be a digit off) — or it has none — but a merged item carries a SCANNED one,
-    // adopt the scanned code as the kept item's barcode. So you keep the photo +
-    // name you chose AND end up with the real barcode. Clear the ai-photo flag.
-    const primaryAiBarcode = isMachineReadCode((meta as { barcode_source?: string }).barcode_source);
-    const scannedBarcode = others.find(
-      (o) =>
-        o.barcode_text &&
-        !isMachineReadCode((o.suggested_metadata as { barcode_source?: string } | null)?.barcode_source),
-    )?.barcode_text;
-    const adoptBarcode = (primaryAiBarcode || !primary.barcode_text) && scannedBarcode ? scannedBarcode : null;
-    // Never lose the user's real photo on a merge: if the kept item has no photo
-    // of its own but a merged one does, carry it over (e.g. "keep the scanned
-    // listing" still keeps the picture you took).
-    const adoptPhoto = !primary.image_file_id ? others.find((o) => o.image_file_id)?.image_file_id ?? null : null;
-    await db
-      .updateTable("core_scan_inbox_items")
-      .set({
-        quantity: totalQty,
-        ...(adoptBarcode ? { barcode_text: adoptBarcode } : {}),
-        ...(adoptPhoto ? { image_file_id: adoptPhoto } : {}),
-        ...(unionedCandidates ? { suggested_candidates: JSON.stringify(unionedCandidates) as never } : {}),
-        suggested_metadata: mergeMeta(
-          {
-            ...(barcodes.length ? { merged_barcodes: barcodes } : {}),
-            merged_count: rows.length,
-            // What Undo combine gives back (#3639), from either row.
-            combine_undo: {
-              absorbed: others.map((o) => o.id),
-              quantity_before: filedQuantityOf(primary.quantity),
-              quantity_after: totalQty,
-              barcode_before: primary.barcode_text,
-              barcode_after: adoptBarcode ?? primary.barcode_text,
-              image_before: primary.image_file_id,
-              image_after: adoptPhoto ?? primary.image_file_id,
-              candidates_before: primary.suggested_candidates ?? [],
-              candidates_after: unionedCandidates ?? primary.suggested_candidates ?? [],
-              merged_barcodes_before: meta.merged_barcodes ?? null,
-              merged_count_before: meta.merged_count ?? null,
-              previous: (meta.combine_undo as CombineUndo | undefined) ?? null,
-            } satisfies CombineUndo,
-          },
-          // Adopting a merged item's barcode means its AI-photo-read barcode_source
-          // no longer applies — drop it (what metaNoSource used to do by omission).
-          adoptBarcode ? ["barcode_source"] : [],
-        ) as never,
-        updated_at: new Date(),
-      })
-      .where("id", "=", primary.id)
-      .execute();
-    // Losers carry a marker: their quantities were SUMMED into the primary, so
-    // restoring one alone would double-count. Their way back is Undo combine
-    // (scan-recovery.ts), which returns both rows.
-    await db
-      .updateTable("core_scan_inbox_items")
-      .set({
-        status: "discarded",
-        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || jsonb_build_object('combined_into', ${primary.id}::text)` as never,
-        updated_at: new Date(),
-      })
-      .where(
-        "id",
-        "in",
-        others.map((o) => o.id),
-      )
-      .execute();
-    await appendScanHistory(db, primary.id, { action: "combine", note: `${countOf(rows.length, "item")}` });
+    await combineInboxRows(db, rows, primary.id, { unique: uniqueKind });
     res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", primary.id).executeTakeFirst());
   }),
 );

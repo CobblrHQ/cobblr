@@ -439,6 +439,9 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
       : parsed.data.reusable
         ? null
         : new Date(Date.now() + 14 * 24 * 3600_000);
+    if (expiresAt && expiresAt <= new Date()) {
+      return void res.status(400).json({ error: { code: "already_over", message: "That end date has already passed, so nobody could use this invite. Pick a later one." } });
+    }
     const pace = parsed.data.reusable ? (parsed.data.pace === undefined ? DEFAULT_JOIN_PACE : parsed.data.pace) : null;
     const token = newInviteToken();
     const inserted = await meta

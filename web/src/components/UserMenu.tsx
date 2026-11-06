@@ -410,7 +410,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
         className="relative flex items-center gap-[6px] px-[8px] py-[4px] rounded-md text-xs text-muted dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700/60 transition"
         title={`${user.display_name}: account menu`}
       >
-        <span className="font-medium">{user.display_name}</span>
+        <span className="font-medium truncate max-w-40">{user.display_name}</span>
         {isAdmin && <SuperAdminChip />}
         {/* Bundle-updates signal, visible without opening the menu, on the
             chevron rather than the button's corner: on a phone the button is

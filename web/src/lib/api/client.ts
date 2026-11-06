@@ -23,7 +23,7 @@ import { markWorkspaceUnfinished, slugOfRequest } from "../workspace-unfinished"
 import { announceScanFiled } from "../scanFiled";
 import type { ScanFiledChange } from "../scanFiled";
 
-const TOKEN_KEY = "cobblr.token";
+export const TOKEN_KEY = "cobblr.token";
 
 /** The signed-in account's own token: not a share's View as, not a station's. */
 export function accountToken(): string | null {

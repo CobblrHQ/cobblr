@@ -9,6 +9,7 @@
 // itself: the camera, Re-run AI with its live running state, and an
 // overflow for the rest. The card's brain (InboxCard) computes everything.
 import { lineRuns } from "../lib/placeLine";
+import { MetaFlow } from "../components/MetaParts";
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
 import { thumbnailFit, thumbnailTextHeavy, type ThumbFit } from "@cobblr/platform-contract/thumbnail-fit";
@@ -16,7 +17,7 @@ import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-too
 import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
+import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, MoreHorizontal, PackagePlus, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
 import { NumberStepper, OverlayLayer, useEscapeToClose, useMenuFocus, useLockPageScroll } from "@cobblr/platform-web";
 import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
@@ -149,10 +150,14 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
   const name = displayName(item);
   const nameless = !name;
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
-  // The right column's budget at 393px: the card's 24px of padding and a
-  // 64px photo column with a 12px gap leave 293px; the quantity control
-  // (~84px) and three 40px tools with 6px gaps take 222px. One rendered
-  // row, on every ordinary card, whatever the picture's height.
+  // The right column's budget at 390px is 280px: the quantity control, Photo and
+  // the overflow fit on one row.
+  const tools: ScanPhoneRowAction[] = [
+    ...(p.rerun.can
+      ? [{ label: p.rerun.failed ? "Retry the AI" : "Re-run AI", hint: "A fresh look at the photo and the code", busy: p.rerun.running, onClick: p.rerun.onRun }]
+      : []),
+    ...p.more,
+  ];
   const tool = "inline-flex min-h-9 min-w-[40px] shrink-0 items-center justify-center gap-1 rounded-md border border-line dark:border-slate-700 px-[8px] text-xs text-content dark:text-mortar-100 disabled:opacity-50";
   return (
     <div
@@ -161,6 +166,13 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
         (p.selection?.selected ? "bg-cobble-50/60 dark:bg-cobble-900/20" : "bg-surface dark:bg-slate-900")
       }
     >
+      {/* Beside the picture, never on it. Its 44 px target reaches into the
+          row's gaps, so the box costs the text column little. */}
+      {p.selection?.active && (
+        <label className="-ml-[10px] -mr-[8px] shrink-0 self-start" onClick={stop}>
+          <input type="checkbox" checked={p.selection.selected} onChange={p.selection.onToggle} aria-label="Select for bulk action" className="block h-5 w-5 accent-cobble-600" />
+        </label>
+      )}
       {/* A fixed photo column on the left, the picture top-aligned and
           contained (a tall one capped, never cropped or stretched), and a
           text column whose rows start at the same edge on every card.
@@ -171,62 +183,68 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
         onClick={p.onViewImage ?? p.onOpen}
         aria-label={p.thumb ? "View the picture full size" : "Open the item"}
         title={p.thumb ? "View the picture full size" : "Open the item"}
-        className="w-[64px] shrink-0 overflow-hidden rounded-lg bg-subtle dark:bg-slate-800 flex items-center justify-center"
+        data-row-thumb=""
+        className="h-20 w-[64px] shrink-0 overflow-hidden rounded-lg bg-subtle dark:bg-slate-800 flex items-center justify-center"
       >
         {p.thumb ? (
-          // Turned: a 128 by 64 box, contained, rotated a quarter about its
-          // centre, sits inside a 64 by 128 frame (the row's height budget).
-          <span className={thumbFit.rotate ? "relative block h-[128px] w-[64px] overflow-hidden" : "block w-full"} data-rotate={thumbFit.rotate || undefined}>
+          // Every row's frame is 64 by 80, so rows line up and a picture arriving
+          // late moves nothing. Turned: an 80 by 64 box, contained, rotated a
+          // quarter about its centre, fills it.
+          <span className={thumbFit.rotate ? "relative block h-20 w-[64px] overflow-hidden" : "block h-full w-full"} data-rotate={thumbFit.rotate || undefined}>
             <img
               src={p.thumb}
               alt=""
-              className={thumbFit.rotate ? "absolute object-contain" : "max-h-44 w-full object-contain"}
-              style={thumbFit.rotate ? { width: 128, maxWidth: "none", height: 64, left: -32, top: 32, transform: "rotate(90deg)" } : undefined}
+              className={thumbFit.rotate ? "absolute object-contain" : "h-full w-full object-contain"}
+              style={thumbFit.rotate ? { width: 80, maxWidth: "none", height: 64, left: -8, top: 8, transform: "rotate(90deg)" } : undefined}
               onLoad={(e) => {
                 const img = e.currentTarget;
-                setThumbFit(thumbnailFit({ width: img.naturalWidth, height: img.naturalHeight }, { width: 64, maxHeight: 128 }, { textHeavy }));
+                setThumbFit(thumbnailFit({ width: img.naturalWidth, height: img.naturalHeight }, { width: 64, maxHeight: 80 }, { textHeavy }));
               }}
               onError={p.onThumbBroken}
             />
           </span>
         ) : (
-          <span className="flex h-16 w-full items-center justify-center">{p.pictureNote ?? <ScanLine size={22} className="text-faint dark:text-slate-600" />}</span>
+          <span className="flex h-full w-full items-center justify-center">{p.pictureNote ?? <ScanLine size={22} className="text-faint dark:text-slate-600" />}</span>
         )}
       </button>
-      {p.selection?.active && (
-        <label className="absolute left-1.5 top-1.5 z-10 rounded bg-white/85 dark:bg-slate-900/80 p-1 shadow-sm" onClick={stop}>
-          <input type="checkbox" checked={p.selection.selected} onChange={p.selection.onToggle} aria-label="Select for bulk action" className="block h-5 w-5 accent-cobble-600" />
-        </label>
-      )}
       <div className="min-w-0 flex-1 space-y-1">
-        {/* One flowing paragraph: the name, then the provenance and the
-            table's own fields as small inline tokens continuing on the name's
-            last line and wrapping from there (the owner: "flow the from after
-            the title's 2nd line"). Details floats at the top right, so only
-            the first line gives it room. The whole block opens the item. */}
-        <div role="button" tabIndex={0} onClick={p.onOpen} onKeyDown={(e) => { if (e.key === "Enter") p.onOpen(); }} className="cursor-pointer leading-snug">
-          <button type="button" onClick={(e) => { stop(e); p.onOpen(); }} className="float-right -mr-1 -mt-0.5 ml-2 inline-flex min-h-6 items-center gap-0.5 rounded-md px-1 text-xs font-medium text-accent">
-            Details <ChevronRight size={14} />
-          </button>
-          <span data-name className={"mr-2 text-[15px] " + (nameless ? "text-muted dark:text-slate-400" : "font-medium text-content dark:text-mortar-100")}>
-            {name ?? (p.readingReceipt ? RECEIPT_READING_TITLE : p.working ? "Reading…" : p.receipt ? RECEIPT_UNREAD_TITLE : "Name this item")}
-          </span>
+        {/* The name and Details, then the row's facts, then its fields: a line
+            each. As one flowing paragraph a reason wrapped into the category
+            and left a "·" hanging (#9269). The whole block opens the item. */}
+        <div role="button" tabIndex={0} onClick={p.onOpen} onKeyDown={(e) => { if (e.key === "Enter") p.onOpen(); }} className="cursor-pointer space-y-0.5 leading-snug">
+          <div className="flex items-start gap-2">
+            <span data-name className={"min-w-0 flex-1 text-[15px] [overflow-wrap:anywhere] " + (nameless ? "text-muted dark:text-slate-400" : "font-medium text-content dark:text-mortar-100")}>
+              {name ?? (p.readingReceipt ? RECEIPT_READING_TITLE : p.working ? "Reading…" : p.receipt ? RECEIPT_UNREAD_TITLE : "Name this item")}
+            </span>
+            <button type="button" onClick={(e) => { stop(e); p.onOpen(); }} className="-mr-1 -mt-0.5 inline-flex min-h-6 shrink-0 items-center gap-0.5 rounded-md px-1 text-xs font-medium text-accent">
+              Details <ChevronRight size={14} />
+            </button>
+          </div>
           {p.subtitle && (
-            <span data-testid="scan-card-meta" className="mr-2 text-[11px] text-faint dark:text-slate-500">
-              {lineRuns(p.subtitle).map((r, i) => (r.place ? <span key={i} data-place-run="" className="inline-block">{r.text}</span> : r.text))}
-            </span>
+            <div data-testid="scan-card-meta" className="text-[11px] text-faint dark:text-slate-500">
+              <MetaFlow
+                parts={p.subtitle.split(" · ").map((seg, i) => (
+                  <span key={i}>{lineRuns(seg).map((r, k) => (r.place ? <span key={k} data-place-run="" className="inline-block">{r.text}</span> : r.text))}</span>
+                ))}
+              />
+            </div>
           )}
-          {p.chips.map((c) => (
-            <span
-              key={c.key}
-              title={`${c.label}: ${c.value}${c.confirmed ? "" : " (suggested)"}`}
-              className={"mr-2 inline-flex items-baseline gap-1 whitespace-nowrap text-[11px] " + (c.confirmed ? "text-content dark:text-mortar-100" : "text-muted dark:text-slate-300")}
-            >
-              <span className="text-faint">{c.label}</span>
-              {c.swatch && <span className="inline-block h-2.5 w-2.5 self-center rounded-full border border-line dark:border-slate-600" style={{ background: c.swatch }} />}
-              {!c.swatch && <span className={c.confirmed ? "font-medium" : "underline decoration-dotted underline-offset-2"}>{c.value}</span>}
-            </span>
-          ))}
+          {p.chips.length > 0 && (
+            <div className="flex flex-wrap gap-x-2">
+              {p.chips.map((c) => (
+                <span
+                  key={c.key}
+                  data-chip=""
+                  title={`${c.label}: ${c.value}${c.confirmed ? "" : " (suggested)"}`}
+                  className={"inline-flex min-w-0 items-baseline gap-1 text-[11px] " + (c.confirmed ? "text-content dark:text-mortar-100" : "text-muted dark:text-slate-300")}
+                >
+                  <span className="shrink-0 text-faint">{c.label}</span>
+                  {c.swatch && <span className="inline-block h-2.5 w-2.5 self-center rounded-full border border-line dark:border-slate-600" style={{ background: c.swatch }} />}
+                  {!c.swatch && <span className={c.confirmed ? "font-medium" : "underline decoration-dotted underline-offset-2"}>{c.value}</span>}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         {p.working && <div className="text-[11px] text-accent animate-pulse">{p.working}</div>}
         {p.receipt && !p.working && <ScanReceiptUnread {...p.receipt} compact />}
@@ -353,27 +371,18 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             );
           })()}
           <span className="flex shrink-0 items-center gap-[6px]">
-          <button type="button" onClick={p.onCapture} className={tool + " min-w-[40px] justify-center"} aria-label="Photograph this item" title="Photograph this item">
-            <Camera size={15} />
+          {/* A word, not an icon alone. Re-run AI is in the sheet, where it has
+              a name and a line saying what it does; while it runs the row says
+              so (working), and a failed run has its Retry on the row. */}
+          <button type="button" data-row-tool="photo" onClick={p.onCapture} className={tool + " px-2"} aria-label="Photograph this item" title="Photograph this item">
+            <Camera size={15} /> Photo
           </button>
-          <button
-            type="button"
-            onClick={p.rerun.onRun}
-            disabled={p.rerun.running || !p.rerun.can}
-            aria-busy={p.rerun.running}
-            aria-label={p.rerun.running ? (p.rerun.replaying ? "Replaying" : "Re-running the AI") : p.rerun.failed ? "Retry the AI" : "Re-run AI"}
-            data-state={p.rerun.running ? "running" : p.rerun.failed ? "failed" : "idle"}
-            title={p.rerun.running ? "Re-running: the AI is working on this item" : p.rerun.failed ? "Retry: ask the AI again" : "Re-run AI: a fresh look at the photo and the code"}
-            className={tool + " min-w-[40px] justify-center" + (p.rerun.failed && !p.rerun.running ? " border-amber-400/70 text-amber-700 dark:text-amber-300" : p.rerun.running ? " border-accent text-accent" : "")}
-          >
-            {p.rerun.running ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
-          </button>
-          {p.more.length > 0 && (
+          {tools.length > 0 && (
             <button title="More item tools" type="button" onClick={() => setMoreOpen(true)} aria-expanded={moreOpen} aria-label="More item tools" className={tool}>
               <MoreHorizontal size={14} />
             </button>
           )}
-          {moreOpen && <PhoneActionSheet title={name ?? "This item"} actions={p.more} hints={p.toolHints} onClose={() => setMoreOpen(false)} />}
+          {moreOpen && <PhoneActionSheet title={name ?? "This item"} actions={tools} hints={p.toolHints} onClose={() => setMoreOpen(false)} />}
           </span>
         </div>
         {p.commit && (
@@ -398,7 +407,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
 
 /** The compact filing pair: `[ Groceries ▾ ][ Add ]`. The destination and its
  *  override on the left in the card's own colours; the small action on the
- *  right is the only coloured thing: green to add, amber to review. Picking
+ *  right is the only coloured thing: the session's Add colour to add, amber to review. Picking
  *  never files.
  *
  *  The action is a FILLED segment with its own left edge in every state,
@@ -418,8 +427,8 @@ function PhoneCommit({ c, onReview }: { c: NonNullable<ScanPhoneRowProps["commit
       : c.kind === "install"
         ? { label: c.label, cls: "border-cobble-600 bg-cobble-600 text-white", icon: <Download size={13} />, onClick: c.onAdd, title: `${c.destination} is not set up yet; this installs it and files the item` }
         : c.kind === "merge"
-          ? { label: c.label, cls: "border-emerald-600 bg-emerald-600 text-white", icon: <PackagePlus size={13} />, onClick: c.onAdd, title: c.reason }
-          : { label: c.label, cls: "border-emerald-600 bg-emerald-600 text-white", icon: <CheckCircle size={13} />, onClick: c.onAdd, title: `File into ${c.destination}` };
+          ? { label: c.label, cls: "border-cobble-600 bg-cobble-600 text-white", icon: <PackagePlus size={13} />, onClick: c.onAdd, title: c.reason }
+          : { label: c.label, cls: "border-cobble-600 bg-cobble-600 text-white", icon: <CheckCircle size={13} />, onClick: c.onAdd, title: `File into ${c.destination}` };
   // The menu is the one every filing surface opens (DestinationPicker):
   // portalled, kept on the screen, scrolling its own list (#3930, #6527).
   return (

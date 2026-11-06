@@ -78,10 +78,14 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
     onError: (e) => toast.error(e instanceof KnowledgeApiError ? e.message : String(e)),
   });
 
+  // The categories the form offers, and any other one an entry already has: the
+  // API and the assistant can write any word, and a category with no chip could
+  // not be filtered to.
+  const kinds = [...new Set([...KINDS, ...(entries.data?.items ?? []).flatMap((e) => (e.kind ? [e.kind] : []))])];
   const items = (entries.data?.items ?? []).filter((e) => {
     if (kindFilter && e.kind !== kindFilter) return false;
     if (q.trim()) {
-      const hay = `${e.title} ${e.body ?? ""}`.toLowerCase();
+      const hay = `${e.title} ${e.body ?? ""} ${e.code ?? ""}`.toLowerCase();
       if (!hay.includes(q.trim().toLowerCase())) return false;
     }
     return true;
@@ -109,7 +113,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
           <Chip active={kindFilter === null} onClick={() => setKindFilter(null)}>
             All
           </Chip>
-          {KINDS.map((k) => (
+          {kinds.map((k) => (
             <Chip key={k} active={kindFilter === k} onClick={() => setKindFilter(k)}>
               {k}
             </Chip>
@@ -118,6 +122,11 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
       </div>
 
       {entries.isLoading && <div className="text-sm text-muted">Loading…</div>}
+      {addressed.isError && (
+        <div role="alert" className="rounded-lg border border-line dark:border-slate-700 p-3 text-sm text-muted">
+          That entry is not here any more. It may have been deleted.
+        </div>
+      )}
       {!entries.isLoading && items.length === 0 && (
         <div className="rounded-lg border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-muted italic">
           {q || kindFilter ? "No entries match." : "No entries yet. Capture a note, an SOP, a reference, a prompt."}
@@ -178,6 +187,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
           orgSlug={orgSlug}
           entry={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
+          onChanged={() => void qc.invalidateQueries({ queryKey: key })}
           onSaved={() => {
             setEditing(null);
             void qc.invalidateQueries({ queryKey: key });
@@ -219,20 +229,28 @@ function EntryThumb({ path }: { path: string | null }) {
 
 function EntryEditor({
   api,
-  entry,
+  entry: shown,
   orgSlug,
   onClose,
+  onChanged,
   onSaved,
 }: {
   api: KnowledgeApi;
   entry: Entry | null;
   orgSlug: string;
   onClose: () => void;
+  onChanged: () => void;
   onSaved: () => void;
 }) {
   const toast = useToast();
+  // The entry as this form opened, held still. The list behind it refreshes (a
+  // tab regaining focus is enough), and judging the form against the newer copy
+  // read a title saved in another tab as this form's own change: Save put the
+  // old one back and said Saved.
+  const [entry, setOpened] = useState(shown);
   const [title, setTitle] = useState(entry?.title ?? "");
   const [kind, setKind] = useState(entry?.kind ?? "");
+  const kindChoices = entry?.kind && !KINDS.includes(entry.kind) ? [entry.kind, ...KINDS] : KINDS;
   const [code, setCode] = useState(entry?.code ?? "");
   const [pinned, setPinned] = useState(entry?.pinned ?? false);
   const [body, setBody] = useState(entry?.body ?? "");
@@ -247,7 +265,11 @@ function EntryEditor({
       return api.uploadImage(entry.id, file);
     },
     onSuccess: (r) => {
+      // Stored the moment it uploads, so it is part of what this form opened on:
+      // Remove then Save has to mean removing it.
       setImagePath(r.image_path);
+      setOpened((o) => (o ? { ...o, image_path: r.image_path } : o));
+      onChanged();
       toast.success("Image added");
     },
     onError: (e) => toast.error(e instanceof KnowledgeApiError ? e.message : String(e)),
@@ -300,7 +322,7 @@ function EntryEditor({
         <div className="flex flex-wrap items-center gap-2">
           <select aria-label="Category" value={kind} onChange={(e) => setKind(e.target.value)} className="input">
             <option value=""> - category - </option>
-            {KINDS.map((k) => (
+            {kindChoices.map((k) => (
               <option key={k} value={k}>
                 {k}
               </option>

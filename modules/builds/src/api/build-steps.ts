@@ -21,13 +21,33 @@ export interface ComponentInput {
   notes?: string | null;
 }
 
-/** Add a component, refusing a build that would contain itself. */
-export async function addComponent(db: Db, buildId: string, c: ComponentInput) {
+/** Whether `from` holds `target` anywhere below it. */
+async function holds(db: Db, from: string, target: string): Promise<boolean> {
+  const seen = new Set<string>();
+  for (let next = [from]; next.length; ) {
+    next = next.filter((id) => !seen.has(id));
+    if (!next.length) return false;
+    for (const id of next) seen.add(id);
+    const lines = await db.selectFrom("builds_components").select("sub_assembly_build_id").where("build_id", "in", next).where("sub_assembly_build_id", "is not", null).execute();
+    next = lines.map((l) => l.sub_assembly_build_id!);
+    if (next.includes(target)) return true;
+  }
+  return false;
+}
+
+/** Add a component, refusing a build that would contain itself, directly or
+ *  through another: the engine skips a loop, so a build in one takes less than
+ *  its list says, and nothing says so. */
+export async function addComponent(db: Db, orgId: string, buildId: string, c: ComponentInput) {
+  const build = await db.selectFrom("builds_builds").select(["id"]).where("id", "=", buildId).executeTakeFirst();
+  if (!build) throw new ActionRefusal("That build is not here.");
   if (c.sub_assembly_build_id) {
     if (c.sub_assembly_build_id === buildId) throw new ActionRefusal("A build can't be its own sub-assembly.");
-    const sub = await db.selectFrom("builds_builds").select(["id"]).where("id", "=", c.sub_assembly_build_id).executeTakeFirst();
+    const sub = await db.selectFrom("builds_builds").select(["id", "name"]).where("id", "=", c.sub_assembly_build_id).executeTakeFirst();
     if (!sub) throw new ActionRefusal("That sub-assembly build is not here.");
+    if (await holds(db, sub.id, buildId)) throw new ActionRefusal(`${sub.name} is already made with this build, so it can't be part of it.`);
   }
+  if (c.part_id && !(await platform().entities.lookup(orgId, "inventory:part", c.part_id))) throw new ActionRefusal("That part is not here.");
   return db
     .insertInto("builds_components")
     .values({

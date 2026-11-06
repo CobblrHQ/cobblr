@@ -12,6 +12,7 @@
 // never blocked or failed by Discord being down.
 
 // EGRESS-FILE: operator-configured - the Discord webhook is the operator's setting (environment or the instance's own category overrides)
+import { announceEmbed } from "./announce-embed.js";
 import { meta } from "../db/meta.js";
 import { read as readFile } from "./files.js";
 import { announceEditUrl, announceWebhookUrl } from "./announce-url.js";
@@ -154,12 +155,7 @@ async function deliver(category: string, payload: AnnouncePayload, opts?: { wait
   }
   if (!cfg.enabled || !cfg.webhook) return MISS;
   const url = announceWebhookUrl(cfg.webhook, { wait: opts?.wait, threadId: payload.threadId });
-  const embed = {
-    title: payload.title.slice(0, 256),
-    description: payload.body ? payload.body.slice(0, 4000) : undefined,
-    color: payload.color,
-    fields: payload.fields?.slice(0, 10),
-  };
+  const embed = announceEmbed(payload);
 
   // With screenshots: upload the bytes to the webhook as file attachments
   // (multipart) — Discord renders image attachments inline, and there's no
@@ -351,12 +347,7 @@ export async function editAnnouncement(
     return false;
   }
   if (!cfg.enabled || !cfg.webhook) return false;
-  const embed = {
-    title: payload.title.slice(0, 256),
-    description: payload.body ? payload.body.slice(0, 4000) : undefined,
-    color: payload.color,
-    fields: payload.fields?.slice(0, 10),
-  };
+  const embed = announceEmbed(payload);
   try {
     const r = await fetch(announceEditUrl(cfg.webhook, ref.messageId), {
       method: "PATCH",

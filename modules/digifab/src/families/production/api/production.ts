@@ -6,7 +6,7 @@ import { likeEscape } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../../../db.js";
 import { asyncHandler, requireRole } from "../../../api/util.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
-import { productionMutation, productionControl, exportProductionReport } from "../production-actions.js";
+import { productionErrorText, productionMutation, productionControl, exportProductionReport } from "../production-actions.js";
 export const productionRouter = Router({ mergeParams: true });
 productionRouter.get("/:collection", asyncHandler(async (req, res) => {
  if (!requireRole(req, res, "member")) return;
@@ -35,7 +35,7 @@ productionRouter.post("/", asyncHandler(async (req, res) => {
  if (!(await requireCapability(req, res, "digifab:production-test"))) return;
  const input = z.object({ operation: z.string().max(40), fields: z.unknown() }).strict().parse(req.body);
  try { res.json(input.operation === "export" ? await exportProductionReport(tenantDb(req), tenantContext(req).org.id, input.fields) : await productionMutation(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, input.operation, input.fields)); }
- catch (error) { res.status(409).json({ error: { message: error instanceof Error ? error.message : "Production test could not finish." } }); }
+ catch (error) { res.status(409).json({ error: { message: productionErrorText(error, "Production test could not finish.") } }); }
 }));
 // AI-ACTION: digifab:production-control, digifab:production-abort
 // UI-SCREEN: /station/production/:connectionId starts, answers and aborts through the digifab:production-control and digifab:production-abort actions
@@ -45,5 +45,5 @@ productionRouter.post("/control", asyncHandler(async (req, res) => {
  if (aborting ? !(await requireCapability(req, res, "digifab:production-abort")) : !(await requireCapability(req, res, "digifab:production-control"))) return;
  const input = z.object({ operation: z.enum(["start", "answer", "abort"]), fields: z.unknown() }).strict().parse(req.body);
  try { res.json(await productionControl(tenantDb(req), tenantContext(req).org.id, input.operation, input.fields)); }
- catch (error) { res.status(409).json({ error: { message: error instanceof Error ? error.message : "The station could not finish this action." } }); }
+ catch (error) { res.status(409).json({ error: { message: productionErrorText(error, "The station could not finish this action.") } }); }
 }));

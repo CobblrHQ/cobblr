@@ -22,7 +22,9 @@ import { orderAvailability } from "../availability.js";
 import { fulfilOrder } from "../fulfilment.js";
 import { nextOrderNumber } from "../order-number.js";
 import { orderHappened, readHistory } from "../history.js";
-import { addLine, changeLine, removeLine } from "../order-lines.js";
+import { addLine, changeLine, LineRefused, MOST_A_LINE_COSTS, MOST_ON_A_LINE, removeLine } from "../order-lines.js";
+import { canBeAName } from "@cobblr/platform-contract/readable-text";
+import { isSaleDay } from "../sale-day.js";
 import { cancelOrder, reinstateOrder } from "../cancel.js";
 import { shipOrder, shipPreview } from "../ship.js";
 import { workOrdersFor } from "../work-orders.js";
@@ -40,27 +42,30 @@ import { closeDeliveredOrder, undoDeliveryClose } from "../close-delivered.js";
 
 const OrderCreate = z.object({
   customer_id: z.string().uuid().nullable().optional(),
-  customer_name: z.string().max(200).nullable().optional(),
+  /** Blank is no customer named; anything else is a name to read on one line. */
+  customer_name: z.string().trim().max(200).refine((name) => !name || canBeAName(name), "A name needs something to read, on one line.").transform((name) => name || null).nullable().optional(),
   order_number: z.string().max(160).nullable().optional(),
   status: Status.optional(),
-  paid: z.boolean().optional(),
-  order_date: z.string().nullable().optional(),
+  /** A column may hold a time; the day is what the order is filed under. */
+  order_date: z.string().refine((day) => isSaleDay(day.slice(0, 10)), "That is not a day a sale can be on.").nullable().optional(),
   /** When the customer wants it: an ISO date. */
-  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "a due date is YYYY-MM-DD").nullable().optional(),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "a due date is YYYY-MM-DD").refine(isSaleDay, "That is not a day a sale can be on.").nullable().optional(),
   shipping_address: z.string().max(2_000).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
-const OrderUpdate = OrderCreate.partial();
+// Paid is read from the payments (#8838): a new order has none, so only a change can tick it.
+const OrderUpdate = OrderCreate.extend({ paid: z.boolean().optional() }).partial();
 
-const ItemCreate = z.object({
+const Item = z.object({
   part_id: z.string().uuid().nullable().optional(),
   description: z.string().max(500).nullable().optional(),
-  qty: z.number().positive(),
-  unit_price: z.number().nullable().optional(),
+  qty: z.number().finite().positive().max(MOST_ON_A_LINE),
+  unit_price: z.number().finite().min(-MOST_A_LINE_COSTS).max(MOST_A_LINE_COSTS).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
-const ItemUpdate = ItemCreate.partial();
+const ItemCreate = Item.refine((line) => line.part_id || line.description?.trim(), "Say what is being sold: a description, or a part you track.");
+const ItemUpdate = Item.partial();
 
 // Resolve the customer_name to store: a linked customer's name when customer_id
 // is set, else the explicit text. undefined = leave as-is.
@@ -80,6 +85,15 @@ async function customerNameFor(
   }
   if (customerId === null) return customerName ?? null;
   return customerName;
+}
+
+/** A linked customer has to be one in this collection. Answers for the route when it is not. */
+async function customerIsHere(req: import("express").Request, res: import("express").Response, customerId: string | null | undefined): Promise<boolean> {
+  if (!customerId) return true;
+  const found = await tenantDb(req).selectFrom("sales_customers").select("id").where("id", "=", customerId).where("instance", "=", instanceOf(req)).executeTakeFirst();
+  if (found) return true;
+  res.status(404).json({ error: { code: "customer_not_found", message: "That customer is not here any more. Choose another." } });
+  return false;
 }
 
 /** The order in the path, if it is in this collection. A line route checked
@@ -265,6 +279,7 @@ ordersRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = OrderCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
+    if (!(await customerIsHere(req, res, parsed.data.customer_id))) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const customerName = await customerNameFor(req, parsed.data.customer_id, parsed.data.customer_name);
@@ -317,6 +332,7 @@ ordersRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
       return;
     }
+    if (!(await customerIsHere(req, res, parsed.data.customer_id))) return;
     // Picking "fulfilled", "shipped" or "closed" from the status list must not
     // be a second way to ship: it would close an order whose parts never left
     // stock. While a tracked part is still owed, the way there is Fulfill.
@@ -663,7 +679,7 @@ ordersRouter.patch(
     try {
       row = await changeLine(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, req.params.itemId!, parsed.data);
     } catch (error) {
-      if (!isActionRefusal(error)) throw error;
+      if (!isActionRefusal(error) || error instanceof LineRefused) throw error;
       res.status(409).json({ error: { code: "qty_already_fulfilled", message: error.message } });
       return;
     }

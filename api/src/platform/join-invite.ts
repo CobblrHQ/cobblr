@@ -178,6 +178,9 @@ export async function joinThroughInvite(
       await trx.insertInto("workspace_invite_uses").values({ invite_id: invite.id, user_id: userId, new_account: !!opts.newAccount }).execute();
       return null;
     }
+    // Someone already inside isn't who this invite is for: opening the link to
+    // see that it works, or a member given it twice, must leave it for that person.
+    if (existing) return null;
     // Clearing declined_at matters: a browser run produced one invite marked
     // BOTH accepted and declined. Accepting is the later, stronger answer, so
     // it erases the earlier no rather than sitting beside it.
@@ -190,9 +193,7 @@ export async function joinThroughInvite(
       .returning("id")
       .executeTakeFirst();
     if (!claimed) return { code: "consumed" };
-    if (!existing) {
-      await trx.insertInto("org_memberships").values({ user_id: userId, org_id: invite.org_id, role: invite.role }).onConflict((oc) => oc.columns(["user_id", "org_id"]).doNothing()).execute();
-    }
+    await trx.insertInto("org_memberships").values({ user_id: userId, org_id: invite.org_id, role: invite.role }).onConflict((oc) => oc.columns(["user_id", "org_id"]).doNothing()).execute();
     return null;
   });
   if (refused) {

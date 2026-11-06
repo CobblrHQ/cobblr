@@ -7,7 +7,7 @@
 // PERMANENT RECONCILE: every roll runs two apis side by side.
 // BORN WITH: enableModuleForOrg (a fresh enable applies every migration this api carries).
 import { platform } from "@cobblr/platform-contract";
-import { behindModulesByOrg, catchUpOrgMigrations } from "../modules/enable.js";
+import { behindModulesByOrg, catchUpOrgMigrations, deferredMigrations, isBeingCaughtUp } from "../modules/enable.js";
 
 export const CATCH_UP_PASS = "platform.tenant-migrations-catch-up";
 
@@ -19,17 +19,27 @@ export function registerTenantMigrationsCatchUp(): void {
     // first round comes after it, so what it made last is caught.
     firstAfterMs: 90_000,
     // Meta-side only: a settled instance opens no tenant pool.
-    candidates: async (orgIds) => [...(await behindModulesByOrg(orgIds)).keys()],
+    // One the after-listen catch-up still has is that catch-up's, at its pace.
+    candidates: async (orgIds) => [...(await behindModulesByOrg(orgIds)).keys()].filter((id) => !isBeingCaughtUp(id)),
     visit: async ({ orgId }) => ({ applied: await catchUpOrgMigrations(orgId) }),
   });
 }
 
 let lastPoke = 0;
+let poked: Promise<unknown> | null = null;
 
-/** /healthz found a workspace behind: run the pass for it now, not at the
- *  next round, so a roll re-reading health sees it settle. At most every 30 s. */
+/** /healthz found a workspace behind: run the pass for them now, not at the
+ *  next round, so a roll re-reading health sees it settle. At most every 30 s,
+ *  one round at a time, and not while the after-listen catch-up is at work:
+ *  health is read every few seconds through exactly the catch-up it must not
+ *  add to (#9280). */
 export async function catchUpBehindSoon(now = Date.now()): Promise<void> {
-  if (now - lastPoke < 30_000) return;
+  if (now - lastPoke < 30_000 || poked || deferredMigrations()?.left) return;
   lastPoke = now;
-  for (const orgId of (await behindModulesByOrg()).keys()) platform().sweeps.soon(CATCH_UP_PASS, orgId);
+  const orgIds = [...(await behindModulesByOrg()).keys()];
+  if (!orgIds.length) return;
+  poked = platform().sweeps.run(CATCH_UP_PASS, { orgIds }).finally(() => {
+    poked = null;
+  });
+  await poked;
 }

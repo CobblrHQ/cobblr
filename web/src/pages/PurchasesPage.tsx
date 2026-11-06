@@ -1,5 +1,5 @@
 import { lineFigures, lineAmount } from "./purchase-line-figures";
-import { SelectBox, OnceQuiet, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout, useRecordEdits, editOf } from "@cobblr/platform-web";
+import { useRecordAsOpened, SelectBox, OnceQuiet, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout, useRecordEdits, editOf } from "@cobblr/platform-web";
 import { formatUnitPrice } from "@cobblr/platform-contract/money";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
@@ -1510,7 +1510,7 @@ function VendorDetailPane({
 
 function VendorForm({
   slug,
-  vendor,
+  vendor: shown,
   onDone,
   onCancel,
 }: {
@@ -1519,6 +1519,7 @@ function VendorForm({
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const vendor = useRecordAsOpened(shown);
   const toast = useToast();
   const [name, setName] = useState(vendor?.name ?? "");
   const [website, setWebsite] = useState(vendor?.website ?? "");

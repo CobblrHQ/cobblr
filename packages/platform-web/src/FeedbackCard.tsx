@@ -235,10 +235,10 @@ export function FeedbackCard({
           </a>
         )}
       </div>
-      {source.publish && onPublish && f.status === "resolved" && !f.published_at && (f.held_summary || f.held_reply) && (
+      {source.publish && onPublish && (f.held_reply || (f.status === "resolved" && !f.published_at && f.held_summary)) && (
         <div className="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-2 space-y-1.5 text-xs" role="group" aria-label="Held until you publish">
           <div className="font-medium">Held until you publish</div>
-          {f.held_summary && (
+          {f.status === "resolved" && !f.published_at && f.held_summary && (
             <div>
               <span className="text-faint dark:text-slate-500">Public card: </span>
               {f.held_summary}
@@ -247,7 +247,7 @@ export function FeedbackCard({
           {f.held_reply && (
             <div>
               <span className="text-faint dark:text-slate-500">To the reporter: </span>
-              {f.held_reply.message ?? "the default “fixed” line"}
+              {f.held_reply.message ?? (f.status === "resolved" ? "the default “fixed” line" : "the default line for this status")}
             </div>
           )}
           <button
@@ -256,7 +256,7 @@ export function FeedbackCard({
             disabled={publishing}
             onClick={onPublish}
           >
-            {publishing ? "Publishing…" : f.held_reply ? "Publish and send" : "Publish"}
+            {publishing ? "Publishing…" : !f.held_reply ? "Publish" : f.status === "resolved" && !f.published_at ? "Publish and send" : "Send"}
           </button>
         </div>
       )}

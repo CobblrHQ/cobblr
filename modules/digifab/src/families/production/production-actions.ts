@@ -3,18 +3,25 @@ import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { sql, type Kysely, type Selectable } from "kysely";
-import { likeEscape, platform, readJsonArg, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { argumentRefusal, likeEscape, platform, readJsonArg, type ActionInvokeContext } from "@cobblr/platform-contract";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 import type { ProductionTestResult } from "@cobblr/platform-contract/production-test";
 import { stepChangesHardware, validateProductionPlan, type ProductionStep } from "@cobblr/platform-contract/production-test";
 import { configuredControl } from "../../bench.js";
+import { bridgeErrorText } from "../../bridge-wait.js";
 import { pinProgramImages } from "./production-firmware.js";
 import type { DigifabDB } from "../../db.js";
 import { PrepareAttempt, ProductionUnitRef, saveProductionPlan, prepareProductionAttempt, finishProductionAttempt, verifyProductionResult, productionUnitHistory } from "./production-store.js";
 import { NewProductionUnit, NewProductionJig, mintProductionUnit, saveProductionJig, reconcileProductionJig } from "./production-records.js";
 import { productionStatistics, productionCertificate } from "./production-reports.js";
 const uuid = z.string().uuid();
+/** A refused production step in words: a bad form names its field, and a row that
+ *  is not there says so rather than the database driver's "no result". */
+export function productionErrorText(error: unknown, otherwise: string): string {
+ if (error instanceof Error && error.message === "no result") return "That test attempt, plan or jig is not in this workspace.";
+ return argumentRefusal(error) ?? bridgeErrorText(error, otherwise);
+}
 // Run fields a person may not set: the test keeps these itself (#7174).
 const RESERVED_RUN_FIELDS = new Set(["jig_pins"]);
 export const PrepareStation = PrepareAttempt.omit({ operator_id: true, unit_snapshot: true }).extend({ bridge_connection_id: uuid });
@@ -218,7 +225,7 @@ export function registerProductionTest() {
     if (operation === "report") return { ok: true, result: productionStatistics(await productionReportRows(db, fields)) };
     if (operation === "bridge") return { ok: true, result: await (await bridge(ctx.orgId, uuid.parse(fields.connection_id)))("read", {}) };
     return { ok: false, error: "Choose history, report, artifact or bridge." };
-   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Production test could not finish this action." }; }
+   } catch (error) { return { ok: false, error: productionErrorText(error, "Production test could not finish this action.") }; }
   });
  }
  platform().actions.registerPlanner("digifab.production-control", async ctx => {

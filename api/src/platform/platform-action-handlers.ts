@@ -14,6 +14,7 @@ import { sendOutboundTest } from "./outbound-email.js";
 import { setFaces } from "./faces.js";
 import { FACE_LABELS, FACE_NAMES, type FaceName } from "@cobblr/platform-contract";
 import { registerPushDeviceHandlers } from "./push-device-actions.js";
+import { registerApiTokenHandlers } from "./api-token-actions.js";
 import { importSendFile, undoSendFileImport } from "./record-send-import.js";
 import { confirmSendFile, restoreSendFileSource } from "./record-send-file-confirm.js";
 import { ExportFileBody, ImportFileBody, sendFileInput, parseSendFile } from "../routes/record-send-file.js";
@@ -402,6 +403,7 @@ export function registerPlatformActionHandlers(): void {
     return parsed.success ? { action_id: "platform:arrange-record-panels", args: { kind: parsed.data.kind, layout: parsed.data.before, expected_revision: parsed.data.revision } } : null;
   });
   registerPushDeviceHandlers();
+  registerApiTokenHandlers();
   registerPlanner("platform.edit-record-actions", async (ctx) => {
     const resolved = await resolveRecordActionArrangement(ctx);
     if (!resolved.ok) return { error: resolved.error };

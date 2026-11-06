@@ -39,9 +39,11 @@ const FEEDBACK: Rule = { max: 10, windowMs: 60_000 };       // feedback submissi
  *  bearer-token session, and a stolen token must not get unlimited tries. */
 const CREDENTIAL_PATHS = new Set(["/try/set-password", "/try/resend-link"]);
 
-export function classify(path: string): { cls: string; rule: Rule } | null {
+export function classify(path: string, method?: string): { cls: string; rule: Rule } | null {
   if (path.startsWith("/auth/") || CREDENTIAL_PATHS.has(path)) return { cls: "auth", rule: AUTH };
-  if (path.startsWith("/feedback")) return { cls: "feedback", rule: FEEDBACK };
+  // Submissions and replies, not reading them: the limit is what a stranger's
+  // loop costs, and paging one's own reports spent it until sending one was refused.
+  if (path.startsWith("/feedback")) return method === "GET" || method === "HEAD" ? null : { cls: "feedback", rule: FEEDBACK };
   if (
     path.startsWith("/public/") ||
     path.startsWith("/calendar/") ||
@@ -134,7 +136,7 @@ function deny(rule: Rule, reason: string, name: string, key: "address" | "global
 // Pure decision core — takes the counter state + clock so it's testable without
 // touching the module-global map or the registration seam.
 export function decide(
-  ctx: Pick<RequestGuardCtx, "ip" | "path">,
+  ctx: Pick<RequestGuardCtx, "ip" | "path"> & Partial<Pick<RequestGuardCtx, "method">>,
   cfg: GuardConfig,
   now: number,
   state: Map<string, number[]> = hits,
@@ -151,7 +153,7 @@ export function decide(
   sweep(state, now, widest);
 
   // 1. Path-class brute-force limit (auth / feedback / anon).
-  const hit = classify(ctx.path);
+  const hit = classify(ctx.path, ctx.method);
   if (hit && !allow(state, `${hit.cls}:${ctx.ip}`, hit.rule, now)) {
     return deny(hit.rule, "Too many requests — slow down and try again shortly.", hit.cls, "address");
   }

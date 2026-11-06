@@ -21,7 +21,7 @@ export { useCan, useCapabilities, useMayDelete, useRoleAtLeast, capabilityAllows
 export { rowOpen, ROW_OWN_CONTROLS } from "./row-open";
 export { EntityActionsBar, useRecordActions } from "./EntityActionsBar";
 export { HoldsQuiet, OnceQuiet, useOnceQuiet, PAGE_HOLD_CAP_MS, PageHoldsStill, usePageShowsAtOnce } from "./OnceQuiet";
-export { changedFrom, editOf, type Edit } from "./changed-from";
+export { changedFrom, editOf, useRecordAsOpened, type Edit } from "./changed-from";
 export { useRecordEdits, withSaved } from "./record-edits";
 export { RecordHeaderChips } from "./RecordHeaderChips";
 export { AllergenPills, allergenWords } from "./AllergenPills";

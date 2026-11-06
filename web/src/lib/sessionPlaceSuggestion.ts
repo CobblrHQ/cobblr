@@ -75,12 +75,47 @@ export function suggestedPlaces(rows: readonly Row[]): Array<{ place: string; wh
   return [...out.values()];
 }
 
+/** The one place more than half of the session's suggested rows go, with how
+ *  many go elsewhere: the session says it once and only those read their own
+ *  (#9269). Null when no place has the majority. Pure. */
+export function sessionMostPlace(rows: readonly Row[]): { place: string; why: string; elsewhere: number } | null {
+  const votes = new Map<string, { place: string; why: string; n: number }>();
+  let total = 0;
+  for (const r of rows) {
+    const s = r.target_location_id ? null : suggestedPlace(r);
+    if (!s) continue;
+    total++;
+    const v = votes.get(s.id) ?? { place: s.place, why: s.why, n: 0 };
+    v.n++;
+    votes.set(s.id, v);
+  }
+  for (const v of votes.values()) if (v.n * 2 > total) return { place: v.place, why: v.why, elsewhere: total - v.n };
+  return null;
+}
+
+/** Reasons that more than one of the session's rows would each repeat. Pure. */
+export function sessionSharedWhy(rows: readonly Row[]): Set<string> {
+  const seen = new Set<string>(), twice = new Set<string>();
+  for (const r of rows) {
+    const s = r.target_location_id ? null : suggestedPlace(r);
+    if (!s) continue;
+    if (seen.has(s.why)) twice.add(s.why);
+    seen.add(s.why);
+  }
+  return twice;
+}
+
 /** The place the session's filing line names ("Add 1 to Spices, in Kitchen ›
  *  Spice rack"): the one the session is set to, else the suggestion filing will
  *  use, said as a suggestion. Null when there is nothing to name (#4582). */
-export function placeForFilingLine(setPlace: string | null, suggested: ReadonlyArray<{ place: string; why: string }>): string | null {
+export function placeForFilingLine(
+  setPlace: string | null,
+  suggested: ReadonlyArray<{ place: string; why: string }>,
+  most?: { place: string; why: string; elsewhere: number } | null,
+): string | null {
   if (setPlace) return setPlace;
   if (suggested.length === 1) return `${suggested[0]!.place} (${suggested[0]!.why})`;
+  if (most) return `${most.place} (${most.why}), ${most.elsewhere} elsewhere`;
   if (suggested.length > 1) return `${suggested.length} places, each item's own`;
   return null;
 }

@@ -81,9 +81,9 @@ export class TrackingApi {
   createMetric(body: { name: string; unit?: string; goal_value?: number; goal_direction?: GoalDirection }) {
     return this.req<MetricSummary>("POST", "/metrics", body);
   }
-  /** Save custom fields on a metric; merged into what it holds. `edit` from
-   *  editOf (#7925). */
-  updateMetric(id: string, edit: Edit<{ metadata: Record<string, unknown> }>) {
+  /** Save a metric's own fields, or custom fields, which merge into what it
+   *  holds. `edit` from editOf (#7925). */
+  updateMetric(id: string, edit: Edit<{ name?: string; unit?: string | null; goal_value?: number | null; goal_direction?: GoalDirection; metadata?: Record<string, unknown> }>) {
     return this.req<MetricSummary>("PATCH", `/metrics/${id}`, edit.body, edit.headers);
   }
   deleteMetric(id: string) {

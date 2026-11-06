@@ -1,4 +1,4 @@
-import { fieldNeed, FieldPack, RecordFormModal, DragInput, useConfirm, useToast, editOf } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, DragInput, useConfirm, useToast, editOf, useRecordAsOpened } from "@cobblr/platform-web";
 // Edit a tag: its name, colour, icon and parent, or merge it into another.
 // Shared by the tags list and a tag's own page.
 import { useState } from "react";
@@ -21,7 +21,7 @@ function descendantIds(tags: TagRecord[], rootId: string): Set<string> {
 
 export function EditTagModal({
   slug,
-  tag,
+  tag: shown,
   onClose,
   onSaved,
   onMerged,
@@ -39,6 +39,7 @@ export function EditTagModal({
   /** After Undo on a merge, the tag is back. */
   onUndone?: (id: string) => void;
 }) {
+  const tag = useRecordAsOpened(shown);
   const [name, setName] = useState(tag.name);
   const [color, setColor] = useState(tag.color ?? "#888888");
   const [icon, setIcon] = useState(tag.icon ?? "");

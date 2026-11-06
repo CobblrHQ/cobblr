@@ -18,11 +18,15 @@ export interface MemberRow {
 
 /** The rule applied to live membership.
  *  A `custom` list is intersected with membership, so a person removed from
- *  the workspace drops out of the audience without anyone editing it. */
+ *  the workspace drops out of the audience without anyone editing it, and when
+ *  nobody chosen is left it goes to the owners. */
 export function resolveAudience(rule: AudienceRule | null | undefined, members: readonly MemberRow[]): string[] {
   const ids = members.map((m) => String(m.user_id));
   if (!rule || rule.mode === "all") return ids;
   if (rule.mode === "owners") return members.filter((m) => m.role === "owner").map((m) => String(m.user_id));
   const chosen = new Set(rule.userIds.map(String));
-  return ids.filter((id) => chosen.has(id));
+  const told = ids.filter((id) => chosen.has(id));
+  // Everyone chosen has left: an alert nobody gets looks like nothing happening.
+  // The owners are who can pick someone new.
+  return told.length > 0 ? told : members.filter((m) => m.role === "owner").map((m) => String(m.user_id));
 }

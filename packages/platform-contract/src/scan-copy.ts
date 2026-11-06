@@ -247,7 +247,9 @@ export const AI_FAILED_SENTENCE = "The AI could not read this. Check the name.";
 
 /** A confident-enough score is not a reason; a low one asks for a look.
  *  `{pct}` is the whole-number percentage. */
-export const LOW_CONFIDENCE_SENTENCE = "Identified at {pct}% confidence. Check the name.";
+export const LOW_CONFIDENCE_SENTENCE = "Not sure what this is. Check the name.";
+/** The same doubt on a receipt line, where it has a reason a person can use. */
+export const LOW_CONFIDENCE_RECEIPT_SENTENCE = "The receipt's name doesn't say what this is. Check the name.";
 
 /** The one word on the action for each eligibility. */
 export const ACTION_ADD = "Add";

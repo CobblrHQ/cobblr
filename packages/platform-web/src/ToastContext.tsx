@@ -264,7 +264,9 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
         <button
           aria-label="Dismiss"
           onClick={() => dismiss(toast.id)}
-          className={`shrink-0 ${palette.icon} hover:opacity-75 mt-0.5`}
+          // A phone's 44 px target reaches into the toast's padding, or the toast
+          // grows to hold it and covers more than its words need (#9269).
+          className={`-my-3 -mr-1.5 inline-flex shrink-0 items-center justify-center self-start ${palette.icon} hover:opacity-75`}
           title="Dismiss"
         >
           <X size={14} />

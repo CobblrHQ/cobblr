@@ -26,6 +26,7 @@ import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { navTargetFor, INSTANCE_PREFIX } from "../components/useNavModules";
 import { initialViewId, rememberView, rememberedView } from "../lib/instance-view";
+import { ClearExpiredBar } from "../components/ClearExpired";
 import { SavedViewPage } from "./SavedViewPage";
 import { CollectionHeader, usePageWidth } from "@cobblr/platform-web";
 
@@ -298,6 +299,9 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
       <WithBundleFeatures slug={activeSlug} instance={inst.instance_name}>
       {/* An empty list made from a module can be taken away from here. */}
       {!showsOneThing && <RemoveEmptyList slug={activeSlug} inst={inst} />}
+      {/* What is past its date, cleared in one go: said at the top of the list the
+          rows are in, so the Groceries page offers what the dashboard card does. */}
+      {!showsOneThing && inst.module_name === "inventory" && <ClearExpiredBar slug={activeSlug} instance={inst.instance_name} kind={`${inst.instance_name}:item`} actionId="inventory:clear-expired" />}
       {shownView && showsOneThing && (
         <Link
           to={collectionPath || "."}

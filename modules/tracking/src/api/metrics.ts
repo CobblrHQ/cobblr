@@ -15,33 +15,38 @@ import { platform } from "@cobblr/platform-contract";
 import { z } from "zod";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { logMeasurement } from "./record.js";
+import { goalReached, logMeasurement, removeMeasurement } from "./record.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
-import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { readableNameField } from "@cobblr/platform-contract/readable-text";
 
 export const metricsRouter = Router({ mergeParams: true });
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? {})}::jsonb`;
 const num = (v: string | null) => (v == null ? null : Number(v));
 
-/** Progress toward goal as 0..1, direction-aware. null if no goal/data. */
+/** Progress toward goal as 0..1, direction-aware. null only with no goal or no
+ *  reading: the bar says "no goal" for null, so a goal with a reading always
+ *  has a number, and a goal met is always full, by the same test that tells
+ *  people it was reached. */
 function progress(latest: number | null, goal: number | null, dir: string, first: number | null): number | null {
   if (latest == null || goal == null) return null;
-  if (dir === "up") return goal === 0 ? null : Math.max(0, Math.min(1, latest / goal));
-  if (dir === "down") {
-    // from a starting point down to goal; needs a baseline (first reading)
-    if (first == null || first <= goal) return latest <= goal ? 1 : null;
-    return Math.max(0, Math.min(1, (first - latest) / (first - goal)));
-  }
-  // "hit": closeness to target, within 10% band = done
-  if (goal === 0) return latest === 0 ? 1 : 0;
-  return Math.max(0, Math.min(1, 1 - Math.abs(latest - goal) / Math.abs(goal)));
+  if (goalReached(latest, goal, dir)) return 1;
+  if (dir === "up") return goal <= 0 ? 0 : Math.max(0, latest / goal);
+  if (dir === "down") return first == null || first <= goal ? 0 : Math.max(0, (first - latest) / (first - goal));
+  if (goal === 0) return 0;
+  return Math.max(0, 1 - Math.abs(latest - goal) / Math.abs(goal));
 }
 
+/** A box left with only spaces in it is left blank. */
+const blankIsNone = (max: number) => optionalField(z.string().trim().max(max).transform((text) => text || null));
+
 const MetricCreate = z.object({
-  name: z.string().min(1).max(200),
-  unit: optionalText(40),
-  goal_value: optionalField(z.number()),
+  name: readableNameField(200),
+  unit: blankIsNone(40),
+  // JSON can spell a number too large to hold (1e400), which parses as Infinity
+  // and reads back as null.
+  goal_value: optionalField(z.number().finite()),
   goal_direction: z.enum(["up", "down", "hit"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   metadata: z.record(z.unknown()).optional(),
 });
@@ -54,6 +59,7 @@ async function latestFor(req: Parameters<typeof tenantDb>[0], metricId: string):
     .select(["value", "measured_at"])
     .where("metric_id", "=", metricId)
     .orderBy("measured_at", "asc")
+    .orderBy("created_at", "asc")
     .execute();
   if (rows.length === 0) return { latest: null, first: null, count: 0 };
   return { latest: Number(rows[rows.length - 1]!.value), first: Number(rows[0]!.value), count: rows.length };
@@ -128,6 +134,7 @@ metricsRouter.get(
       .select(["id", "value", "measured_at", "note"])
       .where("metric_id", "=", req.params.id!)
       .orderBy("measured_at", "asc")
+      .orderBy("created_at", "asc")
       .execute();
     const points = series.map((s) => ({ id: s.id, value: Number(s.value), measured_at: s.measured_at, note: s.note }));
     const goal = num(m.goal_value);
@@ -187,24 +194,35 @@ metricsRouter.delete(
     if (!requireRole(req, res, "owner", "admin")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
-      await trx.deleteFrom("tracking_metrics").where("id", "=", req.params.id!).execute();
-      await log({
+    const gone = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      const row = await trx.deleteFrom("tracking_metrics").where("id", "=", req.params.id!).returning(["id", "name"]).executeTakeFirst();
+      if (row) await log({
         orgId: ctx.org.id,
         userId: sessionUser(req)?.id ?? null,
         action: "metric_deleted",
-        ref: { module: "tracking", entityType: "metric", entityId: req.params.id! },
+        ref: { module: "tracking", entityType: "metric", entityId: row.id },
+        diff: { name: row.name },
       });
+      return row;
     });
+    if (!gone) return void res.status(404).json({ error: { code: "not_found", message: "Metric not found." } });
     void platform().events.emit("tracking.metric.deleted", { orgId: ctx.org.id, metricId: req.params.id });
     res.status(204).end();
   }),
 );
 
+// A day's grace for a clock that runs ahead. A reading dated further on would
+// stay the metric's latest until the calendar reached it.
+const LATEST_READING_AHEAD_MS = 24 * 60 * 60 * 1000;
+const canDateAReading = (at: string) => {
+  const instant = instantFromInput(at);
+  return instant != null && instant.getTime() <= Date.now() + LATEST_READING_AHEAD_MS;
+};
+
 const MeasurementCreate = z.object({
-  value: z.number(),
-  measured_at: z.string().datetime().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-  note: optionalText(2000),
+  value: z.number().finite(),
+  measured_at: z.string().datetime().refine(canDateAReading, "measured_at is when the reading was taken: a real date, not one still to come.").optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  note: blankIsNone(2000),
 });
 
 // AI-ACTION: tracking:log-measurement
@@ -249,8 +267,13 @@ metricsRouter.delete(
   "/measurements/:id",
   asyncHandler(async (req, res) => {
     if (!(await requireCapability(req, res, "tracking:remove-measurement"))) return;
-    const db = tenantDb(req);
-    await db.deleteFrom("tracking_measurements").where("id", "=", req.params.id!).execute();
+    const removed = await removeMeasurement({
+      db: tenantDb(req),
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      id: req.params.id!,
+    });
+    if (!removed) return void res.status(404).json({ error: { code: "not_found", message: "Measurement not found." } });
     res.status(204).end();
   }),
 );

@@ -1,7 +1,7 @@
 // Registers its Home tile with platform-web's registerDashboardWidget seam when this UI bundle loads.
 import "./DashboardWidget";
 import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
-import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, useRecordEdits, subscribeWaitingWrites, browserOffline } from "@cobblr/platform-web";
+import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, useRecordEdits, subscribeWaitingWrites, browserOffline, useRecordAsOpened } from "@cobblr/platform-web";
 // sales UI — the host mounts <SalesUI /> at /sales. A list of sales orders; the
 // detail modal carries the customer, line items (each an inventory part + qty +
 // price), a running total, and the **Fulfill** button that decrements the sold
@@ -1321,7 +1321,8 @@ function CustomersModal({ api, initialEditing, onClose }: { api: SalesApi; initi
   );
 }
 
-function CustomerForm({ api, customer, onDone, onCancel }: { api: SalesApi; customer?: CustomerSummary; onDone: () => void; onCancel: () => void }) {
+function CustomerForm({ api, customer: shown, onDone, onCancel }: { api: SalesApi; customer?: CustomerSummary; onDone: () => void; onCancel: () => void }) {
+  const customer = useRecordAsOpened(shown);
   const toast = useToast();
   const qc = useQueryClient();
   const [name, setName] = useState(customer?.name ?? "");

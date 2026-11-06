@@ -8,6 +8,7 @@ import { forgetKeptReads } from "../lib/offline";
 import { forgetWaitingWrites } from "@cobblr/platform-web";
 import { letGoOfAnotherAccountsPush, retirePushHere } from "../lib/push-device";
 import { getShareViewToken } from "../lib/share-view";
+import { followSignInsAcrossTabs } from "../lib/session-across-tabs";
 import { onSessionChange } from "../lib/session-identity";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -83,6 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void letGoOfAnotherAccountsPush();
     return onSessionChange(() => void letGoOfAnotherAccountsPush());
   }, []);
+
+  useEffect(() => followSignInsAcrossTabs(() => window.location.reload()), []);
 
   // Hydrate from /me on mount when a token's already present.
   useEffect(() => {
