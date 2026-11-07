@@ -3,7 +3,7 @@
 // (tracking:log-measurement) funnel through here so the goal-reached
 // check + notification fire identically no matter how a value arrives.
 
-import { type Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { TrackingDB, MeasurementsTable } from "../db.js";
 import type { Selectable } from "kysely";
@@ -18,6 +18,20 @@ export interface MetricLike {
 }
 
 const num = (v: string | null): number | null => (v == null ? null : Number(v));
+
+/** Whether a metric of this name is there, whatever its case, leaving out the
+ *  one being renamed. Holds the name until the transaction ends, so two people
+ *  making one at once are told one after the other. Metrics that shared a name
+ *  before this stay as they are. */
+export async function metricOfName(trx: Kysely<TrackingDB>, name: string, exceptId?: string): Promise<{ id: string } | undefined> {
+  await sql`select pg_advisory_xact_lock(hashtextextended(${`tracking-metric-name:${name.toLowerCase()}`}, 0))`.execute(trx);
+  let q = trx.selectFrom("tracking_metrics").select("id").where(sql<boolean>`lower(name) = lower(${name})`);
+  if (exceptId) q = q.where("id", "!=", exceptId);
+  return q.orderBy("created_at", "asc").orderBy("id", "asc").limit(1).executeTakeFirst();
+}
+
+/** A metric's name is taken: a person reading two "Weight"s cannot tell which is which. */
+export class MetricNameTaken extends Error {}
 
 /** Direction-aware: has `value` met `goal`? The bar in metrics.ts progress() is full on this same test. */
 export function goalReached(value: number, goal: number, dir: string): boolean {

@@ -23,6 +23,7 @@ import { gtinChecksumOk, isbn10ChecksumOk } from "@cobblr/platform-contract/iden
 import { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";
 import { preferredFactsName, primaryBrand } from "./catalog-normalize.js";
 import { isBookSource, replayMiss, writeCatalogCassette } from "./catalog-replay.js";
+import { isCatalogTestEntry } from "./catalog-test-entry.js";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export interface BarcodeHit {
@@ -207,8 +208,9 @@ async function tryOpenFacts(upc: string, host: string, source: string): Promise<
     `https://${host}/api/v2/product/${encodeURIComponent(upc)}.json`,
     OPF_TIMEOUT_MS,
   );
-  // A 404 is the catalog saying it has no such product; a 5xx is it not answering.
-  if (status >= 500) return UNREACHABLE;
+  // A 404 is the catalog saying it has no such product; a 5xx is it not answering,
+  // and so is a 429: it was asked to come back, which says nothing of the product.
+  if (status >= 500 || status === 429) return UNREACHABLE;
   const data = body as { status?: number; product?: Record<string, unknown> } | null;
   if (!data || data.status !== 1 || !data.product) return { kind: "miss" };
   const p = data.product;
@@ -716,6 +718,7 @@ export function isAdvertNotABook(hit: BarcodeHit): boolean {
  *  book: a book catalog's answer, or one carrying the ISBN decode or a books
  *  category, and never an advert in a book's record. */
 export function answerAgreesWithCode(code: string, hit: BarcodeHit): boolean {
+  if (isCatalogTestEntry(hit)) return false;
   if (codeKindOf(code) !== "book") return true;
   if (isAdvertNotABook(hit)) return false;
   return isBookSource(hit.source) || hit.decoder_id === "isbn" || /\bbooks?\b/i.test(hit.category ?? "");
@@ -730,6 +733,10 @@ export function answerAgreesWithCode(code: string, hit: BarcodeHit): boolean {
  *  never files a food. Every tier and a replayed cassette converge on this
  *  one point, so a tier added later inherits it. */
 function agreeWithCode(code: string, outcome: BarcodeOutcome): BarcodeOutcome {
+  if (outcome.outcome === "hit" && isCatalogTestEntry(outcome.hit)) {
+    console.log(`[core-scan] ${code}: ${outcome.hit.source} answered "${outcome.hit.title}", a test entry, so it is not taken`);
+    return { outcome: "miss" };
+  }
   if (outcome.outcome !== "hit" || answerAgreesWithCode(code, outcome.hit)) return outcome;
   console.log(`[core-scan] ${code} is a book's ISBN; ${outcome.hit.source} answered "${outcome.hit.title}", which is not a book, so it is not taken`);
   return { outcome: "miss", refused: outcome.hit };
@@ -852,6 +859,9 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
     // failing to answer: the APIs decide, and a miss from them stands.
     goRes = await tryGoUpc(norm).catch((): ProviderResult => ({ kind: "miss" }));
   }
+  // A test entry is no answer here, so the next catalog gets to give one.
+  const answered = (r: ProviderResult): ProviderResult => (r.kind === "hit" && isCatalogTestEntry(r.hit) ? { kind: "miss" } : r);
+  goRes = answered(goRes);
   if (goRes.kind === "hit") return { outcome: "hit", hit: withVia(goRes.hit, "direct") };
 
   // Fallback: upcitemdb ‖ Open Facts trio, each independently toggleable.
@@ -861,7 +871,7 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   const factsP: Promise<ProviderResult[]> = envBool("COBBLR_SCAN_OPENFACTS", true)
     ? Promise.all(OPEN_FACTS_DBS.map((db) => tryOpenFacts(norm, db.host, db.source).catch(unreachableOnThrow)))
     : Promise.resolve([]);
-  const [upcRes, factsRes] = await Promise.all([upcP, factsP]);
+  const [upcRes, factsRes] = await Promise.all([upcP.then(answered), factsP.then((rs) => rs.map(answered))]);
 
   if (upcRes.kind === "hit") return { outcome: "hit", hit: withVia(upcRes.hit, "direct") };
   const factsHit = factsRes.find((r) => r.kind === "hit");

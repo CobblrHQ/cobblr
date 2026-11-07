@@ -28,7 +28,7 @@ import { resolveSessionBatch } from "../lib/scanSession";
 import { classifyFiles } from "../pages/omniIntake";
 import { UploadKindSheet } from "./UploadKindSheet";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
-import { addPending, dropPending, expirePending, pulseRow, updatePending } from "../lib/pendingPictures";
+import { addPending, dropPending, expirePending, openPendingDoor, pulseRow, updatePending, wasTakenBack } from "../lib/pendingPictures";
 import { KEEP_AS_PURCHASE_SENTENCE, useKeepAsPurchase } from "../pages/KeepAsPurchase";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { decodeBarcodeImage } from "../lib/decode-barcode-image";
@@ -155,19 +155,32 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
       for (const [i, file] of files.entries()) {
         const key = keys[i]!;
         try {
-          const rec = await api.uploadFile(slug, file);
-          updatePending(slug, key, { stage: "reading" });
+          const signal = openPendingDoor(key, () => void uploadPhotos([file]));
+          const rec = await api.uploadFile(slug, file, { signal });
+          // Taken back as the upload finished: nothing was made from it (#9271).
+          if (wasTakenBack(key)) {
+            void api.takeBackScanPicture(slug, { file_id: rec.id }).catch(() => {});
+            continue;
+          }
+          updatePending(slug, key, { stage: "reading", fileId: rec.id });
           // A code in the picture says what it is, for free and with no AI:
           // read it the way the camera does, and scan that code with the
           // picture kept as the scan's photo (#8877). A picture with no code
           // in it, or one the decoder cannot open, is a photo as before.
           const code = await decodeBarcodeImage(file).catch(() => null);
+          if (wasTakenBack(key)) continue;
           const scanned = await api.scanBarcode(
             slug,
             code
               ? { barcode: code, source_kind: "barcode", image_file_id: rec.id, scan_batch_id: sessionBatch ?? undefined }
               : { source_kind: "photo", image_file_id: rec.id, scan_batch_id: sessionBatch ?? undefined },
           );
+          // Its answer came after the X: the row goes the way a discard goes, and
+          // nothing here says it was added (#9271).
+          if (wasTakenBack(key)) {
+            if (!scanned.duplicate_of_recent) void api.takeBackScanPicture(slug, { item_id: scanned.id }).then(invalidate).catch(() => {});
+            continue;
+          }
           if (scanned.duplicate_of_recent) {
             // The same picture was added a moment ago: one item, not two.
             dropPending(slug, key);
@@ -191,6 +204,7 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
           // Reveal each as it lands, so a long selection fills in progressively.
           invalidate();
         } catch (e) {
+          if (wasTakenBack(key)) continue;
           // A personal document is not a failure: the upload door already
           // opened its card on the personal path (sendUpload), so the picture
           // just leaves the inbox, with no error beside the card that read it.

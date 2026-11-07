@@ -38,6 +38,17 @@ export const SCAN_TOOLS: ScanTool[] = ["receipt", "split", "bin", "box_state"];
 /** What a tap on each box-state button DOES, the words every surface's
  *  button carries under its label (the reason a tool is folded is said
  *  once, at the tool; the effect is the button's own, #3075). */
+/** Looking for a row in what the workspace already keeps, in a person's words. */
+export const RECHECK_LABEL = "Look in my records again";
+export const RECHECK_HINT = "See whether you already have this";
+/** Asking again from scratch: the catalogs, the web and any model connected. Its
+ *  name is not the AI's: with none connected this is still how a row a catalog
+ *  could not name gets its name (#9270). */
+export const LOOK_UP_AGAIN_LABEL = "Look it up again";
+export function lookUpAgainHint(hasPicture: boolean): string {
+  return hasPicture ? "A fresh look at the photo and the code" : "Asks the catalogs and the web again";
+}
+
 export const BOX_STATE_EFFECT: Record<"empty-box" | "item-in-box", string> = {
   "empty-box": "The box is here; the item isn't",
   "item-in-box": "Still packaged; the box rides along",
@@ -155,7 +166,9 @@ export function packagingOf(row: ScanToolRow): Packaging | null {
 
 const hint = (relevance: ToolRelevance, reason: string): ToolHint => ({ relevance, reason });
 
-/** A line read off a receipt. */
+/** A line read off a receipt: nobody scanned it and nobody photographed it, so
+ *  what a scan's tools ask (is there a box, is it a container, what is in this
+ *  picture) has nothing to go on (#9270). */
 export function isReceiptLine(row: { source_kind?: string | null }): boolean {
   return row.source_kind === "receipt";
 }
@@ -167,6 +180,15 @@ export function soldByWeightWords(meta: unknown): string | null {
   return typeof m.weight === "number" && m.weight > 0 && typeof m.weight_unit === "string" && m.weight_unit ? `${m.weight} ${m.weight_unit}` : null; // count-unit-ok: a weight as the receipt printed it, a symbol ("lb"), never pluralised
 }
 
+/** Whether a row can have arrived damaged: a thing in hand, or a line of an
+ *  order that was delivered. A till's receipt is goods carried out of the shop,
+ *  so a person who finds one damaged takes it back, and nothing arrived. */
+export function scanCanArriveDamaged(row: Pick<ScanToolRow, "source_kind" | "suggested_metadata">): boolean {
+  if (!isReceiptLine(row)) return true;
+  const m = (row.suggested_metadata ?? {}) as { receipt_origin?: unknown; store_host?: unknown; expected_arrival?: unknown; parse_method?: unknown };
+  return m.receipt_origin === "email" || !!m.store_host || !!m.expected_arrival || (typeof m.parse_method === "string" && m.parse_method.startsWith("order"));
+}
+
 export function scanToolRelevance(row: ScanToolRow, ctx: ScanToolContext = {}): ScanToolHints {
   const m = metaOf(row);
   const hasPicture = !!row.image_file_id;
@@ -175,6 +197,7 @@ export function scanToolRelevance(row: ScanToolRow, ctx: ScanToolContext = {}): 
   const settled = !!row.ai_suggested_at;
   const receiptRow = row.source_kind === "receipt" || !!m.receipt_group_id;
   const isChild = !!m.split_from;
+  const lineWithNoPicture = isReceiptLine(row) && !hasPicture;
   const observed = !!m.photo_observed_for && m.photo_observed_for === row.image_file_id;
   const distinct = typeof m.photo_distinct === "number" ? m.photo_distinct : Array.isArray(m.photo_individuals) && m.photo_individuals.length >= 2 ? m.photo_individuals.length : null;
 
@@ -206,6 +229,7 @@ export function scanToolRelevance(row: ScanToolRow, ctx: ScanToolContext = {}): 
   const containerKinds = ctx.containerKinds ? new Set(ctx.containerKinds) : null;
   if (kind && containerKinds?.has(kind)) bin = hint("likely", "its table holds other things");
   else if (looksLikeContainer(row.suggested_name, m.category)) bin = hint("likely", "a container by name");
+  else if (lineWithNoPicture) bin = hint("no", "a line of a receipt");
   else if (ctx.openBox) bin = hint("possible", "a bin is open in this session");
   else bin = hint("no", "not a container");
 
@@ -213,12 +237,13 @@ export function scanToolRelevance(row: ScanToolRow, ctx: ScanToolContext = {}): 
   let box: ToolHint;
   const packaging = packagingOf(row);
   if (m.box_state) box = hint("likely", "a box state is set");
+  else if (lineWithNoPicture) box = hint("no", "a line of a receipt");
   else if (hasBarcode && !hasPicture) box = hint("likely", "the code was read off packaging");
   else if (hasPicture && packaging === "none") box = hint("no", hasBarcode ? "the code is a label on the product itself" : "a bare product, no packaging in frame");
   else if (hasPicture && (packaging === "box" || packaging === "sealed" || packaging === "opened")) box = hint("likely", packaging === "sealed" ? "sealed packaging in frame" : packaging === "opened" ? "opened packaging in frame" : "packaging in frame");
   else if (hasPicture) box = hint("possible", "the packaging is not clear from the picture");
   else if (ctx.openBox) box = hint("possible", "a bin is open in this session");
-  else box = hint("possible", "no picture and no barcode to say");
+  else box = hint("possible", "Nothing here shows whether it has a box");
 
   return { receipt, split, bin, box_state: box };
 }

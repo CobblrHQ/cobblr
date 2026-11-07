@@ -51,7 +51,7 @@ async function settlePaidOrder(db: Kysely<SalesDB>, orgId: string, orderId: stri
     const order = await db.selectFrom("sales_orders").select(["id", "status", "paid", "metadata", sql<string>`coalesce(paid_at, updated_at)::date::text`.as("paid_day")]).where("id", "=", orderId).executeTakeFirst();
     if (!order?.paid) return false;
     const money = (await moneyOfOrders(db, [order as never], shop)).get(orderId)!;
-    if (!(money.owed > 0)) return false;
+    if (!(money.owed > 0) || money.impossible_lines > 0) return false;
     const recorded = await db.selectFrom("sales_payments").select("id").where("order_id", "=", orderId).executeTakeFirst();
     if (recorded) {
       await db.updateTable("sales_orders").set({ paid: false } as never).where("id", "=", orderId).execute();

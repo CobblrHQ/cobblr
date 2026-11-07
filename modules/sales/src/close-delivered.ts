@@ -6,6 +6,7 @@ import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 import type { SalesDB } from "./db.js";
+import { holdsImpossibleLine } from "./reads-paid.js";
 import { orderHappened } from "./history.js";
 
 const SETTING = "close_delivered_orders";
@@ -50,6 +51,7 @@ export async function closeDeliveredOrder(db: Kysely<SalesDB>, orgId: string, or
     const row = await trx.updateTable("sales_orders").set({ status: "closed", auto_closed_at: new Date(), updated_at: new Date() })
       .where("id", "=", orderId).where("status", "=", "shipped").where("paid", "=", true).where("auto_close_undone", "=", false)
       .where(sql<boolean>`not exists (select 1 from sales_order_items where order_id = ${orderId} and part_id is not null and qty_fulfilled < qty)`)
+      .where(sql<boolean>`not ${holdsImpossibleLine}`)
       .returningAll().executeTakeFirst();
     if (!row) return null;
     await orderHappened(trx, orgId, orderId, { kind: "status", from_status: "shipped", to_status: "closed", detail: { automatic: "delivery" }, by_user: null }, afterCommit, log);

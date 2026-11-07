@@ -73,6 +73,7 @@ import { USER_SOURCE, claimsForSource } from "./bundle-claims.js";
 import { listAll, listKindsForOrg, lookup } from "./entities.js";
 import {
   FieldDefCreate,
+  fieldPointsNowhere,
   createFieldDef,
   FieldDefSnapshot,
   restoreFieldDef,
@@ -580,6 +581,8 @@ export function registerPlatformActionHandlers(): void {
     if (mapped.impliesChoices && (!choices || choices.length === 0)) {
       return { ok: false, error: "a dropdown needs its choices — pass them comma-separated" };
     }
+    const nowhere = await fieldPointsNowhere(ctx.orgId, parsed.data);
+    if (nowhere) return { ok: false, error: nowhere };
     const result = await createFieldDef(ctx.orgId, parsed.data);
     if (!result.ok) {
       // A field meaning what one the kind has is not made twice: say which, so

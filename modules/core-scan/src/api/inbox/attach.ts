@@ -575,7 +575,7 @@ attachRouter.post(
           // The receipt-order linkage STAYS: the order line is a fact about the
           // receipt, born at parse, and filing this row again must claim that
           // same line. Only the attach link is cleared.
-          suggested_metadata: mergeMeta({ [SENT_BACK_KEY]: act }, ["attached_to", FILED_INTO_KEY, RAN_OUT_KEY, SENDING_BACK_KEY, FILED_BY_KEY, ARRIVED_DAMAGED_KEY]) as never,
+          suggested_metadata: mergeMeta({ [SENT_BACK_KEY]: act }, ["attached_to", FILED_INTO_KEY, RAN_OUT_KEY, SENDING_BACK_KEY, FILED_BY_KEY, ARRIVED_DAMAGED_KEY, "already_gone"]) as never,
           updated_at: new Date(),
         })
         .where("id", "=", id)

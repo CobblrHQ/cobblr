@@ -135,9 +135,11 @@ export function scoreReceiptShape(text: string): ReceiptShape {
 }
 
 /** How many lines to say were found: the parser's own count when its lines add
- *  up, otherwise the priced lines the shape check counted. */
-export function receiptLinesFound(text: string): number {
-  return parseTextReceipt(text)?.receipt.items.length ?? receiptShapeSignals(text).priced_items;
+ *  up, and nothing otherwise. The shape check's priced lines include the subtotal
+ *  and the tax, and "3 lines found" on one thing is a count of the wrong things
+ *  (#9270). */
+export function receiptLinesFound(text: string): number | null {
+  return parseTextReceipt(text)?.receipt.items.length ?? null;
 }
 
 /** The empty shape, for an image with no readable text (a product photo, a

@@ -9,9 +9,12 @@ import { MetaFlow, distinctParts } from "../components/MetaParts";
 
 /** "Order #36772", the number itself the link to its purchase (#6095: one
  *  line under the header, not a second line saying "Open the purchase"). */
-export function SessionOrderRef({ orderRef, purchaseId }: { orderRef: string | null; purchaseId: string | null | undefined }) {
+/** A session's order, as a part of its line, or nothing. A value and not a
+ *  component: an element that renders nothing is still a part, and it left the
+ *  line ending in a separator ("5 need a look first ·"). */
+export function sessionOrderPart(orderRef: string | null, purchaseId: string | null | undefined): ReactNode {
   if (!orderRef && !purchaseId) return null;
-  const words = orderRef ? `Order #${orderRef}` : "This order";
+  const words = orderRef ? `Order #${orderRef}` : "Order";
   return (
     <span data-testid="session-order" className="whitespace-nowrap">
       {purchaseId ? (

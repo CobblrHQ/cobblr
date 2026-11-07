@@ -53,7 +53,7 @@ export function ScanToolMenu(p: ScanToolMenuProps) {
   const folded = SCAN_TOOLS.filter((t) => available[t] && hintOf(t).relevance !== "likely");
   // The fold's words from the contract, so the desk and the phone count the
   // same tools in the same words (#3075).
-  const foldLabel = scanToolsFold(p.hints, folded).label;
+  const foldLabel = scanToolsFold(p.hints, folded.flatMap((t) => (t === "box_state" ? [t, t] : [t]))).label;
 
   const render = (t: ScanTool, reason: string | null) => {
     switch (t) {

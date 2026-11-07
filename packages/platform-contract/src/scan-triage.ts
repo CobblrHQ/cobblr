@@ -1560,10 +1560,13 @@ export function scanToolsFold(
   hints: ScanToolHints | null | undefined,
   folded: readonly ScanTool[],
 ): { folded: ScanTool[]; label: string | null; reasons: Array<{ tool: ScanTool; reason: string }> } {
-  const tools = [...new Set(folded)].filter((t) => SCAN_TOOLS.includes(t));
+  const buttons = folded.filter((t) => SCAN_TOOLS.includes(t));
+  const tools = [...new Set(buttons)];
   if (!hints || tools.length === 0) return { folded: tools, label: null, reasons: [] };
-  const might = tools.filter((t) => hints[t].relevance === "possible").length;
-  const unlikely = tools.filter((t) => hints[t].relevance === "no").length;
+  // Counted as the fold opens: Empty box and Item in box are two rows to read,
+  // and "1 tool" over them read as a count that was wrong (#9270).
+  const might = buttons.filter((t) => hints[t].relevance === "possible").length;
+  const unlikely = buttons.filter((t) => hints[t].relevance === "no").length;
   const parts: string[] = [];
   if (might) parts.push(`${might} ${might === 1 ? "tool" : "tools"} that might apply`);
   if (unlikely) parts.push(`${unlikely} unlikely for this one`);
@@ -1726,6 +1729,8 @@ export type RanOutPlan =
 
 export function ranOutPlan(row: ScanTriageRow, destination: { counted: boolean } | null): RanOutPlan {
   if (!isPending(row)) return { kind: "none", why: "it is filed already" };
+  // A receipt says it was bought. Filed, it can run out like anything else.
+  if (isReceiptLine(row)) return { kind: "none", why: "a receipt line was only just bought; add it first" };
   const purpose = scanPurpose(row);
   if (purpose === "move" || purpose === "sort") return { kind: "none", why: "this scan moves or sorts a thing, it does not count it" };
   const m = scanTrackedMatch(row);

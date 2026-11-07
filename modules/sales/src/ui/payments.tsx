@@ -55,10 +55,11 @@ export function PaymentsPanel({ api, order }: { api: SalesApi; order: SalesOrder
           ))}
         </ul>
       )}
+      {m.impossible_lines > 0 && <p data-testid="payment-impossible-line" className="text-xs text-ember-600 dark:text-ember-400">A line on this order has a number that can't be right, so these figures leave it out and the order can't read Paid. Correct the line.</p>}
       {m.owed > 0 && (
         <div className="flex flex-wrap gap-3">
           <button type="button" onClick={() => setOpen(true)} className="text-xs text-accent hover:underline">Record a payment…</button>
-          <button type="button" disabled={payAll.isPending} onClick={() => payAll.mutate()} className="text-xs text-accent hover:underline">Mark paid in full</button>
+          {!(m.impossible_lines > 0) && <button type="button" disabled={payAll.isPending} onClick={() => payAll.mutate()} className="text-xs text-accent hover:underline">Mark paid in full</button>}
         </div>
       )}
       {open && <PaymentForm api={api} order={order} currency={currency} onClose={() => setOpen(false)} onDone={refresh} />}

@@ -30,7 +30,7 @@ const actions: ModuleActionInput[] = await Promise.all(
 
 export default defineModule({
   name: "core-scan",
-  version: "0.77.18",
+  version: "0.78.8",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -71,6 +71,10 @@ export default defineModule({
       // heal-books-named-by-an-advert.ts for when this call goes.
       const { registerBooksNamedByAnAdvertHeal } = await import("./heal-books-named-by-an-advert.js");
       registerBooksNamedByAnAdvertHeal();
+      // A code named by a catalog's test entry: see the DONE WHEN in
+      // heal-rows-named-by-a-test-entry.ts for when this call goes.
+      const { registerRowsNamedByATestEntryHeal } = await import("./heal-rows-named-by-a-test-entry.js");
+      registerRowsNamedByATestEntryHeal();
       // A status bar kept as the shop: see the DONE WHEN in
       // heal-status-bar-vendors.ts for when this call goes.
       const { registerStatusBarVendorsHeal } = await import("./heal-status-bar-vendors.js");

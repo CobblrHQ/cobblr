@@ -43,6 +43,7 @@ export function registerTagActionHandlers(): void {
     const src = splitKind(entity.kind);
     // ALLOW-INTERNAL-NOUN: echoes the caller's own word for a kind that is not here; there are no words for it
     if (!src) return { ok: false, error: `no kind of record called "${entity.kind}" here` };
+    if (await platform().entities.recordIsGone(ctx.orgId, entity.kind, entity.id)) return { ok: false, error: "That record isn't here, so there is nothing to tag." };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreTagsDB>;
 
     const w = { orgId: ctx.orgId, userId: ctx.userId };

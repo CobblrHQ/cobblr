@@ -9,7 +9,7 @@
 // answered 500, and only "tag created" was ever written down.
 
 import { sql, type Kysely } from "kysely";
-import { platform, restoreRowTree, RecordRestoreRefused } from "@cobblr/platform-contract";
+import { ActionRefusal, platform, restoreRowTree, RecordRestoreRefused } from "@cobblr/platform-contract";
 import type { CoreTagsDB } from "./db.js";
 
 type Db = Kysely<CoreTagsDB>;
@@ -34,6 +34,24 @@ export class TagNameTaken extends Error {
   }
 }
 
+/** A colour a tag could not be drawn in. */
+export class TagColourRefused extends ActionRefusal {
+  constructor() {
+    super("A tag's colour is a hex colour like #FF8800.");
+  }
+}
+
+/** A tag is drawn with two more digits on the end of its colour for the tint,
+ *  and edited in a colour picker, so both need all six digits. A colour that is
+ *  neither was kept and then drew nothing, with no word to whoever typed it. */
+export function tagColour(raw: string | null | undefined): string | null {
+  const colour = raw?.trim();
+  if (!colour) return null;
+  if (/^#[0-9a-f]{6}$/i.test(colour)) return colour;
+  if (/^#[0-9a-f]{3}$/i.test(colour)) return `#${[...colour.slice(1)].map((d) => d + d).join("")}`;
+  throw new TagColourRefused();
+}
+
 const isUniqueViolation = (err: unknown): boolean => (err as { code?: string }).code === "23505";
 
 async function byName(db: Db, name: string) {
@@ -50,12 +68,13 @@ export async function createTag(
   w: Writer,
   v: { name: string; color?: string | null; parent_id?: string | null; icon?: string | null },
 ) {
+  const color = tagColour(v.color);
   let row;
   try {
     row = await platform().activity.transaction(w.orgId, db, async (trx, log) => {
       const row = await trx
         .insertInto("core_tags_tags")
-        .values({ name: v.name.trim(), color: v.color ?? null, parent_id: v.parent_id ?? null, icon: v.icon ?? null })
+        .values({ name: v.name.trim(), color, parent_id: v.parent_id ?? null, icon: v.icon ?? null })
         .returningAll()
         .executeTakeFirstOrThrow();
       await log({ orgId: w.orgId, userId: w.userId, action: "tag_created", ref: tagRef(row.id), diff: { name: row.name } });
@@ -92,6 +111,8 @@ export async function updateTag(db: Db, w: Writer, id: string, patch: Record<str
   if (!before) return null;
   const set: Record<string, unknown> = { ...patch, updated_at: new Date() };
   if (typeof set.name === "string") set.name = set.name.trim();
+  // A colour kept from before is not asked about: the edit dialog sends it back with a rename.
+  if (patch.color !== undefined && patch.color !== before.color) set.color = tagColour(patch.color as string | null);
   let row;
   let changed: Record<string, { from: unknown; to: unknown }> = {};
   try {

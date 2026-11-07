@@ -21,7 +21,7 @@ import { commonBulkFields } from "../platform/bulk-set-field.js";
 // entities polymorphically, manage bindings, and run actions.
 
 import { choiceLearns } from "@cobblr/platform-contract/field-choices";
-import { detailPathForEntity, titleForEntity } from "../platform/entities.js";
+import { detailPathForEntity, kindIsHere, titleForEntity } from "../platform/entities.js";
 import { Router, type Request } from "express";
 import { PLATFORM_ACTIONS } from "../platform/platform-actions.js";
 import { z } from "zod";
@@ -73,6 +73,7 @@ import { offerOnce, sellerOffer } from "../platform/seller-upgrade.js";
 import {
   FieldDefCreate,
   FieldDefPatch,
+  fieldPointsNowhere,
   createFieldDef,
   deleteFieldDef,
   kindFieldsWithMeaning,
@@ -1643,6 +1644,10 @@ platformOrgRouter.post("/:slug/field-sections", requireAuth, withTenant, async (
       return;
     }
     const orgId = req.tenant!.org.id;
+    if (!(await kindIsHere(orgId, p.data.entity_kind))) {
+      res.status(400).json({ error: { code: "unknown_kind", message: `There is no kind of record called "${p.data.entity_kind}" to put a heading on.` } });
+      return;
+    }
     const last = await meta
       .selectFrom("field_sections")
       .select("position")
@@ -2232,6 +2237,11 @@ platformOrgRouter.post(
         res.status(400).json({
           error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
+        return;
+      }
+      const nowhere = await fieldPointsNowhere(req.tenant!.org.id, parsed.data);
+      if (nowhere) {
+        res.status(400).json({ error: { code: "unknown_kind", message: nowhere } });
         return;
       }
       const result = await createFieldDef(req.tenant!.org.id, parsed.data);

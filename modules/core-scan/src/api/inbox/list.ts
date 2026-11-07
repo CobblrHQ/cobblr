@@ -20,6 +20,10 @@ import { refreshCatalogImageByName } from "../../services/enrich-photo.js";
 import { rechoosePictureForColour, withholdContradictedPicture } from "../../services/withhold-picture.js";
 import { themeFromReply, themeScope, type ThemeItem } from "../../services/session-theme.js";
 import { restampTrackedMatch } from "../../services/tracked-stamp.js";
+import { pastItsShelfLife } from "../../services/shelf-life.js";
+import { mergeMeta } from "../../services/metadata.js";
+import { actOf } from "../../services/who-did-it.js";
+import { FILED_BY_KEY } from "@cobblr/platform-contract/scan-recovery";
 import { appendScanHistory, type ScanEditPart } from "../../services/scan-history.js";
 import { filingDestination } from "../../services/destination.js";
 import { splitParentsOf } from "../../services/split-groups.js";
@@ -822,6 +826,11 @@ const FileSelectedBody = z.object({
   instance: optionalField(z.string().min(1)),
   /** File a thing the workspace already tracks as a second record anyway. */
   allow_duplicate: z.boolean().optional(),
+  /** File a perishable from an old receipt anyway, dated in the past (#9274). */
+  file_past_date: z.boolean().optional(),
+  /** Resolve these without adding stock: perishables from an old receipt that
+   *  are past their shelf life, already eaten or thrown out (#9274). */
+  already_gone: z.boolean().optional(),
   /** Per item, a catalog entry to file it bound to (#6888), as confirm takes it. */
   catalog_entries: z.record(z.string().min(1).max(300)).optional(),
 });
@@ -835,13 +844,17 @@ listRouter.post("/inbox/file-selected", asyncHandler(async (req, res) => {
   if (!token) { res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } }); return; }
   const ctx = tenantContext(req);
   const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-  const { ids, allow_duplicate, catalog_entries, ...target } = parsed.data;
+  const { ids, allow_duplicate, catalog_entries, file_past_date, already_gone, ...target } = parsed.data;
   // This door CREATES a record per item. One the workspace already tracks
   // (its card offers "+1 more") or whose match is a choice a person must
   // make is never made a second record here: the dashboard's Add and an
   // agent's file_inbox_items both came through this door and duplicated a
   // printer the workspace already had (review of #4912). scanRebuy is the
   // card's own rule.
+  if (already_gone) {
+    res.json(await resolveAlreadyGone(req, ids));
+    return;
+  }
   const tables = await destinationTablesFor(req);
   const rows = await tenantDb(req).selectFrom("core_scan_inbox_items").selectAll().where("id", "in", ids).execute();
   const already = new Map<string, string>();
@@ -885,15 +898,43 @@ listRouter.post("/inbox/file-selected", asyncHandler(async (req, res) => {
       if (later) throw new Error(later);
     }
     const response = await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
-      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...target, filed_with: ids, ...(catalog_entries?.[id] ? { catalog_entry_id: catalog_entries[id] } : {}) }),
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...target, filed_with: ids, ...(file_past_date ? { file_past_date: true } : {}), ...(catalog_entries?.[id] ? { catalog_entry_id: catalog_entries[id] } : {}) }),
     });
-    const body = await response.json() as { error?: { message?: string }; item?: { target_kind?: string | null }; created?: { id?: string; name?: unknown; title?: unknown } };
-    if (!response.ok) throw new Error(body.error?.message || "It could not be added");
+    const body = await response.json() as { error?: { message?: string; code?: string }; item?: { target_kind?: string | null }; created?: { id?: string; name?: unknown; title?: unknown } };
+    if (!response.ok) throw Object.assign(new Error(body.error?.message || "It could not be added"), { code: body.error?.code });
     if (counted && key && body.created?.id) madeHere.set(key, { id: body.created.id, name: String(body.created.name ?? body.created.title ?? "") });
     return body;
   });
-  res.json(result);
+  // The rows held for an old receipt are named, so the door can offer "Already
+  // gone" for them beside what was filed (#9274).
+  const pastDate = result.failed.filter((f) => f.code === "past_shelf_life").map((f) => f.item_id);
+  res.json({ ...result, ...(pastDate.length ? { past_shelf_life: pastDate } : {}) });
 }));
+
+/** "Already gone": rows whose perishable is from an old receipt and past its
+ *  shelf life resolve without adding stock. The purchase line stays (the row is
+ *  resolved, not discarded), nothing is filed, and a row that is not past its
+ *  shelf life is refused, so this is never a way to drop real stock. */
+async function resolveAlreadyGone(req: Request, ids: string[]): Promise<{ filed: []; failed: Array<{ item_id: string; reason: string }>; already_gone: string[] }> {
+  const db = tenantDb(req);
+  const today = await platform().accounts.dayFor(sessionUser(req)?.id ?? null);
+  const rows = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "in", ids).execute();
+  const gone: string[] = [];
+  const failed: Array<{ item_id: string; reason: string }> = [];
+  for (const id of new Set(ids)) {
+    const row = rows.find((r) => r.id === id);
+    const meta = (row?.suggested_metadata ?? {}) as { category?: string; receipt_date?: string };
+    const late = row && row.status === "pending" ? pastItsShelfLife({ category: meta.category, name: row.suggested_name, receiptOn: meta.receipt_date, today }) : null;
+    if (!row || !late) {
+      failed.push({ item_id: id, reason: !row ? "inbox item not found" : row.status !== "pending" ? "This is already filed or put away." : "This is not past its shelf life, so it is filed, not marked gone." });
+      continue;
+    }
+    const claimed = await db.updateTable("core_scan_inbox_items").set({ status: "resolved", resolved_at: new Date(), updated_at: new Date(), suggested_metadata: mergeMeta({ already_gone: true, [FILED_BY_KEY]: actOf(req) }) as never }).where("id", "=", id).where("status", "=", "pending").returning(["id"]).executeTakeFirst();
+    if (claimed) gone.push(id);
+    else failed.push({ item_id: id, reason: "This is already filed or put away." });
+  }
+  return { filed: [], failed, already_gone: gone };
+}
 
 // The catalog entries a scan could be, for its confirm (#6888): a part
 // number first, then a strong name, and only then the model, among plausible

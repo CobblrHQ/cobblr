@@ -48,6 +48,7 @@ import { typedInThePanel } from "@cobblr/platform-contract/scan-source";
 import { rowPictures, leadYours } from "../lib/rowPictures";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { PAST_SHELF_LIFE, useAlreadyGone } from "../lib/useAlreadyGone";
 function CaptureThumbnail({ slug, item, name }: { slug: string; item: ScanInboxItem; name: string }) {
   const pics = rowPictures(slug, item);
   const picture = leadYours(pics.pictures) ?? pics.pictures.find(p => p.fileId);
@@ -354,6 +355,7 @@ export function WhatToDoPanel({
   });
   // File a captured item into a tracker — a matched existing instance, a matched
   // module's generic table, or (no body) the backend's generic default home.
+  const offerGone = useAlreadyGone(slug);
   const confirmMut = useMutation({
     mutationFn: (v: { item: ScanShown; body: { target_module?: string; target_kind?: string; instance?: string }; label?: string }) =>
       api.confirmScanItem(slug, v.item, v.body),
@@ -370,13 +372,20 @@ export function WhatToDoPanel({
       if (to) toast.action(`Saved to ${label}.`, { actionLabel: "Open", onAction: () => navigate(to), duration: 6000 });
       else toast.success(`Saved to ${label}.`);
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't file that"),
+    onError: (e, v) => {
+      if ((e as { code?: string }).code === PAST_SHELF_LIFE) offerGone([v.item.id]);
+      else toast.error(e instanceof Error ? e.message : "Couldn't file that");
+    },
   });
   const batchMut = useMutation({
     mutationFn: (captures: ScanInboxItem[]) => api.fileScanItems(slug, captures.map(it => it.id), captureTarget(captures[0]!)),
     onSuccess: (r) => {
       void qc.invalidateQueries();
-      if (r.failed.length) toast.error(`${r.filed.length} added. ${r.failed.length} could not be added: ${r.failed[0]!.reason}`);
+      const old = r.failed.filter((f) => f.code === PAST_SHELF_LIFE);
+      const other = r.failed.filter((f) => f.code !== PAST_SHELF_LIFE);
+      if (old.length) offerGone(old.map((f) => f.item_id));
+      if (other.length) toast.error(`${r.filed.length} added. ${other.length} could not be added: ${other[0]!.reason}`);
+      else if (old.length) toast.success(`Added ${countOf(r.filed.length, "item")}.`);
       else toast.success(`Added ${countOf(r.filed.length, "item")}.`);
     },
     onError: (e) => { void qc.invalidateQueries(); toast.error(e instanceof Error ? e.message : "Couldn't add those items"); },

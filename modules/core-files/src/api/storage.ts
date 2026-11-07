@@ -189,7 +189,7 @@ export async function assertSharedFileSource(source: FileSourceIn, claimedMime: 
   const started = performance.now();
   try {
     const read = await readSharedDocument({ bytes: onDisk ? mime === "application/pdf" ? head : await readFile(source.path) : source, mime, ...(onDisk && mime === "application/pdf" ? { path: source.path } : {}) }, workspace);
-    if (read.privacy === "personal") throw new PersonalDocumentRefused();
+    if (read.privacy === "personal") throw new PersonalDocumentRefused(read.uncheckable);
   } finally {
     console.info(`[files] shared upload privacy check: ${Math.round(performance.now() - started)} ms (${mime}, ${size} bytes)`);
   }

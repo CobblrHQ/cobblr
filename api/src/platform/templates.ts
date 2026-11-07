@@ -95,6 +95,16 @@ function formatAmount(n: number): string {
   return String(Number(n.toFixed(2)));
 }
 
+/** Whether a block opens and never closes before the next one or the end. */
+export function hasOpenBlock(text: string): boolean {
+  for (let at = text.indexOf("{{"); at !== -1; at = text.indexOf("{{", at + 2)) {
+    const close = text.indexOf("}}", at + 2);
+    const next = text.indexOf("{{", at + 2);
+    if (close === -1 || (next !== -1 && next < close)) return true;
+  }
+  return false;
+}
+
 export function render(
   template: string,
   data: Record<string, unknown>,

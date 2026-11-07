@@ -557,6 +557,8 @@ export interface AutofileDryRun {
   more?: boolean;
   summary: AutofileSummary;
   message: string;
+  /** Rows from an old receipt whose perishable would be filed past its date, left for the person (#9274). */
+  past_shelf_life?: string[];
 }
 export interface AutofileResult {
   dry_run: false;
@@ -817,6 +819,8 @@ export const scanApi = {
     }>("POST", `/orgs/${slug}/modules/core-scan/decode`, { code }),
   lookupBarcode: (slug: string, code: string) =>
     request<import("@cobblr/platform-web").BarcodeLookup>("POST", `/orgs/${slug}/modules/core-scan/barcode-lookup`, { code }),
+  takeBackScanPicture: (slug: string, by: { file_id?: string; item_id?: string }) =>
+    request<{ outcome: "row" | "removed" | "joined" | "filed" | "nothing"; item_id?: string; name?: string | null }>("POST", `/orgs/${slug}/modules/core-scan/inbox/take-back`, by),
   scanBarcode: (
     slug: string,
     body: {
@@ -1266,8 +1270,14 @@ export const scanApi = {
   fileScanItems: (slug: string, ids: string[], target: { target_module?: string; target_kind?: string; instance?: string }) =>
     filed(slug, request<{
       filed: Array<{ item_id: string; entity_id: string; entity_kind: string; name: string; item: ScanInboxItem }>;
-      failed: Array<{ item_id: string; reason: string }>;
+      failed: Array<{ item_id: string; reason: string; code?: string }>;
+      past_shelf_life?: string[];
     }>("POST", `/orgs/${slug}/modules/core-scan/inbox/file-selected`, { ids, ...target }), r => ({ filed: r.filed.map(it => ({ item: it.item, createdId: it.entity_id })) })),
+
+  /** "Already gone": perishables from an old receipt that are past their shelf
+   *  life resolve without adding stock. Undo is unconfirmScanItem per row (#9274). */
+  markScanAlreadyGone: (slug: string, ids: string[]) =>
+    request<{ already_gone: string[]; failed: Array<{ item_id: string; reason: string }> }>("POST", `/orgs/${slug}/modules/core-scan/inbox/file-selected`, { ids, already_gone: true }),
 
   /** The catalog entries a scan could be, for its confirm (#6888). */
   scanCatalogCandidates: (slug: string, id: string, kind: string) =>
@@ -1307,6 +1317,8 @@ export const scanApi = {
       /** The rows filed together in this selection: a record one of them
        *  just made is never asked about as "you already have it". */
       filed_with?: string[];
+      /** An old receipt would date this perishable in the past; file it anyway. */
+      file_past_date?: boolean;
       file_doubted?: boolean;
     },
   ) =>

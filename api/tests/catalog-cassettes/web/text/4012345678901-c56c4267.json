@@ -1,0 +1,10 @@
+{
+  "query": "4012345678901",
+  "results": [
+    {
+      "title": "Made-up Lone Page Result",
+      "url": "https://example.test/lone",
+      "snippet": ""
+    }
+  ]
+}

@@ -16,6 +16,7 @@ import * as activity from "./activity.js";
 import { parseWireFilter } from "./wire-filter.js";
 import { isLifecycleTrigger, lifecycleRefusal } from "./wire-lifecycle.js";
 import { typedWireArgs, wireCheckRefusal } from "./actions.js";
+import { hasOpenBlock } from "./templates.js";
 
 const { rrulestr } = rrulePkg;
 
@@ -164,10 +165,19 @@ export function scheduleRefusal(triggerType: string, schedule: string | null | u
     const until = rule.options.until;
     if (rule.origOptions.freq === undefined) return `"${schedule}" doesn't say how often, so this wire would never run. Try FREQ=DAILY;BYHOUR=9.`;
     if (until && until <= now) return `The schedule "${schedule}" has already ended, so this wire would never run.`;
+    if (rule.origOptions.freq === rrulePkg.RRule.SECONDLY) return "Schedules are checked once a minute, so one that repeats by the second can't run as it says. Try FREQ=MINUTELY.";
     return null;
   } catch {
     return `"${schedule}" isn't a schedule this can read, so this wire would never run. Try FREQ=DAILY;BYHOUR=9.`;
   }
+}
+
+/** Why a wire's words would print as written, or null: a block left open is
+ *  no block, so the person who gets the message reads the braces. */
+function openTemplateRefusal(template: string | null | undefined, args: unknown): string | null {
+  const strings = [template, ...(args && typeof args === "object" ? Object.values(args) : [])];
+  const open = strings.find((s): s is string => typeof s === "string" && hasOpenBlock(s));
+  return open === undefined ? null : `"${open}" opens {{ and never closes it, so it would print as written. Add the }}.`;
 }
 
 /** Why a wire on this action cannot run, or null. A wire keeps its action by
@@ -222,6 +232,10 @@ export async function createWire(orgId: string, userId: string | null, data: z.i
   const noAction = await unknownActionRefusal(data.action_id);
   if (noAction) {
     return { ok: false, status: 400, code: "wire_cannot_run", message: noAction };
+  }
+  const openBlock = openTemplateRefusal(data.template, data.args);
+  if (openBlock) {
+    return { ok: false, status: 400, code: "wire_template_open", message: openBlock };
   }
   const cannot = await wireCheckRefusal(data.action_id, orgId, data.args ?? {});
   if (cannot) {
@@ -300,6 +314,10 @@ export async function updateWire(orgId: string, id: string, data: z.infer<typeof
         return { ok: false, status: 400, code: "wire_never_runs", message: dead };
       }
     }
+  }
+  const openBlock = openTemplateRefusal(data.template, data.args);
+  if (openBlock) {
+    return { ok: false, status: 400, code: "wire_template_open", message: openBlock };
   }
   // What it waits for, as it would be after this edit: a create checks this in
   // its body, but an edit sees only the fields it was sent.

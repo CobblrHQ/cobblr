@@ -2,7 +2,7 @@
 // number, the date and the count, with an order for giving way.
 //
 // Under pressure the ORDER NUMBER goes first (it is in the session when you
-// open it, and on the tooltip), then the count, then the date, and the
+// open it, and on the tooltip), then the date, then the count, and the
 // merchant's name is the last to give way (the owner, 2026-10-12: "Kingr…"
 // beside a whole "Oct 12 · 21 items" said nothing the row is for, #6095). A
 // date, a time and a count never shorten mid-word: "Sep 1, 8:4…" spends width

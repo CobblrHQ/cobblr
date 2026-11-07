@@ -18,17 +18,18 @@ export const RECEIPT_FIRST_BUDGET_MS = 2_500;
 export interface ReceiptStamp {
   reading_receipt: true;
   receipt_decided_by: "shape";
-  receipt_shape: { verdict: "receipt"; score: number; lines: number };
+  receipt_shape: { verdict: "receipt"; score: number; lines?: number };
 }
 
 /** What the row carries when its picture's text has the shape of a receipt. */
 export function receiptStampOf(text: string): ReceiptStamp | null {
   const shape = scoreReceiptShape(text);
   if (shape.verdict !== "receipt") return null;
+  const lines = receiptLinesFound(text);
   return {
     reading_receipt: true,
     receipt_decided_by: "shape",
-    receipt_shape: { verdict: "receipt", score: shape.score, lines: receiptLinesFound(text) },
+    receipt_shape: { verdict: "receipt", score: shape.score, ...(lines === null ? {} : { lines }) },
   };
 }
 

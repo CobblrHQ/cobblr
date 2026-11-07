@@ -311,6 +311,31 @@ export function sessionAddLabel(n: number, tables: readonly string[], off: reado
  *  every destination, and what turning a collection on means. Null when the
  *  button already says it all. `place` is the session's place, when one is
  *  set. */
+/** The put-away banner's counts. "Ready" is the header's word for ready to add,
+ *  and two "ready" numbers on one screen read as a contradiction (#9270). These
+ *  say what they count: whether a thing has a place yet. */
+export function putAwayCounts(c: { unfiled?: number | null; ready?: number | null }, phone: boolean): string {
+  const without = c.unfiled ?? 0;
+  const withOne = c.ready ?? 0;
+  const onPhone = `${without} without a home`;
+  const onDesk = `${without} scanned item${without === 1 ? "" : "s"} without a home`;
+  const first = without > 0 ? (phone ? onPhone : onDesk) : null;
+  const second = withOne > 0 ? (without > 0 ? `${withOne} with one` : `${withOne} with a home`) : null;
+  return [first, second].filter(Boolean).join(phone ? ", " : ", and ");
+}
+
+/** The button that selects what is on screen, which can be fewer than what is
+ *  pending: "all 50" over 173 said it would take all of them. */
+export function selectVisibleWords(visible: number, total: number): string {
+  return total > visible ? `all ${visible} shown` : `all ${visible}`;
+}
+
+/** Why a session offers fewer than it holds: "Add 8" on a session of 9. */
+export function sessionHeldBackWords(reviews: number): string | null {
+  if (reviews <= 0) return null;
+  return reviews === 1 ? "1 needs a look first" : `${reviews} need a look first`;
+}
+
 export function sessionAddCaption(n: number, tables: readonly string[], off: readonly string[], place: string | null): string | null {
   const them = n === 1 ? "it" : "them";
   const parts: string[] = [];

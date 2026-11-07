@@ -25,6 +25,7 @@ import { browserImageHeaders } from "./image-fetch-headers.js";
 import { platform } from "@cobblr/platform-contract";
 import { PHOTO_CHECK_NOTE } from "@cobblr/platform-contract/scan-copy";
 import { answerAgreesWithCode, durableOutcome, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
+import { isCatalogTestEntry, namesATestEntry } from "./catalog-test-entry.js";
 import { hitVerdict } from "./hit-trust.js";
 import { resolveBarcodeViaWebSearch, productTitle } from "./barcode-websearch.js";
 import { reportBarcodeCorrection, unitLotsOf } from "./barcode-corrections.js";
@@ -769,6 +770,11 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
     }
   }
 
+  // A hit is cached with no expiry, so a test entry cached before it was refused
+  // would name this code in every workspace for ever. Ask again: the answer
+  // replaces it in both caches.
+  if (cacheVal?.found && isCatalogTestEntry({ title: cacheVal.title, brand: cacheVal.brand })) cacheVal = null;
+
   let hit: BarcodeHit | null = null;
   let rateLimited = false;
   let lookupUnreachable = false;
@@ -906,8 +912,8 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
     // A junk "name" ("Unknown Item" / "XXXXXXXX") means the web couldn't identify
     // it either — DON'T accept it as a result. Fall through to the photo/manual
     // path with no name, so it never gets shown as valid or image-searched.
-    if (
-      web &&
+    const holdWeb =
+      !!web &&
       !isJunkName(web.name) &&
       shouldHoldWebName({
         corroborated: web.corroborated,
@@ -916,8 +922,10 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
         // The photo escape below is a promise that the cross-check will correct
         // a wrong guess. When vision never ran, nothing ever will.
         photoCheckWillRun: photoVerdict?.visionRan ?? false,
-      })
-    ) {
+      });
+    // Unreachable is not absent: with a catalog not yet asked, a held guess must
+    // not end the row. It goes on to the retry below, which asks again (#9305).
+    if (holdWeb && !rateLimited) {
       // Blank beats wrong, at the DISPLAY layer too. The cache gate below has
       // always refused to store an uncorroborated web title — but that same
       // guess used to be WRITTEN AS THE ROW'S NAME at confidence 0.2 in two
@@ -956,7 +964,7 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
       await reassertLockedImage();
       return;
     }
-    if (web && !isJunkName(web.name)) {
+    if (web && !holdWeb && !isJunkName(web.name)) {
       // Same pending gate as a catalog hit (below): a web-search name is the
       // WEAKEST source, so when a scan photo exists, hold it at "checking…" until
       // crossCheckScanPhoto confirms or corrects it — a spurious listing must not
@@ -1473,7 +1481,7 @@ export function isJunkName(name: string | null | undefined): boolean {
     return true;
   }
   if (/^[\d(+][\d\s\-().+]{5,}$/.test(n)) return true; // the "name" IS a number — the query echoed back
-  return false;
+  return namesATestEntry(n);
 }
 
 /** A provider sometimes returns a LOCALIZED title (go-upc handed back "Charmin

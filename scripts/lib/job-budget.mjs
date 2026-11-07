@@ -43,7 +43,9 @@ import { fileURLToPath } from "node:url";
 // 2.19 GiB under a 4.5 GiB cap and sat at it for 20 minutes (#7741). A run
 // reads each compiler's peak and fails by name when one outgrows this
 // (typecheck-tsgo.mjs, outgrewUnit), so it cannot go stale silently again.
-export const UNIT_MIB = { tsc: 900, tsgo: 3072, vitest: 350, lint: 150 };
+// 3400 since 2026-11-07: run 62919 peaked at 3073. Over the 89 typecheck logs read, one commit swung up to 179 MiB, and the
+// median grew about 130 MiB in three days. Above 3584, a compiler leaves its job under 1 GiB on a 4608 MiB cap: past that, raise the cap.
+export const UNIT_MIB = { tsc: 900, tsgo: 3400, vitest: 350, lint: 150 };
 export const SHARE = 0.5;
 // The heap a node process of a kind needs, MiB: measured, not estimated. node
 // sets its default heap to HALF the cgroup's limit (920 MiB under 1792m, 1048

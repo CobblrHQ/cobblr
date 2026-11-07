@@ -10,7 +10,8 @@ import { orderTotal } from "../invoice.js";
 import { moneyOfOrders, orderMoney, recordReturn, undoReturn } from "../returns.js";
 import { recordPayment, syncPaid, undoPayment } from "../payments.js";
 import { heldByOthers, holdOrder, releaseHold } from "../holds.js";
-import { accountingCsv, summarise } from "../summary.js";
+import { accountingCsv, MoneyFileRefused, summarise } from "../summary.js";
+import { paidAsRead, readsPaid } from "../reads-paid.js";
 import { arrivedEverywhere } from "@cobblr/platform-contract/day";
 import { Router } from "express";
 import { sql } from "kysely";
@@ -20,7 +21,7 @@ import { instanceOf, sessionUser, tenantContext, tenantDb, type SalesOrderStatus
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { orderAvailability } from "../availability.js";
 import { fulfilOrder } from "../fulfilment.js";
-import { nextOrderNumber } from "../order-number.js";
+import { nextOrderNumber, refuseTakenOrderNumber } from "../order-number.js";
 import { orderHappened, readHistory } from "../history.js";
 import { addLine, changeLine, LineRefused, MOST_A_LINE_COSTS, MOST_ON_A_LINE, removeLine } from "../order-lines.js";
 import { canBeAName } from "@cobblr/platform-contract/readable-text";
@@ -138,13 +139,13 @@ const OrderList = z.object({
 
 /** The orders a list, its summary and its accountant's export all mean by the same filters, so their totals agree. */
 function matchingOrders(req: import("express").Request, f: z.infer<typeof OrderList>) {
-  let q = tenantDb(req).selectFrom("sales_orders").selectAll().where("instance", "=", instanceOf(req));
+  let q = tenantDb(req).selectFrom("sales_orders").selectAll().select(paidAsRead).where("instance", "=", instanceOf(req));
   if (f.q) {
     const like = `%${likeEscape(f.q)}%`;
     q = q.where((eb) => eb.or([eb("customer_name", "ilike", like), eb("order_number", "ilike", like), eb("notes", "ilike", like)]));
   }
   if (f.status) q = q.where("status", "=", f.status);
-  if (f.paid) q = q.where("paid", "=", f.paid === "true");
+  if (f.paid) q = q.where(readsPaid, "=", f.paid === "true");
   if (f.customer_id) q = q.where("customer_id", "=", f.customer_id);
   if (f.month) {
     const [y, m] = f.month.split("-").map(Number) as [number, number];
@@ -238,9 +239,17 @@ ordersRouter.get(
         money: money.get(r.id)!,
       })),
     );
+    let file: string;
+    try {
+      file = accountingCsv(orders);
+    } catch (e) {
+      if (!(e instanceof MoneyFileRefused)) throw e;
+      res.status(409).json({ error: { code: "numbers_cannot_add_up", message: e.message } });
+      return;
+    }
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="sales-for-accountant-${f.data.month ?? arrivedEverywhere(new Date())}.csv"`);
-    res.send(accountingCsv(orders));
+    res.send(file);
   }),
 );
 
@@ -251,6 +260,7 @@ ordersRouter.get(
     const order = await db
       .selectFrom("sales_orders")
       .selectAll()
+      .select(paidAsRead)
       .where("id", "=", req.params.id!)
       .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
@@ -283,7 +293,9 @@ ordersRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const customerName = await customerNameFor(req, parsed.data.customer_id, parsed.data.customer_name);
+    const typedNumber = parsed.data.order_number?.trim();
     const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      if (typedNumber) await refuseTakenOrderNumber(trx, instanceOf(req), typedNumber);
       const row = await trx
         .insertInto("sales_orders")
         .values({
@@ -292,7 +304,7 @@ ordersRouter.post(
           order_date: parsed.data.order_date ?? (await platform().accounts.dayFor(sessionUser(req)?.id ?? null)),
           customer_name: customerName,
           instance: instanceOf(req),
-          order_number: parsed.data.order_number?.trim() || (await nextOrderNumber(trx, instanceOf(req))),
+          order_number: typedNumber || (await nextOrderNumber(trx, instanceOf(req))),
           status: parsed.data.status ?? "draft",
           metadata: parsed.data.metadata ?? {},
         } as never)
@@ -324,7 +336,7 @@ ordersRouter.patch(
     const ctx = tenantContext(req);
     const before = await db
       .selectFrom("sales_orders")
-      .select(["status", "auto_closed_at"])
+      .select(["status", "auto_closed_at", "order_number"])
       .where("id", "=", req.params.id!)
       .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
@@ -333,6 +345,12 @@ ordersRouter.patch(
       return;
     }
     if (!(await customerIsHere(req, res, parsed.data.customer_id))) return;
+    if (typeof parsed.data.order_number === "string") parsed.data.order_number = parsed.data.order_number.trim() || null;
+    // Asked before the cancel and the payments below, which change the order
+    // at once, and again under the lock. An order that already shares a number
+    // can still be saved with it.
+    const renumberedTo = parsed.data.order_number && parsed.data.order_number !== before.order_number?.trim() ? parsed.data.order_number : null;
+    if (renumberedTo) await refuseTakenOrderNumber(db, instanceOf(req), renumberedTo, req.params.id!);
     // Picking "fulfilled", "shipped" or "closed" from the status list must not
     // be a second way to ship: it would close an order whose parts never left
     // stock. While a tracked part is still owed, the way there is Fulfill.
@@ -359,6 +377,10 @@ ordersRouter.patch(
       if (paid) {
         const full = await db.selectFrom("sales_orders").select(["id", "status", "paid", "metadata"]).where("id", "=", id).executeTakeFirstOrThrow();
         const m = (await moneyOfOrders(db, [full], shop)).get(id)!;
+        if (m.impossible_lines > 0) {
+          res.status(409).json({ error: { code: "numbers_cannot_add_up", message: "A line on this order has a number that can't be right, so it can't be marked paid. Correct the line first." } });
+          return;
+        }
         if (m.owed > 0) {
           const r = await recordPayment(db, ctx.org.id, userId, id, { amount: m.owed }, shop, await platform().accounts.dayFor(userId));
           if (!r.ok) {
@@ -407,6 +429,7 @@ ordersRouter.patch(
     }
     const afterCommit: Array<() => Promise<void>> = [];
     const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      if (renumberedTo) await refuseTakenOrderNumber(trx, instanceOf(req), renumberedTo, req.params.id!);
       const row = await trx
         .updateTable("sales_orders")
         .set(patch as never)

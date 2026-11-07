@@ -31,6 +31,9 @@
 //
 // The corpus behind all of this: modules/core-scan/tests/receipt-photo-detect.test.ts
 
+import type { Kysely } from "kysely";
+import type { CoreScanDB } from "../db.js";
+import { rowWasTakenBack } from "./take-back-picture.js";
 import { platform } from "@cobblr/platform-contract";
 import { sql } from "kysely";
 import { HOSTED_RECEIPT_QUEUED_WORDS } from "./hosted-identify.js";
@@ -217,7 +220,7 @@ export interface ReceiptReadFailed {
  *  inbox as one with "no line items". Every shape is named here, and one this
  *  does not know is said to be unknown, never read as empty. */
 export type ReceiptAnswer =
-  | { kind: "read"; items: number }
+  | { kind: "read"; items: number; batchId: string | null }
   | { kind: "empty" }
   | { kind: "already-in"; batch_id: string; label: string | null; lines: number }
   | { kind: "refused"; status: number; failure?: string; ai?: string; message?: string; keptBatchId: string | null }
@@ -251,7 +254,8 @@ export function readReceiptAnswer(status: number, body: unknown): ReceiptAnswer 
   }
   if (b.receipt && typeof b.receipt === "object") {
     const n = Number(b.receipt.item_count ?? 0);
-    return n > 0 ? { kind: "read", items: n } : { kind: "empty" };
+    const batchId = typeof (b as { batch_id?: unknown }).batch_id === "string" ? (b as { batch_id: string }).batch_id : null;
+    return n > 0 ? { kind: "read", items: n, batchId } : { kind: "empty" };
   }
   return { kind: "unknown", status };
 }
@@ -322,6 +326,10 @@ export async function routeScannedReceiptPhoto(opts: {
     await leaveAsPhoto(opts, note, door?.keptBatchId ?? null, { failure: door?.failure, ai: door?.ai, duplicateOf: door?.duplicateOf });
     return { routed: false, reason, note, ...(door?.failure ? { failure: door.failure } : {}), ...(door?.ai ? { ai: door.ai } : {}) };
   };
+
+  const rows = (await platform().tenants.getDb(opts.orgId)) as unknown as Kysely<CoreScanDB>;
+  // Taken back before the read began (#9271): nothing to read it for.
+  if (await rowWasTakenBack(rows, opts.itemId)) return { routed: false, reason: "taken back", note: "" };
 
   const who = await workspaceIdentity(opts.orgId);
   if (!who) return failed("no member to attribute the capture to");
@@ -397,6 +405,18 @@ export async function routeScannedReceiptPhoto(opts: {
   if (answer.kind === "unknown") return failed(`the receipt door answered ${answer.status} in a shape this does not read`, { failure: "unknown_answer" });
   if (answer.kind === "empty") return failed("no line items on it");
   const items = answer.items;
+
+  // Taken back while it read: the lines it just made go with it, through the
+  // door a discard uses, so a purchase nobody kept goes too (#9271).
+  if (await rowWasTakenBack(rows, opts.itemId)) {
+    const lines = answer.batchId ? await rows.selectFrom("core_scan_inbox_items").select("id").where("scan_batch_id", "=", answer.batchId).where("status", "=", "pending").execute() : [];
+    for (const line of lines) {
+      await apiFetch(`${INTERNAL_API}/api/v1/orgs/${who.slug}/modules/core-scan/inbox/${line.id}/discard`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}" }).catch((e: Error) =>
+        console.error("[core-scan] discarding a taken-back receipt's line failed:", e.message),
+      );
+    }
+    return { routed: false, reason: "taken back", note: "" };
+  }
 
   // The lines are in, so the single photo row has been superseded. Retire it
   // rather than leaving a nameless duplicate of the receipt beside its own line

@@ -561,6 +561,7 @@ async function boot() {
       detailPathForEntity: entities.detailPathForEntity,
       recordAddressForEntity: entities.recordAddressForEntity,
       titleForEntity: entities.titleForEntity,
+      recordIsGone: entities.recordIsGone,
       resolvedKindForEntity: entities.resolvedKindForEntity,
       baseKindOf: entities.baseKindOf,
       resolveKind: entities.resolveKind,

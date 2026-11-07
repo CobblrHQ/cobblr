@@ -12,6 +12,8 @@ import { filingDestination, type DestinationRow } from "../../services/destinati
 import { scanDeletedRecovery, scanRestoreRefusal } from "@cobblr/platform-contract/scan-recovery";
 import { routeScannedReceiptPhoto } from "../../services/receipt-photo.js";
 import { runReceiptBackfill } from "../../services/receipt-backfill.js";
+import { dropMeta } from "../../services/metadata.js";
+import { TAKEN_BACK_KEY, takeBackPicture } from "../../services/take-back-picture.js";
 import { INTERNAL_API, destinationTablesFor, liveTablesFor, served, titleFormatFor, withTitle } from "./shared.js";
 
 export const discardRouter = Router({ mergeParams: true });
@@ -31,6 +33,24 @@ discardRouter.post(
       dryRun: req.query.dry_run === "true",
     });
     res.json(result);
+  }),
+);
+
+// ─────────────────────── POST /inbox/take-back ──────────────────
+// The X on the card of a picture still on its way in (#9271).
+// AI-ACTION: core-scan:take-back-picture
+// AI-REACH: action core-scan:take-back-picture
+const TakeBackBody = z.object({ file_id: z.string().uuid().optional(), item_id: z.string().uuid().optional() }).refine((b) => !!b.file_id || !!b.item_id);
+discardRouter.post(
+  "/inbox/take-back",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "core-scan:take-back-picture"))) return;
+    const parsed = TakeBackBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "bad_request", message: "file_id or item_id required" } });
+      return;
+    }
+    res.json(await takeBackPicture(tenantDb(req), tenantContext(req).org.id, { fileId: parsed.data.file_id, itemId: parsed.data.item_id }));
   }),
 );
 
@@ -170,7 +190,7 @@ discardRouter.post(
       // item's real scan time. The "find it later" case (restoring from
       // Recently deleted long after) is handled client-side by highlight +
       // scroll-to, never by a created_at rewrite.
-      .set({ status: "pending", updated_at: new Date() })
+      .set({ status: "pending", suggested_metadata: dropMeta([TAKEN_BACK_KEY]) as never, updated_at: new Date() })
       .where("id", "=", id)
       .where("status", "=", "discarded")
       .returningAll()

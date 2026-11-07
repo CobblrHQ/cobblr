@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import { FileEverythingSheet } from "../components/FileEverythingSheet";
 import { ScanDoubtAsk } from "../components/ScanDoubtAsk";
 import { ScanSessionTheme } from "../components/ScanSessionTheme";
-import { SessionMetaLine, SessionOrderRef } from "./SessionOrderLine";
+import { SessionMetaLine, sessionOrderPart } from "./SessionOrderLine";
 import { SessionPlaceChip } from "../components/SessionPlaceChip";
 import { SessionHeadline } from "../components/SessionHeadline";
 import { SCAN_PICKER_ACCEPT, ScanPickerInput, useScanIntake } from "../components/ScanPhotoPicker";
@@ -83,7 +83,7 @@ import { ScanTwinsContext, twinsOf } from "./scanTwins";
 import { usePendingPictures } from "../lib/pendingPictures";
 import { } from "./scanNameEdit";
 import { useAiStatus, useAiStatusAnswered, AiOffNotice, AiNoticeGiven, aiStatusLine } from "../components/AiStatusNotice";
-import { putawayWalkChip, sessionAddCaption } from "@cobblr/platform-contract/scan-copy";
+import { putAwayCounts, putawayWalkChip, selectVisibleWords, sessionAddCaption, sessionHeldBackWords } from "@cobblr/platform-contract/scan-copy";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { useScanItemLink } from "./scanItemLink";
@@ -152,6 +152,7 @@ import { type ScanTarget } from "./scanInboxShared";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { useUndoSplit } from "../lib/useUndoSplit";
 import { countOf } from "@cobblr/platform-contract/plural";
+import { PAST_SHELF_LIFE, useAlreadyGone } from "../lib/useAlreadyGone";
 import { InboxFacets } from "./InboxFacets";
 import { useOpenOwnRoute } from "../lib/openOwnRoute";
 export type { ScanTarget } from "./scanInboxShared";
@@ -966,7 +967,7 @@ export function ScanPage() {
           </span>
           <span className="text-muted"> · {cluster.items.map((c) => displayName(c)).filter(Boolean).join(" · ")}</span>
         </div>
-        <span className="inline-flex items-center gap-2">
+        <span className="inline-flex max-w-full flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={combineMut.isPending}
@@ -1140,6 +1141,9 @@ export function ScanPage() {
   }
   const [addedByOpen, setAddedByOpen] = useState<string | null>(null);
   const menuAnchorRect = useRef<DOMRect | null>(null);
+  // The headline dropped the session's date to fit (a 320 px phone, a long
+  // name), read as the ... opens: a tooltip can't be reached by a finger.
+  const menuDateGone = useRef(false);
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // Sessions whose "Do these belong together?" was pressed in the ⋯ (#3064).
   const [themeAsked, setThemeAsked] = useState<Set<string>>(new Set());
@@ -2201,6 +2205,7 @@ export function ScanPage() {
     if (lastErr) toast.error(`${countOf(ok, "item")} added. ${lastErr}`);
     else toast.success(`Added ${countOf(ok, "item")}.`);
   };
+  const offerGone = useAlreadyGone(activeSlug);
   const bulkAddAllTo = async (entry: ScanMenuEntry) => {
     setBulkBusy(true);
     setBulkTargetOpen(false);
@@ -2208,6 +2213,7 @@ export function ScanPage() {
     let ok = 0;
     let skipped = 0;
     const held: DoubtedRow[] = [];
+    const oldReceipt: string[] = [];
     for (const id of selected) {
       const it = byId.get(id);
       if (!it || !displayName(it)) {
@@ -2227,10 +2233,12 @@ export function ScanPage() {
         ok++;
       } catch (e) {
         if (e instanceof ApiError && e.code === "doubts_the_table") held.push({ id, name: displayName(it) ?? "This", table: entry.label, body });
+        else if (e instanceof ApiError && e.code === PAST_SHELF_LIFE) oldReceipt.push(id);
         else skipped++;
       }
     }
     if (held.length) setDoubted({ rows: held, filedWith: [...selected] });
+    offerGone(oldReceipt);
     setBulkBusy(false);
     clearSelected();
     void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
@@ -2310,6 +2318,7 @@ export function ScanPage() {
     let lastErr: string | null = null;
     let n = 0;
     const held: DoubtedRow[] = [];
+    const oldReceipt: string[] = [];
     /** Why the server left a row, in its words, so the toast can say. */
     const left: string[] = [];
     /** What filed, and where, for the done-toast and its Undo. */
@@ -2365,6 +2374,10 @@ export function ScanPage() {
         ok++;
         filed.push({ id, label: scanRowState(it!, viewer).destination?.label ?? "Inventory", locationId: body.location_id ?? null });
       } catch (e) {
+        if (e instanceof ApiError && e.code === PAST_SHELF_LIFE) {
+          oldReceipt.push(id);
+          continue;
+        }
         if (e instanceof ApiError && e.code === "doubts_the_table") {
           if (askAboutDoubts) held.push({ id, name: displayName(it!) ?? "This", table: scanRowState(it!, viewer).destination?.label ?? "that table", body });
           else left.push(e.message);
@@ -2379,6 +2392,7 @@ export function ScanPage() {
     }
     setBulkProgress(null);
     void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+    offerGone(oldReceipt);
     if (held.length) {
       setDoubted({ rows: held, filedWith: idList });
       if (!ok && !merged && !skipped && !failed) return { ok, merged, skipped, failed };
@@ -2995,23 +3009,11 @@ export function ScanPage() {
           <span className="min-w-0 flex-1 truncate font-semibold text-content dark:text-mortar-100">
             <span className="mr-1.5">📦</span>
             <span className="hidden sm:inline">
-              {[
-                (scanStatsQ.data!.unfiled ?? 0) > 0
-                  ? `${scanStatsQ.data!.unfiled} scanned item${scanStatsQ.data!.unfiled === 1 ? "" : "s"} without a home`
-                  : null,
-                (scanStatsQ.data!.ready ?? 0) > 0 ? `${scanStatsQ.data!.ready} ready to put away` : null,
-              ]
-                .filter(Boolean)
-                .join(", and ")}
+              {putAwayCounts(scanStatsQ.data!, false)}
             </span>
             {/* The same two counts in fewer words on a phone. */}
             <span className="sm:hidden">
-              {[
-                (scanStatsQ.data!.unfiled ?? 0) > 0 ? `${scanStatsQ.data!.unfiled} without a home` : null,
-                (scanStatsQ.data!.ready ?? 0) > 0 ? `${scanStatsQ.data!.ready} ready` : null,
-              ]
-                .filter(Boolean)
-                .join(", ")}
+              {putAwayCounts(scanStatsQ.data!, true)}
             </span>
             {/* One line on a phone: the count and the button; the reassurance
                 is on the plan itself, which says nothing moves until confirmed. */}
@@ -3052,7 +3054,7 @@ export function ScanPage() {
             onClick={() => setSelected(new Set(visibleItems.map((i) => i.id)))}
             className="text-xs text-accent hover:underline whitespace-nowrap"
           >
-            all {visibleItems.length}
+            {selectVisibleWords(visibleItems.length, totalPending)}
           </button>
           <span className="flex-1 min-w-[8px]" />
           {/* On a phone two rows on purpose: what is chosen and the way out, then
@@ -3703,6 +3705,17 @@ export function ScanPage() {
             // A document that needs nothing is a chip in this row; the card
             // under it is for one that needs the person.
             const docChip = !!g.sourceFileId && !source.needsPerson && !!source.docName;
+            // A receipt's date is the date ON THE RECEIPT, not when the photo
+            // was uploaded (reported 2026-08-20); the upload time is on the
+            // tooltip.
+            const sessionDate = unreadDocName ? null : g.label ? (receiptDateOf(g) ?? formatSessionDay(g.latest)) : null;
+            const sessionDateWords = [
+              g.origin === "email" ? "Emailed." : null,
+              receiptDateOf(g) ? receiptDateWords(g.dateReading) : null,
+              `${receiptDateOf(g) ? "Uploaded" : "Scanned"} ${formatSessionTime(g.latest)}`,
+            ]
+              .filter(Boolean)
+              .join(" ");
             // What the receipt promised, for the parcel control's label. A live
             // carrier state outranks it there; this is what fills the usual gap
             // before any carrier has said anything.
@@ -3914,17 +3927,8 @@ export function ScanPage() {
                                 setEditingPo(g.batchId!);
                               }
                         }
-                        // A receipt's date is the date ON THE RECEIPT, not when
-                        // the photo was uploaded (reported 2026-08-20); the
-                        // upload time is on the tooltip.
-                        date={unreadDocName ? null : g.label ? (receiptDateOf(g) ?? formatSessionDay(g.latest)) : null}
-                        dateTitle={[
-                          g.origin === "email" ? "Emailed." : null,
-                          receiptDateOf(g) ? receiptDateWords(g.dateReading) : null,
-                          `${receiptDateOf(g) ? "Uploaded" : "Scanned"} ${formatSessionTime(g.latest)}`,
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
+                        date={sessionDate}
+                        dateTitle={sessionDateWords}
                         count={g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" ? g.items.length : null}
                       />
                     </SessionIdentity>
@@ -4030,6 +4034,7 @@ export function ScanPage() {
                             e.stopPropagation();
                             // Where a folded parcel's panel opens from (#6095).
                             menuAnchorRect.current = e.currentTarget.getBoundingClientRect();
+                            menuDateGone.current = headlineDroppedItsDate(e.currentTarget);
                             toggle();
                           }}
                           aria-label="Session actions"
@@ -4052,6 +4057,11 @@ export function ScanPage() {
                     >
                       {({ close }) => (
                         <>
+                          {menuDateGone.current && sessionDate && (
+                            <div className="sm:hidden" data-session-menu-date>
+                              <MenuNote>{`${sessionDate}. ${sessionDateWords}`}</MenuNote>
+                            </div>
+                          )}
                           {/* The email and parcel icons, folded on a phone
                               (#6095): each item does what its icon did. */}
                           {phoneFolds && (
@@ -4503,7 +4513,7 @@ export function ScanPage() {
                       className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
                       title={onlyReadingReceipts ? "Its lines become items here when they are read" : "The AI is still finalizing some items - names, covers and routing may still change"}
                     >
-                      <Loader2 size={9} className="animate-spin" /> {onlyReadingReceipts ? "Reading receipt…" : `${busy} finishing…`}
+                      <Loader2 size={9} className="animate-spin" /> {onlyReadingReceipts ? "Reading receipt…" : busy === 1 ? "Reading…" : `Reading ${busy}…`}
                     </span>
                   ) : readyIds.length > 0 ? (
                     <button
@@ -4692,7 +4702,8 @@ export function ScanPage() {
                         parts={[
                           caption && <span data-testid="session-add-caption">{caption}</span>,
                           sessionSays.category && <span data-testid="session-category">{sessionSays.category}</span>,
-                          isReceiptSession && g.batchId && <SessionOrderRef orderRef={g.orderRef} purchaseId={batchMeta[g.batchId]?.purchases_order_id} />,
+                          readyIds.length > 0 && sessionHeldBackWords(sessionAction.reviews) && <span data-testid="session-held-back">{sessionHeldBackWords(sessionAction.reviews)}</span>,
+                          isReceiptSession && g.batchId && sessionOrderPart(g.orderRef, batchMeta[g.batchId]?.purchases_order_id),
                         ]}
                       />
                     );
@@ -5199,3 +5210,8 @@ function sessionName(
 // the matchmaker prompts with — the web hardcodes no module names (core
 // tenet). Picking a table renders THAT table's fields, pre-seeded from
 // the matchmaker's extraction when a chip routed here.
+
+/** Whether a session's headline, beside this control, dropped its date to fit. */
+function headlineDroppedItsDate(el: Element) {
+  return !el.closest("[data-session-header]")?.querySelector("[data-session-date]");
+}

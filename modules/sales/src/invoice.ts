@@ -21,6 +21,16 @@ export function orderTotal(items: ReadonlyArray<{ qty: string | number; unit_pri
   return totalOfLines(items.map((it) => ({ qty: it.qty, price: it.unit_price, currency: fieldCurrency(it.metadata, "unit_price", currency) })), currency);
 }
 
+/** Past this a line's figure is not a real amount: it is on its way to overflowing the sums it joins. */
+export const LINE_ADDS_UP_BELOW = 1e300;
+
+/** A line saved before the limits on a line, holding Infinity, NaN or a number too big to add up (#9322). */
+export function lineCannotAddUp(line: { qty: string | number; unit_price: string | number | null }): boolean {
+  return !(Math.abs(Number(line.qty) * Number(line.unit_price ?? 0)) < LINE_ADDS_UP_BELOW);
+}
+
+const CHECK_THE_NUMBERS = "Check the quantities and prices before exporting.";
+
 function invoice(order: InvoiceOrder, fallbackCurrency: string) {
   const currency = fieldCurrency(order.metadata, "total", fallbackCurrency);
   const payment = order.paid === true ? "Paid" : "Not marked paid";
@@ -30,10 +40,11 @@ function invoice(order: InvoiceOrder, fallbackCurrency: string) {
     if (ownCurrency !== currency) throw new Error("Use the same currency for every invoice line before exporting.");
     const qty = Number(it.qty);
     const price = it.unit_price === null ? null : Number(it.unit_price);
-    if (!Number.isFinite(qty) || (price !== null && !Number.isFinite(price))) throw new Error("Check the quantities and prices before exporting.");
+    if (!Number.isFinite(qty) || (price !== null && !Number.isFinite(price))) throw new Error(CHECK_THE_NUMBERS);
     return { description: it.description || "Item", qty, unit: it.id ? units.get(it.id)?.trim() || "" : "", price, total: price === null ? null : roundMoneyAmount(qty * price, currency) };
   });
   const sum = orderTotal(order.items, currency);
+  if (sum.impossible > 0) throw new Error(CHECK_THE_NUMBERS);
   return { unpriced: sum.unpriced, total: sum.complete ? sum.amount : null, reference: order.order_number || order.id, customer: order.customer_name || "Not recorded", date: order.order_date?.slice(0, 10) || "Not recorded", dateOrBlank: order.order_date?.slice(0, 10) || "", currency, payment, lines };
 }
 
@@ -98,7 +109,9 @@ export function salesDocument(order: InvoiceOrder, currency: string, options: Do
   if (d.total === null) throw new Error("Add every line's price before preparing a document.");
   if (!Number.isFinite(options.tax_rate) || options.tax_rate < 0 || options.tax_rate > 100) throw new Error("Tax must be between 0 and 100 percent.");
   const tax = roundMoneyAmount(d.total * options.tax_rate / 100, d.currency);
-  return { ...structuredClone(options), reference: d.reference, customer: d.customer, currency: d.currency, lines: d.lines, subtotal: d.total, tax, total: roundMoneyAmount(d.total + tax, d.currency) };
+  const total = roundMoneyAmount(d.total + tax, d.currency);
+  if (!Number.isFinite(total)) throw new Error(CHECK_THE_NUMBERS);
+  return { ...structuredClone(options), reference: d.reference, customer: d.customer, currency: d.currency, lines: d.lines, subtotal: d.total, tax, total };
 }
 
 export function documentText(d: SalesDocument, payment: DocumentPayment = { paid: false, paid_on: null }): string {

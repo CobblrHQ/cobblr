@@ -110,7 +110,12 @@ export function ModuleNav({ quiet = false }: {
       });
       const avail = el.clientWidth - reserved;
       setRowWidth(el.clientWidth);
-      const MORE_W = 64; // the "more ▾" chip, reserved only when it shows
+      // The "more ▾" chip, reserved only when it shows, as drawn: a count on it
+      // makes it wider, and the row's last entry, the apps door, paid for the
+      // difference by being cut (#9315). The figure is only for before it draws.
+      const MORE_W = 64;
+      const drawnMore = el.querySelector<HTMLElement>("[data-navmore]");
+      const moreW = drawnMore ? drawnMore.getBoundingClientRect().width + 2 : MORE_W;
       const fitWithin = (budget: number) => {
         let used = 0;
         let n = 0;
@@ -125,7 +130,7 @@ export function ModuleNav({ quiet = false }: {
       let n = fitWithin(avail);
       // "more ▾" shows when row items overflow OR anything is pinned to it.
       const folds = n < rowEligible.length || pinned.length > 0;
-      if (folds) n = fitWithin(avail - MORE_W);
+      if (folds) n = fitWithin(avail - moreW);
       setVisibleCount(n);
       // What never folds, as drawn: Home, the apps door, and the "more" chip
       // once it shows (MORE_W only until it has been drawn).
@@ -143,8 +148,9 @@ export function ModuleNav({ quiet = false }: {
     ro.observe(el);
     // A fixed entry arriving or changing width after the first measure (the
     // apps door mounts once its count is in) changes the row's minimum: the
-    // row itself does not resize for it, so watch the entries too (#6782).
-    const watchFixed = () => el.querySelectorAll<HTMLElement>("[data-navfixed]").forEach((n) => ro.observe(n));
+    // row itself does not resize for it, so watch the entries too (#6782), and
+    // the "more" chip, whose count changes as its text with no node added.
+    const watchFixed = () => el.querySelectorAll<HTMLElement>("[data-navfixed],[data-navmore]").forEach((n) => ro.observe(n));
     watchFixed();
     const mo = new MutationObserver(() => {
       watchFixed();
@@ -370,6 +376,7 @@ export function MoreMenu({
       <div
         className="relative shrink-0 flex items-center"
         ref={triggerRef}
+        data-navmore
         onMouseEnter={hoverOpen}
         onMouseLeave={hoverClose}
       >

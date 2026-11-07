@@ -92,7 +92,7 @@ export const filesApi = {
   fileUsedBy: (slug: string, id: string) => request<{ items: FileUsedBy[] }>("GET", `/orgs/${slug}/modules/core-files/files/${id}/used-by`),
   /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
   updateFile: (slug: string, id: string, edit: Edit<{ filename?: string; folder_id?: string | null; metadata?: Record<string, unknown> }>) => request<FileRecord>("PATCH", `/orgs/${slug}/modules/core-files/files/${id}`, edit.body, edit.headers),
-  uploadFile: async (slug: string, file: File, opts: { folderId?: string | null; onDuplicate?: "skip"; camera?: boolean } = {}): Promise<FileRecord> => {
+  uploadFile: async (slug: string, file: File, opts: { folderId?: string | null; onDuplicate?: "skip"; camera?: boolean; signal?: AbortSignal } = {}): Promise<FileRecord> => {
     const form = new FormData();
     if (opts.folderId) form.set("folder_id", opts.folderId);
     if (opts.onDuplicate) form.set("on_duplicate", opts.onDuplicate);
@@ -100,7 +100,7 @@ export const filesApi = {
     // file remembers it (platform-contract photo-source).
     if (opts.camera) form.set("photo_source", "camera");
     form.set("file", file);
-    return upload<FileRecord>(`/api/v1/orgs/${slug}/modules/core-files/files`, form, file);
+    return upload<FileRecord>(`/api/v1/orgs/${slug}/modules/core-files/files`, form, file, opts.signal);
   },
   deleteFile: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-files/files/${id}`),

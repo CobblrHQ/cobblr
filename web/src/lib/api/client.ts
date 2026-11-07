@@ -113,14 +113,14 @@ export class ApiError extends Error {
 /** A multipart upload through the page's one upload door (sendUpload): a
  *  refusal thrown as an ApiError carrying the server's own sentence (which
  *  names the size and the limit), a dropped connection as one that says so. */
-export function upload<T>(url: string, form: FormData, file: File | null): Promise<T> {
-  return counted(() => sendUploadCounted<T>(url, form, file));
+export function upload<T>(url: string, form: FormData, file: File | null, signal?: AbortSignal): Promise<T> {
+  return counted(() => sendUploadCounted<T>(url, form, file, signal));
 }
 
-async function sendUploadCounted<T>(url: string, form: FormData, file: File | null): Promise<T> {
+async function sendUploadCounted<T>(url: string, form: FormData, file: File | null, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
-    res = await sendUpload(url, form, { token: getToken(), file });
+    res = await sendUpload(url, form, { token: getToken(), file, ...(signal ? { signal } : {}) });
   } catch (err) {
     if (err instanceof UploadError) throw new ApiError(err.status, err.code, err.message);
     throw err;

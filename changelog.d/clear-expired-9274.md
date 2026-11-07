@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-11-06
 docs_target: docs/user-guide/inventory.md#3.1 Inventory
+docs_published: 2026-11-07
 ---
 
 Groceries can clear everything past its date in one step, as used up or thrown out, from the dashboard card or the top of the list, with one Undo; a cleanup teaches no shelf life and adds nothing to the shopping list

@@ -86,7 +86,7 @@ import { ScanItemScreen, screenIcons, type ScanItemScreenAction } from "./ScanIt
 import { scanNotesPlacement } from "../lib/scanNotes";
 import { ScanCardCommit } from "../components/ScanCardCommit";
 import { ScanToolMenu } from "../components/ScanToolMenu";
-import { BOX_STATE_EFFECT, soldByWeightWords } from "@cobblr/platform-contract/scan-tools";
+import { BOX_STATE_EFFECT, soldByWeightWords, LOOK_UP_AGAIN_LABEL, RECHECK_HINT, RECHECK_LABEL, scanCanArriveDamaged } from "@cobblr/platform-contract/scan-tools";
 import { displayIdentity, displayName, modelNameBeside, compactCardFields, humanFieldLabel } from "@cobblr/platform-contract/display-identity";
 import { useHeldField, useHeldRecord } from "../lib/scanHeldField";
 import { ScanTitleInPlace } from "./ScanTitleInPlace";
@@ -148,6 +148,7 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 import { formatUnitPrice } from "@cobblr/platform-contract/money";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { PAST_SHELF_LIFE, useAlreadyGone } from "../lib/useAlreadyGone";
 // ── scan-drives-screen (Phase 1) ─────────────────────────────────────────────
 
 /** True when the item never got a real identity — no name, or the AI's
@@ -865,6 +866,7 @@ export function InboxCard({
   // It came in the delivery damaged (#8854): not stock, and marked so for
   // the owner checking the delivery. Undo inline, as Discard does.
   const isArrival = item.status === "pending" && scanPurpose(item) === "arrival";
+  const canArriveDamaged = isArrival && scanCanArriveDamaged(item);
   const arrivedDamaged = useMutation({
     mutationFn: () => api.markScanArrivedDamaged(activeSlug, item.id),
     onSuccess: () => {
@@ -2559,7 +2561,7 @@ export function InboxCard({
   ) : null;
   if (sheet) {
     const actions: ScanItemScreenAction[] = [];
-    if (item.status === "pending") actions.push({ label: "Recheck matches", hint: "Look for this item in the current lists", busy: rematch.isPending, onClick: () => rematch.mutate() });
+    if (item.status === "pending") actions.push({ label: RECHECK_LABEL, hint: RECHECK_HINT, busy: rematch.isPending, onClick: () => rematch.mutate() });
     if (item.status === "pending") {
       if (ranOutRow.offered) actions.push({ label: RAN_OUT_LABEL, icon: screenIcons.ranOut, hint: RAN_OUT_HINT, busy: ranOutRow.pending, onClick: ranOutRow.run });
       if (item.image_file_id && !multiItem && toolSplit) actions.push({ ...toolSplit, tool: "split", label: "Split into items", icon: screenIcons.split, hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
@@ -2570,7 +2572,7 @@ export function InboxCard({
       if (hasLocations && toolBin) actions.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
       if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: BOX_STATE_EFFECT["item-in-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
-      if (isArrival) actions.push({ label: ARRIVED_DAMAGED_LABEL, hint: "Not added to stock; marked for whoever checks the delivery", busy: arrivedDamaged.isPending, onClick: () => arrivedDamaged.mutate() });
+      if (canArriveDamaged) actions.push({ label: ARRIVED_DAMAGED_LABEL, hint: "Not added to stock; marked for whoever checks the delivery", busy: arrivedDamaged.isPending, onClick: () => arrivedDamaged.mutate() });
       // "Put it where suggested" lives beside the Location field now (#3074).
     }
     return (
@@ -2752,10 +2754,10 @@ export function InboxCard({
       .map(({ name: k, label, value: v }) => ({ key: k, label, value: `${String(v)}${whoFromBeside(dest?.fields, k)}`, confirmed: k in userValues, swatch: /colou?r/i.test(k) ? colorSwatch(v) : null }));
     const splitFrom = (item.suggested_metadata as { split_from?: string } | null)?.split_from;
     const more: ScanPhoneRowAction[] = [];
-    if (item.status === "pending") more.push({ label: "Recheck matches", hint: "Look for this item in the current lists", busy: rematch.isPending, onClick: () => rematch.mutate() });
+    if (item.status === "pending") more.push({ label: RECHECK_LABEL, hint: RECHECK_HINT, busy: rematch.isPending, onClick: () => rematch.mutate() });
     if (item.status === "pending") {
       if (ranOutRow.offered) more.push({ label: RAN_OUT_LABEL, hint: RAN_OUT_HINT, busy: ranOutRow.pending, onClick: ranOutRow.run });
-      more.push({ label: "Replay processing", hint: "Free: keeps the identification, re-applies routing and fields", busy: aiWorking, onClick: () => rerun.mutate({ noAi: true }) });
+      more.push({ label: "Sort it again", hint: "Keeps the name and works out again where it goes", busy: aiWorking, onClick: () => rerun.mutate({ noAi: true }) });
       if (item.image_file_id && !multiItem && toolSplit) more.push({ ...toolSplit, tool: "split", label: "Split into items", hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
       if (item.image_file_id && toolSplit) more.push({ ...toolSplit, tool: "split", label: "Split by names…", hint: "Say what each thing in the photo is", onClick: () => setNamesOpen(true) });
       if (item.image_file_id && toolReceipt) more.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
@@ -2765,7 +2767,7 @@ export function InboxCard({
       if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
       if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: BOX_STATE_EFFECT["item-in-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
       if (looksFineResolves) more.push({ label: "Looks fine", hint: "A person looked; stop flagging it", busy: markReviewed.isPending, onClick: () => markReviewed.mutate() });
-      if (isArrival) more.push({ label: ARRIVED_DAMAGED_LABEL, hint: "Not added to stock; marked for whoever checks the delivery", busy: arrivedDamaged.isPending, onClick: () => arrivedDamaged.mutate() });
+      if (canArriveDamaged) more.push({ label: ARRIVED_DAMAGED_LABEL, hint: "Not added to stock; marked for whoever checks the delivery", busy: arrivedDamaged.isPending, onClick: () => arrivedDamaged.mutate() });
       more.push({ label: "Discard", hint: "Recoverable from Recently deleted", busy: discard.isPending, danger: true, onClick: () => discard.mutate() });
     }
     return (
@@ -2877,7 +2879,7 @@ export function InboxCard({
                 : null
             }
             trackedHref={alreadyTracked && trackedMatch?.kind && trackedMatch.id ? recordHref({ kind: trackedMatch.kind, id: trackedMatch.id, detailUrl: (trackedRaw as { detail_url?: string | null } | null)?.detail_url ?? null }, null) : null}
-            rerun={{ running: aiWorking, replaying: replayNoAi, failed: !aiWorking && (matchFailed || namelessFix?.recovery === "retry" || aiDowngraded), can: canRerunLookup(item), onRun: () => rerun.mutate(undefined) }}
+            rerun={{ running: aiWorking, replaying: replayNoAi, failed: !aiWorking && (matchFailed || namelessFix?.recovery === "retry" || aiDowngraded), can: canRerunLookup(item), hasPicture: !!item.image_file_id, onRun: () => rerun.mutate(undefined) }}
             onCapture={() => setCaptureSheet("add")}
             more={more}
             toolHints={item.tool_hints}
@@ -4007,12 +4009,12 @@ export function InboxCard({
                 >
                   {item.status === "pending" && <MenuItem
                     icon={<RefreshCw size={14} />}
-                    label="Recheck matches"
+                    label={RECHECK_LABEL}
                     hint="Look for this item in the current lists"
                     disabled={rematch.isPending}
                     onClick={() => { close(); rematch.mutate(); }}
                   />}
-                  {item.status === "pending" && isArrival && <MenuItem
+                  {item.status === "pending" && canArriveDamaged && <MenuItem
                     icon={<PackageX size={14} />}
                     label={ARRIVED_DAMAGED_LABEL}
                     hint="Not added to stock; marked for whoever checks the delivery"
@@ -4056,7 +4058,7 @@ export function InboxCard({
               )}
           </HeaderMenu>
           <button
-            aria-label={replayNoAi ? "Replaying…" : aiWorking ? "AI is working…" : "Rerun lookup"}
+            aria-label={replayNoAi ? "Replaying…" : aiWorking ? "AI is working…" : LOOK_UP_AGAIN_LABEL}
             type="button"
             onClick={() => rerun.mutate(undefined)}
             // Re-run needs SOMETHING to look up again — a barcode, a photo, OR a
@@ -4065,7 +4067,7 @@ export function InboxCard({
             // canRerunLookup — gating on barcode||image alone greyed out receipts.
             disabled={aiWorking || !canRerunLookup(item)}
             className="text-faint hover:text-accent p-1 disabled:opacity-30"
-            title={replayNoAi ? "Replaying…" : aiWorking ? "AI is working…" : "Rerun lookup"}
+            title={replayNoAi ? "Replaying…" : aiWorking ? "AI is working…" : LOOK_UP_AGAIN_LABEL}
           >
             <RotateCcw size={14} className={aiWorking ? "animate-spin text-accent" : ""} />
           </button>
@@ -4638,7 +4640,7 @@ export function HintBox({
   // UPC. Curating that shared DB is the platform operator's call, not every
   // member's: a well-meaning member "locking in" a mislabelled listing poisons it
   // for everyone. So the trio is operator-only. Members keep the research-hint +
-  // Re-run AI above, which only re-resolves THEIR OWN item (workspace-scoped
+  // Look it up again above, which only re-resolves THEIR OWN item (workspace-scoped
   // cache), never the shared DB.
   const { user } = useAuth();
   const canCurateBarcodeDb = !!user?.is_platform_admin;
@@ -4646,6 +4648,10 @@ export function HintBox({
     onSubmit(hint.trim(), opts);
     setHint("");
   };
+  // A code is looked up in the catalogs, which needs no model: with no AI connected
+  // this is how a row a catalog could not name gets its name (#9270). A hint is read
+  // by a model, and a picture needs one to read it.
+  const lookupOff = aiOff && (!hasBarcode || !!hint.trim());
   return (
     <form
       onSubmit={(e) => {
@@ -4676,7 +4682,7 @@ export function HintBox({
         placeholder="A model number, a better name, or the right barcode. Enter to submit."
         className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800 resize-none"
       />
-      {aiOff && (
+      {lookupOff && (
         <p className="mt-1 text-[11px] text-muted dark:text-slate-400">
           Re-run needs a way to read photos, and this workspace has none yet. Replay still re-applies the latest processing.
         </p>
@@ -4690,7 +4696,7 @@ export function HintBox({
             role-fill, the split derivation, category) over the answer already
             stored on this row, so a fix to any of that can be tried on a real
             item instantly and for free. It cannot produce a new identification,
-            and by construction it cannot make the item worse. Use Re-run AI for a
+            and by construction it cannot make the item worse. Use Look it up again for a
             fresh look. Hidden when a hint is typed — a hint is new information,
             which needs a real read. */}
         {!hint.trim() && !phone && (
@@ -4707,11 +4713,11 @@ export function HintBox({
         {!phone && (
         <button
           type="submit"
-          disabled={busy || aiOff}
-          title={aiOff ? "Connect an AI provider under Configuration → AI to use this" : undefined}
+          disabled={busy || lookupOff}
+          title={lookupOff ? "Connect an AI provider under Configuration → AI to use this" : undefined}
           className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-0.5 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed shrink-0 inline-flex items-center gap-1"
         >
-          <RotateCcw size={11} className={busyKind === "ai" ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : "Re-run AI"}
+          <RotateCcw size={11} className={busyKind === "ai" ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : LOOK_UP_AGAIN_LABEL}
         </button>
         )}
       </div>
@@ -4736,14 +4742,14 @@ export function HintBox({
             </button>
             <button
               type="submit"
-              disabled={busy || aiOff}
-              title={aiOff ? "Connect an AI provider under Configuration → AI to use this" : hint.trim() ? "A fresh look at the photo and the code, using your hint." : "A fresh look at the photo and the code: the AI identifies it again from scratch."}
+              disabled={busy || lookupOff}
+              title={lookupOff ? "Connect an AI provider under Configuration → AI to use this" : hint.trim() ? "A fresh look at the photo and the code, using your hint." : "A fresh look at the photo and the code: the AI identifies it again from scratch."}
               className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-md bg-cobble-600 px-3 text-sm font-medium text-white disabled:opacity-50"
             >
-              <RotateCcw size={14} className={busyKind === "ai" ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : "Re-run AI"}
+              <RotateCcw size={14} className={busyKind === "ai" ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : LOOK_UP_AGAIN_LABEL}
             </button>
           </div>
-          <p className="text-[11px] leading-snug text-faint">Replay is free and keeps the identification. Re-run AI looks at the photo and code again.</p>
+          <p className="text-[11px] leading-snug text-faint">Replay is free and keeps the identification. {LOOK_UP_AGAIN_LABEL} asks again from scratch.</p>
         </div>
       )}
       {/* Shared-barcode-DB curation — OPERATOR ONLY (see canCurateBarcodeDb).
@@ -5403,6 +5409,7 @@ function ConfirmForm({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  const offerGone = useAlreadyGone(activeSlug);
   const confirmMut = useMutation({
     mutationFn: async () => {
       // `extras.metadata` (the table's fields the user filled — colorway,
@@ -5455,7 +5462,10 @@ function ConfirmForm({
       }
       onDone();
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: (e) => {
+      if (e instanceof ApiError && e.code === PAST_SHELF_LIFE) offerGone([item.id]);
+      else toast.error(e instanceof ApiError ? e.message : String(e));
+    },
   });
 
   // dark: fields sit one step LIGHTER (slate-800) than the slate-900 card +

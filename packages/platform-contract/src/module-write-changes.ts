@@ -342,6 +342,7 @@ export const MODULE_WRITES: Record<string, { records: readonly string[]; workspa
       "POST /import",
       "POST /import/preview",
       "POST /import/runs/:x/undo",
+      "POST /inbox/take-back",
       "POST /inbox/:x/as-receipt",
       "POST /inbox/:x/attach",
       "POST /inbox/:x/broken",

@@ -111,6 +111,7 @@ export interface OrderMoneyView {
   net_total: number;
   owed: number;
   state: "paid" | "part" | "unpaid";
+  impossible_lines: number;
 }
 
 /** One payment recorded on an order (#8838). */

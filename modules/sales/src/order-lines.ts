@@ -3,6 +3,7 @@
 // (through orderHappened). A line that is not on the order is said to be not
 // there, never answered as if it had been removed.
 
+import { platform } from "@cobblr/platform-contract";
 import { ActionRefusal } from "@cobblr/platform-contract/action-refusal";
 import { withOrderLock } from "./order-lock.js";
 import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
@@ -59,8 +60,15 @@ function refuseImpossibleNumbers(v: LineValues): void {
   }
 }
 
+async function refuseMissingPart(orgId: string, partId: string | null | undefined): Promise<void> {
+  if (partId && (await platform().entities.recordIsGone(orgId, "inventory:part", partId))) {
+    throw new LineRefused("part_not_here", "That part isn't in this workspace. Pick one you track, or say what is being sold.", 400);
+  }
+}
+
 export async function addLine(db: Db, orgId: string, userId: string | null, orderId: string, v: LineValues & { qty: number }, afterCommit?: Array<() => Promise<void>>, log?: HistoryLog) {
   refuseImpossibleNumbers(v);
+  await refuseMissingPart(orgId, v.part_id);
   const row = await db
     .insertInto("sales_order_items")
     .values({ ...v, description: v.description?.trim() || null, order_id: orderId, metadata: v.metadata ?? {} } as never)
@@ -96,6 +104,7 @@ export async function changeLine(db: Db, orgId: string, userId: string | null, o
     if (patch.part_id !== undefined && patch.part_id !== before.part_id && taken > 0) {
       throw new LineStockRefusal(`This line has already taken ${taken} from stock, so it stays on that part. Cancel the order to return the stock first.`);
     }
+    if (patch.part_id !== before.part_id) await refuseMissingPart(orgId, patch.part_id);
     const partAfter = patch.part_id !== undefined ? patch.part_id : before.part_id;
     const saysAfter = patch.description !== undefined ? patch.description : before.description;
     if (!partAfter && !saysAfter && (patch.part_id !== undefined || patch.description !== undefined)) {

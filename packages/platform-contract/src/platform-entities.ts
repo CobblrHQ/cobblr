@@ -350,6 +350,10 @@ export interface PlatformEntities {
    *  named instances. Lets a caller (the label queue) offer "revert this trimmed
    *  caption to the system name". null when the entity no longer resolves. */
   titleForEntity(orgId: string, kind: string, id: string): Promise<string | null>;
+  /** True only when this record is certainly not here: its kind and its named
+   *  instances answered no. A failed read answers false, so a door that refuses
+   *  on this never refuses what it could not check. */
+  recordIsGone(orgId: string, kind: string, id: string): Promise<boolean>;
   /** The kind id an entity ACTUALLY lives under, INSTANCE AWARE: the given base
    *  `kind` for a default-instance entity, or `<instance_name>:item` when it's in
    *  a named instance the base kind can't see (a machine under "3D Printers").

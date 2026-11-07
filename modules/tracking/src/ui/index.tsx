@@ -8,10 +8,12 @@ import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { TrendingUp, Plus, Trash2, Pencil } from "lucide-react";
 import { TrackingApi, type MetricSummary, type MetricDetail, type Measurement, type GoalDirection, TrackingApiError } from "./api.js";
 import { valueWithUnit } from "@cobblr/platform-contract/money";
+import { dayHere } from "@cobblr/platform-contract/day";
+import { chartRange, instantOfPickedDay } from "./chart-range.js";
 
 export const navItems = [{ label: "Tracking", path: "/tracking", icon: TrendingUp }];
 
@@ -188,13 +190,17 @@ export function MetricFormModal({ api, orgSlug, metric: shown, onClose }: { api:
   );
 }
 
+/** Past this the dots are a solid smear, and thousands of them slow the page. */
+const DOTS_UP_TO = 500;
+const MORE_READINGS = 1000;
+
 function Sparkline({ points, goal }: { points: Measurement[]; goal: number | null }) {
   if (points.length < 2) return <div className="text-xs text-faint italic">Log at least two values to see a trend.</div>;
   const W = 480, H = 140, PAD = 10;
   const ts = points.map((p) => new Date(p.measured_at).getTime());
-  const vs = points.map((p) => p.value);
-  const tMin = Math.min(...ts), tMax = Math.max(...ts);
-  let vMin = Math.min(...vs, ...(goal != null ? [goal] : [])), vMax = Math.max(...vs, ...(goal != null ? [goal] : []));
+  const { min: tMin, max: tMax } = chartRange(ts);
+  const span = chartRange(points.map((p) => p.value), goal);
+  let vMin = span.min, vMax = span.max;
   if (vMin === vMax) { vMin -= 1; vMax += 1; }
   const x = (t: number) => PAD + ((t - tMin) / (tMax - tMin || 1)) * (W - 2 * PAD);
   const y = (v: number) => H - PAD - ((v - vMin) / (vMax - vMin || 1)) * (H - 2 * PAD);
@@ -203,7 +209,7 @@ function Sparkline({ points, goal }: { points: Measurement[]; goal: number | nul
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full border border-line dark:border-slate-700 rounded" role="img" aria-label="Trend">
       {goal != null && <line x1={PAD} y1={y(goal)} x2={W - PAD} y2={y(goal)} className="stroke-emerald-500" strokeWidth={1} strokeDasharray="4 3" />}
       <path d={path} fill="none" className="stroke-cobble-500" strokeWidth={2} />
-      {points.map((p, i) => <circle key={p.id} cx={x(ts[i]!)} cy={y(p.value)} r={2.5} className="fill-cobble-600" />)}
+      {points.length <= DOTS_UP_TO && points.map((p, i) => <circle key={p.id} cx={x(ts[i]!)} cy={y(p.value)} r={2.5} className="fill-cobble-600" />)}
     </svg>
   );
 }
@@ -213,10 +219,14 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
   const toast = useToast();
   const confirm = useConfirm();
   const [val, setVal] = useState("");
+  const today = dayHere();
+  const [day, setDay] = useState(today);
+  const [readings, setReadings] = useState<number | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const detail = useQuery({
-    queryKey: ["tracking-detail", metricId],
-    queryFn: () => api.getMetric(metricId),
+    queryKey: ["tracking-detail", metricId, readings],
+    queryFn: () => api.getMetric(metricId, readings),
+    placeholderData: keepPreviousData,
     // An address with no metric at it stays that way; asking again only delays saying so.
     retry: (failures, e) => !(e instanceof TrackingApiError && e.status < 500) && failures < 2,
   });
@@ -226,8 +236,8 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
     void qc.invalidateQueries({ queryKey: ["tracking", orgSlug] });
   };
   const log = useMutation({
-    mutationFn: (v: number) => api.logMeasurement(metricId, v),
-    onSuccess: () => { setVal(""); invalidate(); },
+    mutationFn: (v: number) => api.logMeasurement(metricId, v, undefined, instantOfPickedDay(day, today)),
+    onSuccess: () => { setVal(""); setDay(today); invalidate(); },
     onError: (e) => toast.error(e instanceof TrackingApiError ? e.message : String(e)),
   });
   const setField = useMutation({
@@ -262,6 +272,11 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
           <button type="button" onClick={() => setEditing(true)} className="inline-flex items-center gap-1 px-3 py-2 text-xs rounded bg-subtle dark:bg-slate-800"><Pencil size={12} /> Edit</button>
         </form>}
 
+        {d && <label className="flex items-center gap-2 text-xs text-muted">
+          Taken on
+          <input type="date" value={day} max={today} onChange={(e) => setDay(e.target.value)} className="rounded border border-line bg-surface px-2 py-1 text-sm dark:border-slate-700" />
+        </label>}
+
         {d && <ProgressBar p={d.progress} />}
         {d && <Sparkline points={d.measurements} goal={d.goal_value} />}
 
@@ -291,6 +306,13 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
               </li>
             ))}
           </ul>
+        )}
+
+        {d && d.measurement_count > d.measurements.length && (
+          <div className="flex items-center justify-between gap-2 text-xs text-muted">
+            <span>Showing the newest {d.measurements.length.toLocaleString()} of {d.measurement_count.toLocaleString()} readings.</span>
+            <button type="button" className="min-h-11 shrink-0 rounded bg-subtle px-3 dark:bg-slate-800" onClick={() => setReadings(d.measurements.length + MORE_READINGS)}>Show more</button>
+          </div>
         )}
 
         {/* The metric's own fields, as a bundle or a person defines them. */}

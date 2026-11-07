@@ -15,7 +15,7 @@ import { platform } from "@cobblr/platform-contract";
 import { z } from "zod";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { goalReached, logMeasurement, removeMeasurement } from "./record.js";
+import { MetricNameTaken, goalReached, logMeasurement, metricOfName, removeMeasurement } from "./record.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
@@ -52,17 +52,33 @@ const MetricCreate = z.object({
 });
 const MetricUpdate = MetricCreate.partial();
 
+/** How many readings a metric's page gets unless it asks for more. */
+export const READINGS_SHOWN = 1000;
+
+const refuseTakenName = (res: { status: (code: number) => { json: (body: unknown) => void } }, name: string) =>
+  res.status(409).json({ error: { code: "metric_name_taken", message: `There is already a metric called "${name}". Pick another name, or log to that one.` } });
+
+/** The first and newest readings and how many there are, without reading the rest. */
 async function latestFor(req: Parameters<typeof tenantDb>[0], metricId: string): Promise<{ latest: number | null; first: number | null; count: number }> {
   const db = tenantDb(req);
-  const rows = await db
+  const end = (dir: "asc" | "desc") =>
+    db
+      .selectFrom("tracking_measurements")
+      .select("value")
+      .where("metric_id", "=", metricId)
+      .orderBy("measured_at", dir)
+      .orderBy("created_at", dir)
+      .limit(1)
+      .executeTakeFirst();
+  const counted = await db
     .selectFrom("tracking_measurements")
-    .select(["value", "measured_at"])
+    .select((eb) => eb.fn.countAll<string>().as("n"))
     .where("metric_id", "=", metricId)
-    .orderBy("measured_at", "asc")
-    .orderBy("created_at", "asc")
-    .execute();
-  if (rows.length === 0) return { latest: null, first: null, count: 0 };
-  return { latest: Number(rows[rows.length - 1]!.value), first: Number(rows[0]!.value), count: rows.length };
+    .executeTakeFirstOrThrow();
+  const count = Number(counted.n);
+  if (count === 0) return { latest: null, first: null, count: 0 };
+  const [first, latest] = [await end("asc"), await end("desc")];
+  return { latest: latest ? Number(latest.value) : null, first: first ? Number(first.value) : null, count };
 }
 
 metricsRouter.get(
@@ -97,6 +113,7 @@ metricsRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const row = await platform().activity.transaction(ctx.org.id, db, async (trx, log) => {
+      if (await metricOfName(trx, parsed.data.name)) throw new MetricNameTaken();
       const row = await trx
         .insertInto("tracking_metrics")
         .values({
@@ -116,7 +133,11 @@ metricsRouter.post(
         diff: { name: row.name },
       });
       return row;
+    }).catch((e: unknown) => {
+      if (e instanceof MetricNameTaken) return null;
+      throw e;
     });
+    if (!row) return void refuseTakenName(res, parsed.data.name);
     void platform().events.emit("tracking.metric.created", { orgId: ctx.org.id, metricId: row.id });
     res.status(201).json({ ...row, goal_value: num(row.goal_value), latest_value: null, measurement_count: 0, progress: null });
   }),
@@ -129,21 +150,26 @@ metricsRouter.get(
     const db = tenantDb(req);
     const m = await db.selectFrom("tracking_metrics").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     if (!m) return void res.status(404).json({ error: { code: "not_found", message: "Metric not found." } });
-    const series = await db
+    // The newest readings, oldest first. A long history is asked for, not sent
+    // whole on every open; the first reading still decides progress.
+    const asked = Number(req.query.limit);
+    const shown = Number.isInteger(asked) && asked > 0 ? asked : READINGS_SHOWN;
+    const newest = await db
       .selectFrom("tracking_measurements")
       .select(["id", "value", "measured_at", "note"])
       .where("metric_id", "=", req.params.id!)
-      .orderBy("measured_at", "asc")
-      .orderBy("created_at", "asc")
+      .orderBy("measured_at", "desc")
+      .orderBy("created_at", "desc")
+      .limit(shown)
       .execute();
-    const points = series.map((s) => ({ id: s.id, value: Number(s.value), measured_at: s.measured_at, note: s.note }));
+    const points = newest.reverse().map((s) => ({ id: s.id, value: Number(s.value), measured_at: s.measured_at, note: s.note }));
     const goal = num(m.goal_value);
-    const latest = points.length ? points[points.length - 1]!.value : null;
-    const first = points.length ? points[0]!.value : null;
+    const { latest, first, count } = await latestFor(req, m.id);
     res.json({
       ...m,
       goal_value: goal,
       measurements: points,
+      measurement_count: count,
       latest_value: latest,
       progress: progress(latest, goal, m.goal_direction, first),
     });
@@ -168,6 +194,7 @@ metricsRouter.patch(
     // The row as it was: the log says what this edit changed (#4517).
     const before = await db.selectFrom("tracking_metrics").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     const row = await platform().activity.transaction(tenantContext(req).org.id, db, async (trx, log) => {
+      if (parsed.data.name !== undefined && (await metricOfName(trx, parsed.data.name, req.params.id!))) throw new MetricNameTaken();
       const row = await trx.updateTable("tracking_metrics").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
       // The request as sent, on the record's history: the one place a value
       // a later write replaced can still be read back (#3625).
@@ -180,7 +207,11 @@ metricsRouter.patch(
         before,
       });
       return row;
+    }).catch((e: unknown) => {
+      if (e instanceof MetricNameTaken) return "taken" as const;
+      throw e;
     });
+    if (row === "taken") return void refuseTakenName(res, parsed.data.name!);
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Metric not found." } });
 
     res.json({ ...row, goal_value: num(row.goal_value) });

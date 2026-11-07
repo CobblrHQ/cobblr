@@ -68,7 +68,8 @@ export function MoneyInput({
     setBad(false);
     setDraft(moneyInputText(r.stored, storage, undefined, selectedCurrency));
     const before = shown.trim() ? storage === "amount" ? parseMoneyAmount(shown) : moneyForStorage(shown, storage) : null;
-    if (r.stored === before) return;
+    // Text that is no amount also reads as null, and emptying that box is still a change.
+    if (r.stored === before && (before !== null || !shown.trim())) return;
     onCommit(r.stored);
   };
 

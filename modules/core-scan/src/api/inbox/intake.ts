@@ -1,5 +1,6 @@
 // Scans coming in: a code, a typed note, the assistant's text and photo, an order line, paperwork.
 // Split from api/inbox.ts by route group (#7385); inbox.ts mounts the groups in order.
+import { pictureWasTakenBack } from "../../services/take-back-picture.js";
 import { Router } from "express";
 import { appendScanHistory } from "../../services/scan-history.js";
 import { receiptFirstLook } from "../../services/receipt-first.js";
@@ -134,6 +135,12 @@ intakeRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
+
+    // The picture was taken back while this was on its way (#9271).
+    if (body.image_file_id && (await pictureWasTakenBack(db, body.image_file_id))) {
+      res.status(409).json({ error: { code: "picture_taken_back", message: "This picture was taken back." } });
+      return;
+    }
 
     if (body.capture_id) {
       const prior = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", body.capture_id).executeTakeFirst();

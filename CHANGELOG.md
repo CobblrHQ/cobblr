@@ -2,6 +2,14 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-07
+
+### Improvements
+- A sales order refuses a number another order already goes by, and a line refuses a part that isn't in the workspace. A tag refuses a colour it can't be drawn in.
+- An SVG holding text, a link or a script is still kept out of shared Files, and now says it could not be checked instead of calling it a personal document.
+- A line whose number can't be right can be corrected on a fulfilled, shipped or closed order, and emptying a price box that reads Infinity now saves.
+- An order with a line whose number can't be right no longer reads Paid, shows Total null or breaks the month's figures, and the accountant's file and invoice say what to check instead of writing Infinity.
+
 ## 2026-11-06
 
 ### Security
@@ -12,12 +20,17 @@ User-facing changes, newest first. Dates are release dates.
 
 ### Improvements
 - A build refuses what it could not honestly do, stopping a conversation stops it, a comment reads as names everywhere, and pinned entries come first
+- A setting that could never work is refused when you make it: a schedule by the second, a wire message with an unclosed block, a field or heading on a kind that does not exist, and a role capability nothing has.
 - A reserved reel cannot be deleted from under its kit, and the bench refuses in words
 - A report the reporter reopens no longer reads as resolved in the team's channel, and a reply held on a declined or open report can now be sent.
 - An edit form left open no longer puts back a change made in another tab or by someone else when you press Save: customers, metrics, tags, locations, vendors and an order line's Correct.
+- A label or a tag for a record that isn't there is refused, instead of queuing a label that opens nothing or counting a tag's use on nothing.
 - A sale says only what can be true: orders made together get their own numbers, a paid order that gains a line stops saying paid, and a blank customer or tag is refused
 - Tracking: a wrong reading can be removed and a metric edited on its page, and a goal tells people once, when it is crossed
+- Tracking: a reading can be dated on screen, a metric's name is its own, and a metric with a long history opens quickly, showing its newest 1,000 readings with more on request.
 - An update across a module migration no longer runs a many-workspace server out of connections: the catch-up keeps to the api's share of the database, and health keeps answering while it runs.
+- Filing a perishable from an old receipt no longer makes something already expired without saying so: the row is held, and "Already gone" settles it without adding stock, with Undo
+- If you upload the wrong picture, an X on its card at the top of the scan inbox takes it back, while it is uploading or being read.
 
 ## 2026-11-05
 

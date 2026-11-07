@@ -2,7 +2,7 @@ import { sql, type Kysely } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import type { SalesDB } from "./db.js";
-import { nextOrderNumber } from "./order-number.js";
+import { nextOrderNumber, refuseTakenOrderNumber } from "./order-number.js";
 import { addLine, MOST_A_LINE_COSTS, MOST_ON_A_LINE } from "./order-lines.js";
 import { isSaleDay } from "./sale-day.js";
 import { orderHappened } from "./history.js";
@@ -51,6 +51,9 @@ export async function createOrder(db: Kysely<SalesDB>, orgId: string, userId: st
         await platform().events.emit("sales.customer.created", { orgId, customerId: c.id, userId });
       });
     }
+    // A store's own reference may match another store's, and its source already
+    // tells them apart: refusing it would lose an order somebody has paid for.
+    if (a.order_number && !a.source) await refuseTakenOrderNumber(trx, a.instance, a.order_number);
     const order = await trx.insertInto("sales_orders").values({
       instance: a.instance, customer_id: customerId, customer_name: customerName,
       order_number: a.order_number || await nextOrderNumber(trx, a.instance), status: a.status, order_date: a.order_date ?? await platform().accounts.dayFor(userId), due_date: a.due_date ?? null,

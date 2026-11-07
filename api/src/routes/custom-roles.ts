@@ -17,6 +17,7 @@ import * as activity from "../platform/activity.js";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { grantableActions } from "../platform/capability-grants.js";
 
 export const customRolesRouter = Router({ mergeParams: true });
 
@@ -40,6 +41,26 @@ async function nameIsTaken(orgId: string, name: string, exceptRole?: string): Pr
 
 function refuseTakenName(res: Parameters<typeof requireAuth>[1], name: string): void {
   res.status(409).json({ error: { code: "role_name_taken", message: `There is already a role called "${name}". Pick another name, or edit that one.` } });
+}
+
+/** A capability no action or gate has grants nothing, and the role reads as if
+ *  it did. One a role already holds may stay, so its list can still be saved
+ *  after a module takes that action away. */
+async function unknownCapability(orgId: string, capabilities: readonly string[], roleId?: string): Promise<string | null> {
+  if (capabilities.length === 0) return null;
+  const known = new Set((await grantableActions(orgId)).map((a) => a.action_id));
+  if (roleId) {
+    // Another workspace's role answers not found further on, whatever it was sent.
+    const ours = await meta.selectFrom("workspace_roles").select("id").where("id", "=", roleId).where("org_id", "=", orgId).executeTakeFirst();
+    if (!ours) return null;
+    const held = await meta.selectFrom("workspace_role_capabilities").select("action_id").where("role_id", "=", roleId).execute();
+    for (const h of held) known.add(h.action_id);
+  }
+  return capabilities.find((c) => !known.has(c)) ?? null;
+}
+
+function refuseUnknownCapability(res: Parameters<typeof requireAuth>[1], capability: string): void {
+  res.status(400).json({ error: { code: "unknown_capability", message: `There is no capability called "${capability}", so this role would not grant it. Pick one from the list.` } });
 }
 
 const lostTheNameRace = (err: unknown) => (err as { code?: string }).code === "23505" && ((err as { constraint?: string }).constraint ?? "").includes("name");
@@ -133,6 +154,8 @@ customRolesRouter.post(
       }
       const orgId = req.tenant!.org.id;
       if (await nameIsTaken(orgId, parsed.data.name)) return void refuseTakenName(res, parsed.data.name);
+      const notThere = await unknownCapability(orgId, parsed.data.capabilities);
+      if (notThere) return void refuseUnknownCapability(res, notThere);
       const created = await meta.transaction().execute(async (trx) => {
         const row = await trx
           .insertInto("workspace_roles")
@@ -201,6 +224,8 @@ customRolesRouter.patch(
       const orgId = req.tenant!.org.id;
       const id = req.params.id!;
       if (parsed.data.name !== undefined && (await nameIsTaken(orgId, parsed.data.name, id))) return void refuseTakenName(res, parsed.data.name);
+      const notThere = parsed.data.capabilities ? await unknownCapability(orgId, parsed.data.capabilities, id) : null;
+      if (notThere) return void refuseUnknownCapability(res, notThere);
       const found = await meta.transaction().execute(async (trx) => {
         // The capability rows carry no org_id, so every write below is
         // scoped through this owned, locked parent; the lock also makes two

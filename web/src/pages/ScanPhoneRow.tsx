@@ -13,7 +13,7 @@ import { MetaFlow } from "../components/MetaParts";
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
 import { thumbnailFit, thumbnailTextHeavy, type ThumbFit } from "@cobblr/platform-contract/thumbnail-fit";
-import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
+import { LOOK_UP_AGAIN_LABEL, lookUpAgainHint, type ScanTool, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
@@ -127,7 +127,7 @@ export interface ScanPhoneRowProps {
   trackedHref?: string | null;
   /** Re-run AI, on the card, with its live state. `failed` is the last run's
    *  verdict (the AI did not answer), so the control reads Retry. */
-  rerun: { running: boolean; replaying: boolean; failed: boolean; can: boolean; onRun: () => void };
+  rerun: { running: boolean; replaying: boolean; failed: boolean; can: boolean; hasPicture?: boolean; onRun: () => void };
   onCapture: () => void;
   /** The rest of the item's verbs, in an overflow menu. */
   more: ScanPhoneRowAction[];
@@ -154,7 +154,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
   // the overflow fit on one row.
   const tools: ScanPhoneRowAction[] = [
     ...(p.rerun.can
-      ? [{ label: p.rerun.failed ? "Retry the AI" : "Re-run AI", hint: "A fresh look at the photo and the code", busy: p.rerun.running, onClick: p.rerun.onRun }]
+      ? [{ label: p.rerun.failed ? "Retry the AI" : LOOK_UP_AGAIN_LABEL, hint: lookUpAgainHint(!!p.rerun.hasPicture), busy: p.rerun.running, onClick: p.rerun.onRun }]
       : []),
     ...p.more,
   ];

@@ -19,6 +19,8 @@ export interface PendingPicture {
   stage: PendingStage;
   /** The row the scan made, once it answered. */
   rowId?: string;
+  /** The stored file, once the upload finished: from here Undo can read it again. */
+  fileId?: string;
   at: number;
 }
 
@@ -47,8 +49,32 @@ export function addPending(slug: string, files: File[]): string[] {
   return added.map((a) => a.key);
 }
 
-export function updatePending(slug: string, key: string, patch: Partial<Pick<PendingPicture, "stage" | "rowId">>): void {
+export function updatePending(slug: string, key: string, patch: Partial<Pick<PendingPicture, "stage" | "rowId" | "fileId">>): void {
   changed(slug, (bySlug.get(slug) ?? []).map((p) => (p.key === key ? { ...p, ...patch } : p)));
+}
+
+/** What the door that started a picture needs to stop or redo it (#9271). */
+const doors = new Map<string, { abort: AbortController; again: () => void }>();
+const takenBack = new Set<string>();
+
+export function openPendingDoor(key: string, again: () => void): AbortSignal {
+  const abort = new AbortController();
+  doors.set(key, { abort, again });
+  return abort.signal;
+}
+
+/** The picture's door, for its X: stops the upload, and answers from then on that
+ *  this picture was taken back, however late its answers come. */
+export function markTakenBack(key: string): { again: () => void } | null {
+  takenBack.add(key);
+  const door = doors.get(key) ?? null;
+  door?.abort.abort();
+  doors.delete(key);
+  return door ? { again: door.again } : null;
+}
+
+export function wasTakenBack(key: string): boolean {
+  return takenBack.has(key);
 }
 
 const expiries = new Map<string, ReturnType<typeof setTimeout>>();
@@ -75,6 +101,7 @@ export function dropPending(slug: string, key: string): void {
     clearTimeout(expiry);
     expiries.delete(key);
   }
+  doors.delete(key);
   const gone = (bySlug.get(slug) ?? []).find((p) => p.key === key);
   if (gone?.url) {
     try {

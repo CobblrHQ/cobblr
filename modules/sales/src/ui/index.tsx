@@ -21,7 +21,7 @@ import { PaymentsPanel } from "./payments.js";
 import { HoldPanel } from "./holds.js";
 import { SalesSummary } from "./summary.js";
 import { IntakeSettings } from "./intake.js";
-import { invoiceCsv, orderTotal } from "../invoice.js";
+import { invoiceCsv, lineCannotAddUp, orderTotal } from "../invoice.js";
 import { Link } from "react-router-dom";
 import { fieldCurrency, formatStoredMoney, formatUnitPrice, linesTotalWords, parseMoneyAmount } from "@cobblr/platform-contract/money";
 import { PickToLight, useUnits } from "@cobblr/platform-web";
@@ -341,7 +341,7 @@ export function NewOrderModal({ api, orgSlug, onClose, onCreated }: { api: Sales
   );
 }
 
-function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; orgSlug: string; orderId: string; onClose: () => void }) {
+export function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; orgSlug: string; orderId: string; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const currency = useMoneyCurrency();
@@ -504,7 +504,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                 },
                 {
                   need: fieldNeed("order_number", { control: "text", label: "Order number", valueLength: (d.order_number ?? "").length }),
-                  node: <OrderNumberField value={d.order_number ?? ""} onSave={(order_number) => update.mutate({ order_number })} />,
+                  node: <OrderNumberField value={d.order_number ?? ""} onSave={(order_number, refused) => update.mutate({ order_number }, { onError: refused })} />,
                 },
                 {
                   need: fieldNeed("order_date", { control: "date", label: "Order date" }),
@@ -564,17 +564,22 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                 </ul>
               )}
               <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
-                {d.items.map((it) => (
+                {d.items.map((it) => {
+                  // A line that can't add up stays correctable on a closed order, through the same rules as the route.
+                  const cannotAddUp = lineCannotAddUp(it);
+                  return (
                   <li key={it.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 text-sm group">
                     <span className="flex-1 min-w-0 text-content dark:text-mortar-100">
                       {it.description || (it.part_id ? "(part)" : "(item)")}
-                      {parseMoneyAmount(it.unit_price) === null && <span className="block text-xs text-ember-600 dark:text-ember-400" data-testid="line-unpriced">No price yet</span>}
+                      {cannotAddUp
+                        ? <span className="block text-xs text-ember-600 dark:text-ember-400" data-testid="line-impossible">This number can't be right, so the order can't read Paid until it's corrected.</span>
+                        : parseMoneyAmount(it.unit_price) === null && <span className="block text-xs text-ember-600 dark:text-ember-400" data-testid="line-unpriced">No price yet</span>}
                       {!fulfilled && d.status !== "cancelled" && (() => {
                         const a = d.availability?.find((a) => a.line_id === it.id);
                         return a ? <LineStock ordered={Number(it.qty)} a={a} /> : null;
                       })()}
                     </span>
-                    {fulfilled ? (
+                    {fulfilled && !cannotAddUp ? (
                       <span className="text-xs text-muted tabular-nums">
                         {Number(it.qty)}{it.unit_price ? ` × ${formatUnitPrice(it.unit_price, { currency: fieldCurrency(it.metadata, "unit_price", fieldCurrency(d.metadata, "total", currency)) }) ?? ""}` : ""}
                       </span>
@@ -633,7 +638,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                       }
                       return makeButton;
                     })()}
-                    {!fulfilled && (
+                    {(!fulfilled || (cannotAddUp && !(Number(it.qty_fulfilled) > 0))) && (
                       <button
                         title={`Remove ${it.description || "line item"}`}
                         type="button"
@@ -647,7 +652,8 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                       </button>
                     )}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
 
@@ -887,13 +893,14 @@ function ShipToField({ value, onSave }: { value: string; onSave: (v: string | nu
   );
 }
 
-function OrderNumberField({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+function OrderNumberField({ value, onSave }: { value: string; onSave: (v: string, refused: () => void) => void }) {
   const f = useFieldDraft(value);
   const save = () => {
     const next = f.draft.trim();
     if (!next || next === value) return f.reset();
     f.committed(next);
-    onSave(next);
+    // A number the order did not take must not stay on screen reading as saved.
+    onSave(next, () => { f.committed(value); f.setDraft(value); });
   };
   return (
     <label className="block">

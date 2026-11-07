@@ -24,6 +24,10 @@ export interface PersonalDocumentRead {
   sources: Partial<Record<PersonalDocumentField, "code" | "local-ai" | "cloud-ai">>;
   missing: PersonalDocumentField[];
   message: string;
+  /** Set when this is refused from shared Files for what could not be checked,
+   *  with nothing personal found in it. A shared door says this instead of
+   *  calling it a personal document, and opens no card for it. */
+  uncheckable?: string;
 }
 export interface DocumentInput {
   bytes: Uint8Array;

@@ -169,11 +169,21 @@ export function isPhoneStatusBar(line: string): boolean {
   return /^\d{1,2}:\d{2}\b/.test(line.trim());
 }
 
+/** A page's heading above a receipt's items, not a shop: "Purchase details",
+ *  "Order summary", "Receipt". A screenshot of an app prints one where a till prints
+ *  its name (#9329). The whole line has to be the heading, so "Order Up Diner" and
+ *  "The Receipt Shop" stay shops. One rule for every door that names a shop. */
+const RECEIPT_HEADING = /^(?:(?:your|my|past|e-?|digital|view|in-?store|online)\s*)?(?:(?:purchase|order|transaction|payment|billing|receipt)s?(?:\s+(?:details?|summary|history|info(?:rmation)?|confirmation|receipt|status))?|invoice|items?|details?|summary)$/i;
+export function isReceiptHeading(line: string): boolean {
+  return RECEIPT_HEADING.test(line.trim());
+}
+
 export function vendorFromLabel(label: string | null | undefined): string | null {
   const m = (label ?? "").match(/^Receipt · (.+?)(?:\s+#\S+)?$/);
   return m?.[1]?.trim() || null;
 }
 
+import { grocerNamedOn } from "./line-is-food.js";
 import type { AiFallback, ProviderErrorReason } from "@cobblr/platform-contract/scan-fallback";
 import type { ReceiptReadSource } from "@cobblr/platform-contract/scan-session";
 import type { RoledFacts } from "@cobblr/platform-contract";
@@ -439,7 +449,8 @@ export function buildReceipt(parts: {
   const total = num(parts.total);
   const lines_total = money(items.reduce((s, i) => s + lineNet(i), 0));
   return {
-    vendor: vendorName(parts.vendor),
+    // A model can read the heading as the shop too.
+    vendor: ((v) => (v && isReceiptHeading(v) ? null : v))(vendorName(parts.vendor)),
     order_ref: cleanOrderRef(str(parts.order_ref)),
     date: isoDate(parts.date),
     currency: currency ? currency.toUpperCase().slice(0, 3) : null,
@@ -473,6 +484,9 @@ export function enrichReceiptFromText(receipt: ParsedReceipt, text: string | nul
   const totals = parseReceiptTotals(text);
   return {
     ...receipt,
+    // A read that gave no shop takes a known grocer speaking for itself below the
+    // items ("Lidl Plus Discount", "lidl.com"), whichever tier read it (#9329).
+    vendor: receipt.vendor ?? grocerNamedOn(text.split(/\r?\n/)),
     seller: receipt.seller ?? detectSeller(text, receipt.vendor),
     // Keep whatever the line parse already established; fill only the gaps.
     totals: receipt.totals ?? totals,

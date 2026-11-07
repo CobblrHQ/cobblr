@@ -24,6 +24,7 @@ import { lineFor, pilesFrom, seenFrom, type Piles } from "../lib/autofilePiles";
 import { RestockPlanChoice } from "./RepurchaseControls";
 import { LocationTreePicker } from "./LocationTreePicker";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { useAlreadyGone } from "../lib/useAlreadyGone";
 
 const TZ = (): string | undefined => {
   try {
@@ -125,6 +126,7 @@ export function FileEverythingSheet({
   const [result, setResult] = useState<AutofileResult | null>(null);
   const [undone, setUndone] = useState<Set<string>>(new Set());
 
+  const gone = useAlreadyGone(slug);
   const plan = useQuery({
     queryKey: ["autofile-plan", slug, batchId ?? "all"],
     queryFn: () => api.autofileScan(slug, { ...(batchId ? { batch_id: batchId } : {}) }) as Promise<AutofileDryRun>,
@@ -307,6 +309,21 @@ export function FileEverythingSheet({
             onToggle={() => setOpenPiles((o) => ({ ...o, skip: !o.skip }))}
             tone="left"
           />
+          {(plan.data.past_shelf_life?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-line dark:border-slate-700 px-3 py-2 text-sm" data-testid="already-gone-offer">
+              <span className="min-w-0 flex-1 basis-48 text-content dark:text-mortar-100">
+                {plan.data.past_shelf_life!.length} from an old receipt would be filed already past their date.
+              </span>
+              <button
+                type="button"
+                className="rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-content dark:text-mortar-100 hover:bg-surface-muted dark:hover:bg-slate-800"
+                data-testid="already-gone"
+                onClick={() => void gone.now(plan.data!.past_shelf_life!).then(() => plan.refetch())}
+              >
+                Already gone ({plan.data.past_shelf_life!.length})
+              </button>
+            </div>
+          )}
         </div>
       )}
       {result && (

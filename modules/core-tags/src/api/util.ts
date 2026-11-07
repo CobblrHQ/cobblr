@@ -4,12 +4,19 @@ import { sessionUser, tenantContext, type OrgRole } from "../db.js";
 import { platform } from "@cobblr/platform-contract";
 import { roleSatisfies, roleRefusal } from "@cobblr/platform-contract/org-roles";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { TagColourRefused } from "../tag-writes.js";
 
 export function asyncHandler<R extends Request = Request>(
   handler: (req: R, res: Response, next: NextFunction) => Promise<void>,
 ) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    void handler(req as R, res, next).catch(next);
+    void handler(req as R, res, next).catch((error) => {
+      if (error instanceof TagColourRefused) {
+        res.status(400).json({ error: { code: "not_a_colour", message: error.message } });
+        return;
+      }
+      next(error);
+    });
   };
 }
 

@@ -292,9 +292,15 @@ tagsRouter.post(
     const parsed = AttachBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
+    const w = writer(req);
+
+    // Before the tag: a refused attach by name must not leave a new tag behind.
+    if (await platform().entities.recordIsGone(w.orgId, `${parsed.data.source_module}:${parsed.data.source_type}`, parsed.data.source_id)) {
+      res.status(404).json({ error: { code: "record_not_found", message: "That record isn't here, so there is nothing to tag." } });
+      return;
+    }
 
     // Attach by name makes the tag when there is none yet.
-    const w = writer(req);
     const tag = parsed.data.tag_id
       ? await db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", parsed.data.tag_id).executeTakeFirst()
       : await ensureTag(db, w, parsed.data.tag_name!, parsed.data.color ?? null);

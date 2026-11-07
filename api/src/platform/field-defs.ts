@@ -55,7 +55,7 @@ import type { FieldOverrideBlob, ModuleFieldDefsTable } from "../db/schema.js";
 import { matchAction } from "./actions.js";
 import * as activity from "./activity.js";
 import { clearComputedDefsCache } from "./computed-fields.js";
-import { getKind, listAll, listKindsForOrg } from "./entities.js";
+import { getKind, kindIsHere, listAll, listKindsForOrg } from "./entities.js";
 import { valueFitsField } from "@cobblr/platform-contract/entity-metadata";
 import { fieldWithMeaning, meaningFromWords, type FieldWithMeaning } from "@cobblr/platform-contract/field-meaning";
 
@@ -305,6 +305,21 @@ export const FieldDefCreate = z.object({
 );
 
 export type FieldDefCreateInput = z.infer<typeof FieldDefCreate>;
+
+/** Why a field a person is making would hold nothing, or null: on a kind nothing
+ *  has it applies to no record, and a relation to one offers nothing to pick.
+ *  Asked at the doors a person uses. An import brings fields whose relation may
+ *  point at a collection that arrives after them. */
+export async function fieldPointsNowhere(orgId: string, input: FieldDefCreateInput): Promise<string | null> {
+  const scoped = (input.applies_to?.traits.length ?? 0) > 0 || isFieldScope(input.entity_kind);
+  if (!scoped && !(await kindIsHere(orgId, input.entity_kind))) {
+    return `There is no kind of record called "${input.entity_kind}" to put a field on.`;
+  }
+  if (input.type === "relation" && input.ref_kind && !(await kindIsHere(orgId, input.ref_kind))) {
+    return `There is no kind of record called "${input.ref_kind}" for this field to point at.`;
+  }
+  return null;
+}
 
 export type CreateFieldDefResult =
   | { ok: true; def: FieldDefRow; warning?: string }

@@ -19,6 +19,7 @@
 // "MILK        3.68" comes back as "MILK 3.68". Everything below keys off the
 // END of the line instead.
 
+import { grocerNamedOn } from "./line-is-food.js";
 import {
   buildReceipt,
   cleanOrderRef,
@@ -26,6 +27,7 @@ import {
   weightUnit,
   isMailTitle,
   isPhoneStatusBar,
+  isReceiptHeading,
   isoDate,
   type ParsedReceipt,
 } from "./receipt-shared.js";
@@ -209,7 +211,7 @@ export function detectVendor(lines: string[]): string | null {
     const s = l.trim();
     if (s.length < 3 || s.length > 60) continue;
     if (!/[a-z]/i.test(s)) continue;
-    if (isMailTitle(s)) continue;
+    if (isMailTitle(s) || isReceiptHeading(s)) continue;
     if (/^\d+\s/.test(s)) continue; // street address
     if (/\b(tel|phone|fax|www\.|http|store\s*#)\b/i.test(s)) continue;
     if (DATE_ONLY.test(s) || NAMED_DATE.test(s) || COLUMN_HEADING.test(s) || isPhoneStatusBar(s)) continue;
@@ -405,7 +407,7 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
   if (Math.abs(delta) > tolerance) return null;
 
   const receipt = buildReceipt({
-    vendor: detectVendor(lines),
+    vendor: detectVendor(lines) ?? grocerNamedOn(lines),
     order_ref: null,
     date: detectDate(text),
     currency: detectCurrency(text),

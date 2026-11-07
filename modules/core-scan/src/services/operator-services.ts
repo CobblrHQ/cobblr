@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import type { BuiltInServiceDef } from "@cobblr/platform-contract/services";
 import { platform } from "@cobblr/platform-contract";
 import { lookupBarcode, type BarcodeOutcome } from "./barcode-lookup.js";
+import { isCatalogTestEntry } from "./catalog-test-entry.js";
 import { hostedIdentifyWhy } from "./hosted-identify.js";
 
 export interface OperatorServiceDeps {
@@ -226,6 +227,7 @@ async function lookupBarcodeForUncounted(orgId: string, code: string, deps: Conn
   const o = (asked.output ?? {}) as Record<string, unknown>;
   if (o.found !== true || typeof o.title !== "string" || !o.title.trim()) return { outcome: "miss" };
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
+  if (isCatalogTestEntry({ title: o.title, brand: str(o.brand) })) return { outcome: "miss" };
   return {
     outcome: "hit",
     hit: {

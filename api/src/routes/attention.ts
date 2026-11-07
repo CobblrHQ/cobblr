@@ -110,10 +110,14 @@ interface AttentionRow {
   all_ids?: string[];
 }
 
-async function j<T>(path: string, token: string): Promise<T | null> {
+/** One source the feed is made of, read over the api as the caller. Under View
+ *  as the caller is the operator and the member is named by X-Impersonation, so
+ *  it is forwarded: without it every read is the operator's, who is no member of
+ *  the workspace, each is refused, and the feed reads as nothing (#9274). */
+async function readAs<T>(path: string, token: string, viewing: string | undefined): Promise<T | null> {
   try {
     const res = await apiFetch(`${INTERNAL_API}/api/v1${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}`, ...(viewing ? { "X-Impersonation": viewing } : {}) },
     });
     if (!res.ok) return null;
     return (await res.json()) as T;
@@ -126,6 +130,8 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
   try {
     const slug = String(req.params.slug);
     const token = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+    const viewing = req.header("X-Impersonation");
+    const j = <T,>(path: string, bearer: string) => readAs<T>(path, bearer, viewing);
     const rows: AttentionRow[] = [];
     const sources = {
       inbox: j<{ items: Array<{ id: string }> }>(

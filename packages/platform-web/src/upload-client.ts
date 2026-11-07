@@ -36,6 +36,8 @@ export interface SendUploadOptions {
   token?: string | null;
   /** The file being sent, for the size a failure names. */
   file?: File | Blob | null;
+  /** Stops the upload, for a person who took it back (#9271). */
+  signal?: AbortSignal;
 }
 
 /** The api path an upload was for, and the workspace it names. */
@@ -68,7 +70,7 @@ function opensPersonalCard(body: { error?: { code?: string; details?: unknown } 
  *  CONNECTION_LOST_MESSAGE when no answer came. An abort is rethrown as is. */
 export async function sendUpload(url: string, form: FormData, opts: SendUploadOptions = {}, method: "POST" | "PUT" = "POST"): Promise<Response> {
   try {
-    const res = await fetch(url, { method, headers: opts.token ? { Authorization: `Bearer ${opts.token}` } : {}, body: form });
+    const res = await fetch(url, { method, headers: opts.token ? { Authorization: `Bearer ${opts.token}` } : {}, body: form, ...(opts.signal ? { signal: opts.signal } : {}) });
     // Every upload is a write: told at the one door, like any other.
     if (res.ok) noteWorkspaceWrite(url);
     if (res.status === 409) {

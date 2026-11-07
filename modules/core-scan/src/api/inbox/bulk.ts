@@ -9,7 +9,9 @@ import { z } from "zod";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { BundleInstaller, fileThroughConfirm } from "../../services/file-through-confirm.js";
 import { scanReviewReason } from "@cobblr/platform-contract/scan-triage";
-import { bearer, tenantContext, tenantDb } from "../../db.js";
+import { platform } from "@cobblr/platform-contract";
+import { pastItsShelfLife, pastShelfLifeSentence } from "../../services/shelf-life.js";
+import { bearer, sessionUser, tenantContext, tenantDb } from "../../db.js";
 import { withResolvedOffers } from "../../services/resolve-offers.js";
 import { asyncHandler, badBody, requireRole } from "../util.js";
 import { isJunkName } from "../../services/enrich.js";
@@ -133,6 +135,15 @@ bulkRouter.post(
     // read once for the page: the plan must file where the person saw it
     // headed, not where the raw route pointed (#3618).
     const tables = await destinationTablesFor(req);
+    // A perishable from an old receipt would be filed already past its date:
+    // left for the person, who can mark it already gone (#9274).
+    const todayIs = await platform().accounts.dayFor(sessionUser(req)?.id ?? null);
+    const goneAt = new Map<string, { expires_on: string; days_late: number }>();
+    for (const r of rows) {
+      const m = (r.suggested_metadata ?? {}) as { category?: string; receipt_date?: string };
+      const late = pastItsShelfLife({ category: m.category, name: r.suggested_name, receiptOn: m.receipt_date, today: todayIs });
+      if (late) goneAt.set(r.id, late);
+    }
     // Every row matched fresh, by the card's own derivation, before anything
     // is written (services/autofile.ts planInbox, #3726).
     plans.push(
@@ -142,7 +153,7 @@ bulkRouter.post(
           return restampTrackedMatch(ctx.org.id, db as never, row.id, row, (pre?.fields as Record<string, unknown> | undefined) ?? null, topCandidateCategory(row.suggested_candidates));
         },
         candidate: (row) => filingDestination(row, tables, liveNow) as never,
-        review: (row) => scanReviewReason(row),
+        review: (row) => scanReviewReason(row) ?? (goneAt.get(row.id) ? pastShelfLifeSentence(row.suggested_name, goneAt.get(row.id)!) : null),
         tables,
         canInstall,
       })),
@@ -161,6 +172,7 @@ bulkRouter.post(
         plans,
         total: plans.length,
         more,
+        ...(goneAt.size ? { past_shelf_life: [...goneAt.keys()] } : {}),
       });
       return;
     }

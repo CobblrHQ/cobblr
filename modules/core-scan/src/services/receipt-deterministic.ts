@@ -10,7 +10,7 @@
 //
 // Both go through one rows→items mapper so CSV and PDF behave identically.
 
-import { buildReceipt, forwardedSender, isMailTitle, isPhoneStatusBar, isoDate, num, str, vendorName, type ParsedReceipt } from "./receipt-shared.js";
+import { buildReceipt, forwardedSender, isMailTitle, isPhoneStatusBar, isReceiptHeading, isoDate, num, str, vendorName, type ParsedReceipt } from "./receipt-shared.js";
 
 const SYMBOL_CURRENCY: Record<string, string> = { "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY" };
 
@@ -21,7 +21,7 @@ export function enrichReceiptMeta(receipt: ParsedReceipt, text: string): ParsedR
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   // An email's title ("Order #1001 confirmed") heads its text and is never
   // the shop; the line under it is where the shop prints its name.
-  const head = lines.slice(0, 4).find((l) => !isMailTitle(l));
+  const head = lines.slice(0, 4).find((l) => !isMailTitle(l) && !isReceiptHeading(l));
   // A screenshot's head is the phone, and the lines under it are its date and the
   // shop's address, so there is no name here to take: blank, not a guess (#9272).
   // A logo heads a plain-text email as "[image: <the shop>]": its words (#6702).
@@ -73,7 +73,7 @@ function cellsOf(line: string): string[] {
 /** Could this line of a receipt's text be the merchant's name? Not a
  *  column header, not a row of a table, and it has words in it. */
 export function merchantShaped(line: string): boolean {
-  if (isMailTitle(line)) return false;
+  if (isMailTitle(line) || isReceiptHeading(line)) return false;
   const cells = cellsOf(line);
   if (isHeaderRow(cells)) return false;
   if (/[,;\t|]/.test(line) && cells.length >= 3) return false;

@@ -18,7 +18,7 @@
 //     is still on the shelf.
 
 import type { Kysely } from "kysely";
-import { fieldCurrency, roundMoneyAmount } from "@cobblr/platform-contract/money";
+import { addMoney, fieldCurrency, roundMoneyAmount } from "@cobblr/platform-contract/money";
 import type { SalesDB } from "./db.js";
 import { withOrderLock } from "./order-lock.js";
 import { orderHappened } from "./history.js";
@@ -50,18 +50,21 @@ export interface OrderMoney {
   net_total: number;
   /** What is still to be paid: the net total less what is kept. */
   owed: number;
-  /** Paid in full, part paid, or nothing paid. */
+  /** Paid in full, part paid, or nothing paid. Never paid while a line can't be added up. */
   state: "paid" | "part" | "unpaid";
+  /** Lines holding a number nothing can add up; the figures above leave them out. */
+  impossible_lines: number;
 }
 
-const sum = (xs: readonly number[], currency: string) => roundMoneyAmount(xs.reduce((n, x) => n + x, 0), currency);
+const sum = (xs: readonly number[], currency: string) => roundMoneyAmount(xs.reduce((n, x) => addMoney(n, x, currency), 0), currency);
 
 /** The one answer to "how much?" for an order: the page, the list, the export and the summary all read it.
  *  `payments` are the amounts recorded on the order (#8838); an older caller that has none reads a paid
  *  order as paid in full. */
 export function orderMoney(order: { status: string; paid: boolean; metadata?: Record<string, unknown> }, lines: readonly MoneyLine[], refunds: readonly number[], shopCurrency: string, payments?: readonly number[]): OrderMoney {
   const currency = fieldCurrency(order.metadata, "total", shopCurrency);
-  const gross = orderTotal(lines, currency).amount;
+  const total = orderTotal(lines, currency);
+  const gross = total.amount;
   const returned_value = sum(
     lines.map((l) => {
       const price = l.unit_price === null ? null : Number(l.unit_price);
@@ -77,8 +80,9 @@ export function orderMoney(order: { status: string; paid: boolean; metadata?: Re
   const kept = roundMoneyAmount(Math.max(0, paid_amount - refunded), currency);
   const refund_due = roundMoneyAmount(Math.max(0, paid_amount - refunded - net_total), currency);
   const owed = cancelled ? 0 : roundMoneyAmount(Math.max(0, net_total - kept), currency);
-  const state = paid_amount > 0 ? (owed > 0 ? "part" : "paid") : order.paid && !cancelled && net_total === 0 ? "paid" : "unpaid";
-  return { currency, gross, returned_value, refunded, paid_amount, kept, refund_due, net_total, owed, state };
+  const adds = total.impossible === 0;
+  const state = paid_amount > 0 ? (owed > 0 || !adds ? "part" : "paid") : adds && order.paid && !cancelled && net_total === 0 ? "paid" : "unpaid";
+  return { currency, gross, returned_value, refunded, paid_amount, kept, refund_due, net_total, owed, state, impossible_lines: total.impossible };
 }
 
 export type ReturnInput = { line_id?: string | null; qty?: number | null; refund_amount?: number | null; reason?: string | null };

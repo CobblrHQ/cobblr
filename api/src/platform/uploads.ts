@@ -227,6 +227,10 @@ export function uploadMiddleware(options: UploadOptions): UploadMiddleware {
           console.info(`[uploads] intake timing: ${JSON.stringify({ multipart_ms: multipartMs, privacy_ms: privacyMs, mime, bytes: file.size })}`);
           if (read.privacy === "normal") return next();
           rs.setHeader("Cache-Control", "no-store");
+          if (read.uncheckable) {
+            rs.status(409).json({ error: { code: "personal_document", message: read.uncheckable } });
+            return;
+          }
           rs.status(409).json({ error: { code: "personal_document", message: `This is a personal document. It has not been saved to shared Files or sent to a cloud AI; read it with ${PERSONAL_READER_PLACE}.`, details: read } });
         })().catch(next);
         return;

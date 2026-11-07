@@ -1,3 +1,5 @@
+import { daysUntil } from "@cobblr/platform-contract/day";
+
 // How long a grocery keeps, from what it is - so a date is never a prompt.
 //
 // Every pantry app dies in week two on the same chore: a person is asked for a
@@ -166,4 +168,32 @@ export function expiryDefaults(opts: {
   if (life.shelf_life_refrigerated_days) out.shelf_life_refrigerated_days = life.shelf_life_refrigerated_days;
   if (life.shelf_life_frozen_days) out.shelf_life_frozen_days = life.shelf_life_frozen_days;
   return out;
+}
+
+/**
+ * Would filing this today make something already past its date? A perishable
+ * counted from an old receipt's date is: a month-old receipt for milk dates it
+ * three weeks ago. Null when it would not be, when nothing says how long it
+ * keeps, and when there is no receipt date (counted from today, it is fresh).
+ * Pure; the filing doors hold on it and say so (#9274).
+ */
+export function pastItsShelfLife(opts: {
+  category: string | null | undefined;
+  name: string | null | undefined;
+  receiptOn: string | null | undefined;
+  today: string;
+}): { expires_on: string; days_late: number } | null {
+  if (!opts.receiptOn || !/^\d{4}-\d{2}-\d{2}$/.test(opts.receiptOn)) return null;
+  const life = shelfLifeFor(opts.category, opts.name);
+  if (!life) return null;
+  const expires_on = addDays(opts.receiptOn, life.shelf_life_days);
+  if (expires_on >= opts.today) return null;
+  const days_late = -daysUntil(expires_on, opts.today);
+  return { expires_on, days_late };
+}
+
+/** The sentence a held filing says, and the one a list of them says. */
+export function pastShelfLifeSentence(name: string | null | undefined, late: { days_late: number }): string {
+  const what = name?.trim() || "This";
+  return `${what} is from an old receipt and would be filed ${late.days_late} ${late.days_late === 1 ? "day" : "days"} past its date. Mark it already gone, or file it anyway.`;
 }

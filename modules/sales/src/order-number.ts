@@ -6,6 +6,7 @@
 
 import { sql, type Kysely } from "kysely";
 import type { SalesDB } from "./db.js";
+import { LineRefused } from "./order-lines.js";
 
 const PREFIX = "SO-";
 
@@ -25,4 +26,23 @@ export async function nextOrderNumber(db: Kysely<SalesDB>, instance?: string): P
   const row = await q.executeTakeFirst();
   const next = (Number(row?.top) || 0) + 1;
   return `${PREFIX}${String(next).padStart(4, "0")}`;
+}
+
+/** A number somebody gave: another order in this instance already goes by it,
+ *  read the way a person reads it ("so-7 " is SO-7), and an invoice or a search
+ *  could not tell the two apart. Asks under the lock nextOrderNumber takes, so
+ *  two orders given one number at once cannot both pass, when the caller is in
+ *  a transaction. Orders that already share a number stay as they are: this is
+ *  asked only of a number being given. */
+export async function refuseTakenOrderNumber(db: Kysely<SalesDB>, instance: string, number: string, exceptId?: string): Promise<void> {
+  await sql`select pg_advisory_xact_lock(hashtextextended(${`sales:create:${instance}`}, 0))`.execute(db);
+  let q = db
+    .selectFrom("sales_orders")
+    .select("id")
+    .where("instance", "=", instance)
+    .where(sql<string>`lower(btrim(order_number))`, "=", number.trim().toLowerCase());
+  if (exceptId) q = q.where("id", "!=", exceptId);
+  if (await q.executeTakeFirst()) {
+    throw new LineRefused("order_number_taken", `Another order is already ${number.trim()}. Give this one its own number, or leave it empty for the next one.`);
+  }
 }

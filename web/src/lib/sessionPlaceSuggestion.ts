@@ -116,6 +116,6 @@ export function placeForFilingLine(
   if (setPlace) return setPlace;
   if (suggested.length === 1) return `${suggested[0]!.place} (${suggested[0]!.why})`;
   if (most) return `${most.place} (${most.why}), ${most.elsewhere} elsewhere`;
-  if (suggested.length > 1) return `${suggested.length} places, each item's own`;
+  if (suggested.length > 1) return "the places shown on each";
   return null;
 }

@@ -175,6 +175,13 @@ export async function resolveKind(orgId: string, kind: string): Promise<{ base: 
   return { base: registry.primaryByModule.get(inst.module_name) ?? kind, instance: name };
 }
 
+/** Whether this names a kind of record at all: a registered one, on or off in
+ *  this workspace, or one of its named collections. */
+export async function kindIsHere(orgId: string, kind: string): Promise<boolean> {
+  if ((await kindRegistryNow()).ids.has(kind)) return true;
+  return (await resolveKind(orgId, kind)).instance !== null;
+}
+
 /** For a `<name>:item` kind with no exact single-entity resolver, find the
  *  instance's owning module + its registered instance resolver, bound to the
  *  instance name. Returns a plain EntityResolver, or null. Mirrors
@@ -1480,6 +1487,36 @@ export async function titleForEntity(orgId: string, kind: string, id: string): P
   const module = kind.split(":")[0] ?? "";
   const probed = await probeNamedInstance(orgId, module, id);
   return probed && probed.entity.title ? probed.entity.title : null;
+}
+
+/** Whether this record is certainly not here: every place it could be was asked
+ *  and answered no. A read that failed, or a kind with nothing to ask, is not an
+ *  answer, so a door refusing on this never refuses what it could not check. An
+ *  id of the wrong shape can never be a row, which the database says by failing. */
+export async function recordIsGone(orgId: string, kind: string, id: string): Promise<boolean> {
+  const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
+  if (!resolver) return !(await kindRegistryNow()).ids.has(kind);
+  try {
+    if (await resolver(orgId, id)) return false;
+    const module = kind.split(":")[0] ?? "";
+    const insts = await meta
+      .selectFrom("workspace_module_instances")
+      .select("instance_name")
+      .where("org_id", "=", orgId)
+      .where("module_name", "=", module)
+      .where("is_default", "=", false)
+      .execute();
+    for (const inst of insts) {
+      const named = await instanceFallbackEntityResolver(orgId, `${inst.instance_name}:item`);
+      if (named && (await named(orgId, id))) return false;
+    }
+    for (const src of await activeLinkedSources(orgId, kind, undefined)) {
+      if (await resolver(src.id, id)) return false;
+    }
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === "22P02";
+  }
 }
 
 /** The kind id an entity ACTUALLY lives under: the given base `kind` when the

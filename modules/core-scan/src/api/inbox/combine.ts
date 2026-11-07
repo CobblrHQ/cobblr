@@ -74,7 +74,11 @@ combineRouter.post(
         /* trait lookup is best-effort — fall back to the summing default */
       }
     }
-    await combineInboxRows(db, rows, primary.id, { unique: uniqueKind });
+    // Lines of one receipt: what they cost adds up too, as when the heal merges
+    // them. Without it a person's Combine read ×2 at one line's price.
+    const groupOf = (r: (typeof rows)[number]) => (r.suggested_metadata as { receipt_group_id?: unknown } | null)?.receipt_group_id;
+    const lineFigures = typeof groupOf(rows[0]!) === "string" && rows.every((r) => groupOf(r) === groupOf(rows[0]!));
+    await combineInboxRows(db, rows, primary.id, { unique: uniqueKind, lineFigures });
     res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", primary.id).executeTakeFirst());
   }),
 );

@@ -112,6 +112,11 @@ queueRouter.post(
     const session = sessionUser(req);
     const ctx = tenantContext(req);
 
+    if (await platform().entities.recordIsGone(ctx.org.id, `${parsed.data.module_name}:${parsed.data.entity_type}`, parsed.data.entity_id)) {
+      res.status(404).json({ error: { code: "record_not_found", message: "That record isn't here any more, so there is nothing to label." } });
+      return;
+    }
+
     const inserted = await db
       .insertInto("labels_queue")
       .values({

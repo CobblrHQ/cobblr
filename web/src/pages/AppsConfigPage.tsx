@@ -451,7 +451,7 @@ function BlockEditor({
         </div>
       )}
       {block.type === "action" && (
-        <input value={block.action_id} onChange={(e) => onChange({ ...block, action_id: e.target.value })} placeholder="action_id (e.g. purchases:receive-order)" className={inputCls} />
+        <input value={block.action_id} onChange={(e) => onChange({ ...block, action_id: e.target.value })} placeholder="action_id (e.g. purchases:plan-order)" className={inputCls} />
       )}
       {block.type === "record" && (
         <KindSelect value={block.kind} onPick={(v) => onChange({ ...block, kind: v })} />

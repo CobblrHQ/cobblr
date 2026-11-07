@@ -444,6 +444,8 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
   return { privacy, kind, fields,
     ...(privacy === "personal" && renewalDocumentTypeIn(text) ? { renewalType: renewalDocumentTypeIn(text)!.id } : {}),
     sources, missing,
+    // Still refused: a script or a text element can't be checked the way plain shapes can (decision 40397 on #5243).
+    ...(raw && privacy === "personal" && !forcePersonal && !personalIn(raw) && !personalIn(text) ? { uncheckable: "This SVG holds more than plain shapes, such as text, a link or a script, so it could not be checked here. It has not been saved to shared Files. Save it as a PNG or a PDF to upload it." } : {}),
     message: privacy === "normal" ? "This is an ordinary document." : missing.length
       ? `${readWhere(sentTo)} Please check ${missing.join(", ")}; they could not be read.${needsLocalConnection ? " Connect a local AI in Configuration, AI to help with the missing fields." : ""}${sentNote(sentTo)}`
       : `${readWhere(sentTo)} Check these values before using them.${sentNote(sentTo)}` };

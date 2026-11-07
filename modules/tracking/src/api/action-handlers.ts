@@ -14,7 +14,7 @@ import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { TrackingDB } from "../db.js";
 import { canBeAName } from "@cobblr/platform-contract/readable-text";
-import { logMeasurement, removeMeasurement, type MetricLike } from "./record.js";
+import { logMeasurement, metricOfName, removeMeasurement, type MetricLike } from "./record.js";
 
 let registered = false;
 
@@ -111,6 +111,8 @@ export function registerTrackingActionHandlers(): void {
       if (!metric) {
         const goalValue = coerceNumber(args.goalValue);
         metric = await platform().activity.transaction(ctx.orgId, db, async (trx, log) => {
+          const beaten = await metricOfName(trx, name);
+          if (beaten) return trx.selectFrom("tracking_metrics").select(["id", "name", "unit", "goal_value", "goal_direction"]).where("id", "=", beaten.id).executeTakeFirstOrThrow();
           const made = await trx
             .insertInto("tracking_metrics")
             .values({

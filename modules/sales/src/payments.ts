@@ -49,7 +49,7 @@ export async function syncPaid(db: Kysely<SalesDB>, orderId: string, shopCurrenc
 export async function settlePaidAfterLines(db: Kysely<SalesDB>, orgId: string, orderId: string): Promise<void> {
   const money = await moneyOf(db, orderId, await platform().money.currency(orgId));
   if (!money) return;
-  const paid = money.state === "paid" ? true : money.owed > 0 ? false : null;
+  const paid = money.state === "paid" ? true : money.owed > 0 || money.impossible_lines > 0 ? false : null;
   if (paid !== null) await db.updateTable("sales_orders").set({ paid } as never).where("id", "=", orderId).where("paid", "!=", paid).execute();
 }
 

@@ -312,6 +312,7 @@ export interface CoreScanDB {
   core_scan_glance_config: CoreScanPhotoRankConfigTable;
   core_scan_inbox_items: CoreScanInboxItemsTable;
   core_scan_batches: CoreScanBatchesTable;
+  core_scan_pictures_taken_back: { file_id: string; taken_back_at: Generated<Date> };
   core_scan_organize_plans: CoreScanOrganizePlansTable;
   core_scan_putaway_sessions: CoreScanPutawaySessionsTable;
   core_scan_barcode_cache: CoreScanBarcodeCacheTable;

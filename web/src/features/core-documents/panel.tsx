@@ -105,7 +105,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   });
   // A copy shared Files refused as a personal document: the row offers the
   // Vault in place of the copy button, never a dead end (#5871).
-  const [personal, setPersonal] = useState<Set<string>>(() => new Set());
+  const [personal, setPersonal] = useState<Map<string, string>>(() => new Map());
   const rowKey = (d: { connection_id: string; ref: string }) => `${d.connection_id}|${d.ref}`;
   const copy = useMutation({
     mutationFn: async (d: DocumentRow & { to?: "files" | "vault" }) => {
@@ -114,7 +114,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
         const job = await api.getServiceJob(activeSlug, started.job.id);
         if (job.status === "done") return { job, to: d.to ?? "files" };
         if (job.error?.code === "personal_document") {
-          setPersonal((had) => new Set(had).add(rowKey(d)));
+          setPersonal((had) => new Map(had).set(rowKey(d), job.error?.message ?? "This is a personal document, so it can't be a shared file."));
           return null;
         }
         if (job.status === "failed" || job.status === "cancelled") throw new Error(job.error?.message ?? "The copy did not finish.");
@@ -212,7 +212,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                       </span>
                     ) : personal.has(rowKey(d)) && !d.copied_at ? (
                       <span className="basis-full flex flex-wrap items-center gap-x-2 text-xs" data-testid="documents-personal">
-                        <span className="text-muted">This is a personal document, so it can't be a shared file.</span>
+                        <span className="text-muted">{personal.get(rowKey(d))}</span>
                         <button type="button" className="font-medium text-accent min-h-8" onClick={() => copy.mutate({ ...d, to: "vault" })} disabled={copy.isPending}>
                           {copy.isPending ? "Keeping…" : "Keep it in your Vault instead"}
                         </button>

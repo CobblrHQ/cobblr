@@ -7,6 +7,8 @@ import type { CoreScanDB } from "../db.js";
 import type { Kysely } from "kysely";
 import { selfOrigin } from "@cobblr/platform-contract/self-api";
 import { advertNamesCandidate, filedBooksStillNamedByAnAdvert } from "../heal-books-named-by-an-advert.js";
+import { filedRecordsStillNamedByATestEntry, testEntryNamesCandidate } from "../heal-rows-named-by-a-test-entry.js";
+import { filedRecordsShowingAStatusBar, statusBarVendorCandidate } from "../heal-status-bar-vendors.js";
 
 export function tidyHome(item: PerceivedItem, current: ScanMenuEntry, menu: ScanMenuEntry[], twins: KeptTable[]): ScanMenuEntry | null {
   const candidates = heuristicMatch(item, menu);
@@ -72,6 +74,14 @@ export function registerScanTidyFinders(): void {
   platform().tidy.registerFinder({ id: "core-scan.advert-named-books", module: "core-scan", async find(ctx) {
     const db = await platform().tenants.getDb(ctx.orgId);
     return advertNamesCandidate(await filedBooksStillNamedByAnAdvert(ctx.orgId, db as never));
+  } });
+  platform().tidy.registerFinder({ id: "core-scan.test-entry-named-records", module: "core-scan", async find(ctx) {
+    const db = await platform().tenants.getDb(ctx.orgId);
+    return testEntryNamesCandidate(await filedRecordsStillNamedByATestEntry(ctx.orgId, db as never));
+  } });
+  platform().tidy.registerFinder({ id: "core-scan.status-bar-vendors", module: "core-scan", async find(ctx) {
+    const db = await platform().tenants.getDb(ctx.orgId);
+    return statusBarVendorCandidate(await filedRecordsShowingAStatusBar(ctx.orgId, db as never));
   } });
   platform().tidy.registerFinder({ id: "core-scan.unfiled", module: "core-scan", async find(ctx) {
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreScanDB>;

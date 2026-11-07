@@ -322,6 +322,12 @@ export function roundMoneyAmount(amount: number, currency: string): number {
   return Math.round(amount * scale) / scale;
 }
 
+/** A sum with one more amount on it, or the sum as it was when that can't be added up. */
+export function addMoney(sum: number, more: number, currency: string): number {
+  const next = sum + more;
+  return Number.isFinite(roundMoneyAmount(next, currency)) ? next : sum;
+}
+
 export function totalMoney(values: readonly { value: Money; day: string }[], currency: string, rates: ExchangeRates): MoneyTotal {
   const excluded: Record<string, number> = {};
   const conversions: MoneyConversion[] = [];
@@ -347,6 +353,9 @@ export interface LinesTotal {
   currency: string;
   lines: number;
   unpriced: number;
+  /** Of those, lines holding a number nothing can add up: Infinity, NaN, or past what a
+   *  sum can reach. "No price yet" is a line waiting; this is a line that is wrong. */
+  impossible: number;
   /** What lines priced in another currency add up to, kept apart: never added
    *  into `amount`, which is in `currency` alone. */
   other: Record<string, number>;
@@ -356,16 +365,26 @@ export interface LinesTotal {
 export function totalOfLines(lines: readonly { qty: unknown; price: unknown; currency?: string }[], currency: string): LinesTotal {
   let amount = 0;
   let unpriced = 0;
+  let impossible = 0;
   const other: Record<string, number> = {};
   for (const line of lines) {
     const price = parseMoneyAmount(line.price);
     const qty = Number(line.qty);
-    if (price === null || !Number.isFinite(qty)) unpriced++;
-    else if (line.currency && line.currency !== currency) other[line.currency] = (other[line.currency] ?? 0) + roundMoneyAmount(qty * price, line.currency);
-    else amount += roundMoneyAmount(qty * price, currency);
+    const noPrice = line.price === null || line.price === undefined || line.price === "";
+    if (noPrice && Number.isFinite(qty)) {
+      unpriced++;
+      continue;
+    }
+    const own = line.currency && line.currency !== currency ? line.currency : currency;
+    const sum = price === null || !Number.isFinite(qty) ? NaN : (own === currency ? amount : other[own] ?? 0) + roundMoneyAmount(qty * price, own);
+    if (!Number.isFinite(roundMoneyAmount(sum, own))) {
+      unpriced++;
+      impossible++;
+    } else if (own === currency) amount = sum;
+    else other[own] = sum;
   }
   for (const c of Object.keys(other)) other[c] = roundMoneyAmount(other[c]!, c);
-  return { amount: roundMoneyAmount(amount, currency), currency, lines: lines.length, unpriced, other, complete: unpriced === 0 && Object.keys(other).length === 0 };
+  return { amount: roundMoneyAmount(amount, currency), currency, lines: lines.length, unpriced, impossible, other, complete: unpriced === 0 && Object.keys(other).length === 0 };
 }
 
 /** The label beside a lines total: "Total", "Total so far, 1 line unpriced",

@@ -35,6 +35,8 @@ export function isRerunInFlight(it: ScanInboxItem, now = Date.now()): boolean {
 // Terminal states (couldn't-identify, rate-limit-gave-up) count as DONE — they
 // need the user, not more AI. Lives here (not ScanPage) so page + test share ONE
 // truth and the no-page-imports-a-page lint stays satisfied.
+const READING_RECEIPT_LIVE_MS = 10 * 60_000;
+
 export function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
   if (it.status !== "pending") return false;
   const meta = (it.suggested_metadata ?? {}) as {
@@ -65,6 +67,10 @@ export function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
     !meta.matched_at &&
     !needsName &&
     workingAgeMs < 180_000;
+  // A receipt being read is one state until its lines are in, whatever name the
+  // row carries meanwhile: its session said "needs review", then "1 finishing…"
+  // (#9270). Bounded like the others: a read that died must not spin for ever.
+  const readingReceipt = !!(meta as { reading_receipt?: boolean }).reading_receipt && freshMs < READING_RECEIPT_LIVE_MS;
   const awaitingFresh = !it.suggested_name && !it.ai_suggested_at && cands === 0 && !meta.rate_limited;
-  return isRerunInFlight(it, now) || serverMatching || awaitingFresh;
+  return isRerunInFlight(it, now) || serverMatching || awaitingFresh || readingReceipt;
 }

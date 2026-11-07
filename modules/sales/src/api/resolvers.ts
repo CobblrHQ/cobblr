@@ -6,6 +6,7 @@ import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { type Kysely } from "kysely";
 import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { SalesDB } from "../db.js";
+import { holdsImpossibleLine, paidAsRead } from "../reads-paid.js";
 
 let registered = false;
 
@@ -33,7 +34,7 @@ export function registerSalesResolvers(): void {
 
   platform().entities.registerResolver("sales:order", async (orgId, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<SalesDB>;
-    const row = await db.selectFrom("sales_orders").selectAll().where("id", "=", id).executeTakeFirst();
+    const row = await db.selectFrom("sales_orders").selectAll().select(paidAsRead).where("id", "=", id).executeTakeFirst();
     return row ? orderToResolved(row) : null;
   });
 
@@ -46,7 +47,7 @@ export function registerSalesResolvers(): void {
   // `<name>:item`, and only from that collection.
   platform().entities.registerInstanceResolver("sales", async (orgId, instance, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<SalesDB>;
-    const row = await db.selectFrom("sales_orders").selectAll().where("id", "=", id).where("instance", "=", instance).executeTakeFirst();
+    const row = await db.selectFrom("sales_orders").selectAll().select(paidAsRead).where("id", "=", id).where("instance", "=", instance).executeTakeFirst();
     return row ? orderToResolved(row) : null;
   });
 
@@ -74,7 +75,10 @@ async function listOrders(orgId: string, query: EntityListQuery, instance: strin
   if (typeof status === "string") q = q.where("status", "=", status as never);
   if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["customer_name", "order_number", "notes", "shipping_address"], json: ["metadata"] })!);
   const rows = (await groupListRows(db, q.orderBy("order_date", "desc"), query)) ?? await q.orderBy("order_date", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
-  return { items: rows.map(orderToResolved) };
+  // Read apart, as a grouped list groups this query and a second "paid" column would be ambiguous there.
+  const ids = rows.filter((r) => r.paid).map((r) => r.id);
+  const notPaid = new Set(ids.length ? (await db.selectFrom("sales_orders").select("id").where("id", "in", ids).where(holdsImpossibleLine).execute()).map((r) => r.id) : []);
+  return { items: rows.map((r) => orderToResolved(notPaid.has(r.id) ? { ...r, paid: false } : r)) };
 }
 
 function itemToResolved(row: { id: string; description: string | null; qty: string | number }): ResolvedEntity {

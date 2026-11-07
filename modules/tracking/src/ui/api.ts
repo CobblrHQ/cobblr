@@ -28,6 +28,8 @@ export interface Measurement {
 
 export interface MetricDetail extends Omit<MetricSummary, "measurement_count"> {
   measurements: Measurement[];
+  /** Every reading the metric has; `measurements` is the newest of them. */
+  measurement_count: number;
 }
 
 export class TrackingApiError extends Error {
@@ -75,8 +77,8 @@ export class TrackingApi {
   listMetrics() {
     return this.req<{ items: MetricSummary[] }>("GET", "/metrics");
   }
-  getMetric(id: string) {
-    return this.req<MetricDetail>("GET", `/metrics/${id}`);
+  getMetric(id: string, readings?: number) {
+    return this.req<MetricDetail>("GET", `/metrics/${id}${readings ? `?limit=${readings}` : ""}`);
   }
   createMetric(body: { name: string; unit?: string; goal_value?: number; goal_direction?: GoalDirection }) {
     return this.req<MetricSummary>("POST", "/metrics", body);
@@ -89,8 +91,8 @@ export class TrackingApi {
   deleteMetric(id: string) {
     return this.req<void>("DELETE", `/metrics/${id}`);
   }
-  logMeasurement(metricId: string, value: number, note?: string) {
-    return this.req<Measurement>("POST", `/metrics/${metricId}/measurements`, { value, note });
+  logMeasurement(metricId: string, value: number, note?: string, measuredAt?: string) {
+    return this.req<Measurement>("POST", `/metrics/${metricId}/measurements`, { value, note, measured_at: measuredAt });
   }
   removeMeasurement(id: string) {
     return this.req<void>("DELETE", `/measurements/${id}`);

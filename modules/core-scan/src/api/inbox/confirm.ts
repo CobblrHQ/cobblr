@@ -20,7 +20,7 @@ import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount } from
 import { RAN_OUT_KEY, ranOut, type RanOutOutcome } from "../../services/ran-out.js";
 import { applyAxisValue, clearAxisValue, readAxisValue, type AxisTarget } from "@cobblr/platform-contract/category-axis";
 import { FiledQuantity, copiedCountOf, filedQuantityOf, isOwnCopy } from "../../services/filed-quantity.js";
-import { expiryDefaults } from "../../services/shelf-life.js";
+import { expiryDefaults, pastItsShelfLife, pastShelfLifeSentence } from "../../services/shelf-life.js";
 import { type Request } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -158,6 +158,9 @@ export const ConfirmBody = z.object({
   /** A person saw that this row doesn't look like the table and said file it
    *  anyway. Without it, a row filed as one of many is held (bulkDoubt, #9179). */
   file_doubted: z.boolean().optional(),
+  /** A person saw that an old receipt would date this perishable in the past
+   *  and said file it anyway. Without it the filing is held (#9274). */
+  file_past_date: z.boolean().optional(),
   /** Module-specific extras forwarded verbatim to the create endpoint. */
   extras: z.record(z.unknown()).optional(),
   /** The category to file under, by NAME, whatever store the table keeps its
@@ -595,6 +598,7 @@ confirmRouter.post(
     // A default like the storage requirement: the matchmaker's fields and the
     // person's own answers both win below.
     let expiryPatch: Record<string, string | number> = {};
+    let pastDate: { expires_on: string; days_late: number } | null = null;
     // A lot read off the label (label-quantity.ts) goes into whichever field
     // carries the `lot` role: a dye lot, a lot number, a batch. Evidence, so
     // it outranks the route's guess and yields to the person (lot-field.ts).
@@ -610,6 +614,12 @@ confirmRouter.post(
       yearFieldName = yearMadeFieldOf(roledForExpiry);
       const expiryField = roledForExpiry.find((f) => f.field_role === "expiry")?.name;
       if (expiryField) {
+        const today = await platform().accounts.dayFor(sessionUser(req)?.id ?? null);
+        const receiptOn = typeof (meta as { receipt_date?: unknown }).receipt_date === "string" ? (meta as { receipt_date: string }).receipt_date : null;
+        // A date the person typed is theirs; only the computed one is held.
+        if (parsed.data.extras?.[expiryField] == null) {
+          pastDate = pastItsShelfLife({ category: (meta as { category?: unknown }).category as string | undefined, name: row.suggested_name, receiptOn, today });
+        }
         expiryPatch =
           expiryDefaults({
             category: (meta as { category?: unknown }).category as string | undefined,
@@ -624,6 +634,13 @@ confirmRouter.post(
       }
     } catch {
       /* advisory - a confirm must never fail over a shelf-life guess */
+    }
+    // Never made already expired without saying so: an old receipt's perishable
+    // is held, and the answer names what to do (#9274). The claim above is
+    // released by the finish hook below.
+    if (pastDate && !parsed.data.file_past_date) {
+      res.status(409).json({ error: { code: "past_shelf_life", message: pastShelfLifeSentence(row.suggested_name, pastDate), expires_on: pastDate.expires_on, days_late: pastDate.days_late } });
+      return;
     }
     // The triage form posts EVERY input — an untouched one arrives as "".
     // Empty means "no answer", not "blank the suggestion": drop them so a

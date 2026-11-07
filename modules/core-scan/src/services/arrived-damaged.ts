@@ -9,6 +9,7 @@ import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { ARRIVED_DAMAGED_KEY, type ScanArrivedDamaged } from "@cobblr/platform-contract/scan-arrived-damaged";
 import { FILED_BY_KEY, scanFilingRefusal } from "@cobblr/platform-contract/scan-recovery";
+import { scanCanArriveDamaged } from "@cobblr/platform-contract/scan-tools";
 import { scanBrokenTarget, scanPurpose, type ScanTriageRow } from "@cobblr/platform-contract/scan-triage";
 import type { CoreScanDB } from "../db.js";
 import { mergeMeta } from "./metadata.js";
@@ -26,6 +27,9 @@ export async function markArrivedDamaged(db: Kysely<CoreScanDB>, orgId: string, 
   if (refused) return { ok: false, status: 409, ...refused };
   if (scanPurpose(row as unknown as ScanTriageRow) !== "arrival") {
     return { ok: false, status: 409, code: "not_an_arrival", message: "Only something that arrived can arrive damaged. Discard this scan instead." };
+  }
+  if (!scanCanArriveDamaged(row as never)) {
+    return { ok: false, status: 409, code: "not_an_arrival", message: "This line is from a shop's receipt, so nothing was delivered. Add it, or discard it." };
   }
   // The thing it matched by its code, the same one-thing rule as Broken.
   const target = scanBrokenTarget(row as unknown as ScanTriageRow);
