@@ -1389,7 +1389,7 @@ export function registerPlatformActionHandlers(): void {
     const byName = entries.filter((e) => e.name === said.trim().toLowerCase());
     if (byName.length === 1) return byName[0]!;
     const hit = matchByLabel(said, entries);
-    if (!hit) return { error: `no feature called "${said}" — see get_workspace_setup for what this workspace has` };
+    if (!hit) return { error: `no feature called "${said}" — see get_workspace_setup (features) for what this workspace has` };
     if ("ambiguous" in hit) {
       return { error: `"${said}" could be ${hit.ambiguous.map((a) => `"${a.label}"`).join(" or ")} — which one?` };
     }
@@ -1797,7 +1797,7 @@ export function registerPlatformActionHandlers(): void {
     }
     const hit = matchByLabel(said, candidates);
     if (!hit) {
-      return { error: `nothing here is called "${said}" — see get_workspace_setup for what the lists are called` };
+      return { error: `nothing here is called "${said}" — see get_workspace_setup (instances) for what the lists are called` };
     }
     if ("ambiguous" in hit) {
       // Two labels for the SAME thing is not a question worth asking, and a
@@ -2648,7 +2648,7 @@ export function registerPlatformActionHandlers(): void {
   registerHandler("platform.edit-wire", async (ctx: ActionInvokeContext) => {
     const a = (ctx.args ?? {}) as Record<string, unknown>;
     const id = str(a.wire_id);
-    if (!id) return { ok: false, error: "wire_id (the automation's id, from get_workspace_setup) is required" };
+    if (!id) return { ok: false, error: "wire_id (the automation's id, from get_workspace_setup (automations)) is required" };
     let fields: Record<string, unknown>;
     try {
       fields = wireFields(a);
@@ -2675,7 +2675,7 @@ export function registerPlatformActionHandlers(): void {
 
   registerHandler("platform.remove-wire", async (ctx: ActionInvokeContext) => {
     const id = str((ctx.args ?? {}).wire_id);
-    if (!id) return { ok: false, error: "wire_id (the automation's id, from get_workspace_setup) is required" };
+    if (!id) return { ok: false, error: "wire_id (the automation's id, from get_workspace_setup (automations)) is required" };
     const out = await deleteWire(ctx.orgId, id);
     if (!out.ok) return { ok: false, error: out.message };
     return { ok: true, summary: "The automation is removed.", data: { wire_id: id, before: wireArgsOf(out.before as unknown as Record<string, unknown>) } };

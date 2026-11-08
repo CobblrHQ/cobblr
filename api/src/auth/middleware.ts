@@ -231,6 +231,10 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/addresses",
   // how the workspace is set up
   "/instances",
+  // which features are on and which could be (get_workspace_setup, part
+  // features, #9337): the list alone; turning one on is a POST under it
+  "/modules",
+  "/field-presets",
   // who answers each AI job here and who reads personal documents
   // (get_workspace_setup, part ai): read only, never changed over MCP
   "/ai-job-order",

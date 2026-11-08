@@ -99,6 +99,20 @@ export function parseSpecifiers(src) {
 }
 
 /**
+ * The patterns a source file loads with Vite's `import.meta.glob`, which Vitest turns into static imports
+ * (packages/workspace-tools/src/tools.ts loads every tool so). Negations ("!…") are dropped: a few files too many
+ * reached is the safe side. #9338 changed one tool, and the test that runs every tool through tools.ts was not
+ * chosen; CI found the failure (2026-11-08).
+ */
+export function parseGlobs(src) {
+  const out = [];
+  for (const m of src.matchAll(/\bimport\.meta\.glob\s*(?:<[^>]*>\s*)?\(\s*(\[[^\]]*\]|(["'`])[^"'`\n]*\2)/g)) {
+    for (const s of m[1].matchAll(/(["'`])([^"'`\n]+)\1/g)) if (!s[2].startsWith("!")) out.push(s[2]);
+  }
+  return out;
+}
+
+/**
  * PURE. The file a package's `exports` names for a subpath ("." or "./money"), or null when it names none
  * this can read (conditions, arrays): the caller then depends on the whole package.
  * @param {unknown} exportsField the package.json `exports` (or its `main`, as a string)
@@ -159,6 +173,13 @@ export function buildGraph(sources, packages, exportsByDir) {
         // `./dir` and `./dir/index` are one module.
         if (!k.startsWith("pkg:")) deps.add(`${k}/index`);
       }
+    }
+    const globs = parseGlobs(src);
+    if (globs.length) {
+      const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
+      // A pattern from "/" is from the project root, which is the repo's.
+      const full = globs.map((g) => (g.startsWith("/") ? posixJoin("", g) : posixJoin(dir, g)));
+      for (const path of sources.keys()) if (path !== file && full.some((g) => matchesGlob(path, g))) deps.add(keyOf(path));
     }
     graph.set(file, deps);
   }

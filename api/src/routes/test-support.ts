@@ -1073,6 +1073,29 @@ testSupportRouter.post("/test-support/view-as-it-was", async (req, res, next) =>
   }
 });
 
+// A scan row as an older read left it: keys its read no longer leaves off
+// (`drop`), values it wrote (`set`), and the route it gave (`candidates`).
+// Body: { org_id, id, drop?, set?, candidates? }.
+testSupportRouter.post("/test-support/scan-row-as-it-was", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as { org_id?: string; id?: string; drop?: string[]; set?: Record<string, unknown>; candidates?: unknown };
+    const key = /^[a-z][a-z0-9_]*$/;
+    if (!b.org_id || !b.id || !(b.drop ?? []).every((k) => key.test(k))) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id and id required; drop is a list of keys" } });
+      return;
+    }
+    const db = await getTenantDb(b.org_id);
+    const dropped = sql.raw((b.drop ?? []).map((k) => `- '${k}'`).join(" "));
+    const r = await sql`update core_scan_inbox_items
+      set suggested_metadata = (coalesce(suggested_metadata, '{}'::jsonb) ${dropped}) || ${JSON.stringify(b.set ?? {})}::jsonb,
+          suggested_candidates = coalesce(${b.candidates === undefined ? null : JSON.stringify(b.candidates)}::jsonb, suggested_candidates)
+      where id = ${b.id}`.execute(db);
+    res.json({ ok: true, rows: Number(r.numAffectedRows ?? 0) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 testSupportRouter.post("/test-support/made-before", async (req, res, next) => {
   try {
     const b = (req.body ?? {}) as { org_id?: string; table?: string; ids?: string[]; at?: string; column?: string; db?: "meta" };

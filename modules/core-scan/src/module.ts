@@ -30,7 +30,7 @@ const actions: ModuleActionInput[] = await Promise.all(
 
 export default defineModule({
   name: "core-scan",
-  version: "0.78.8",
+  version: "0.78.11",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -87,6 +87,10 @@ export default defineModule({
       // heal-guessed-receipt-pictures.ts for when this call goes.
       const { registerGuessedReceiptPicturesHeal } = await import("./heal-guessed-receipt-pictures.js");
       registerGuessedReceiptPicturesHeal();
+      // A receipt line read before the by-weight rule: see the DONE WHEN in
+      // heal-old-receipt-lines.ts for when this call goes.
+      const { registerOldReceiptLinesHeal } = await import("./heal-old-receipt-lines.js");
+      registerOldReceiptLinesHeal();
       // Boot-time heal: a draft identified before #3613 reads its unsupported
       // identifiers as unconfirmed - see the DONE WHEN in
       // heal-unconfirmed-identifiers.ts for when this call goes.

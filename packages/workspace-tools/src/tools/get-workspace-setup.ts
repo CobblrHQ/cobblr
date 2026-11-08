@@ -1,13 +1,18 @@
 import { z } from "zod";
+import { appCatalog, type AppModuleLike } from "@cobblr/platform-contract/app-catalog";
 import { apiErrorMessage, toolFail, toolOk } from "../api.js";
 import { type AppRow, type BindingRow, type InstanceRow, type TemplateRow, type UnitVocabularyRow, type ViewRow, type WorkspaceTool } from "../tool-kit.js";
 
-const PARTS = ["all", "instances", "views", "automations", "relationships", "apps", "templates", "units", "devices", "ai"] as const;
+export const SETUP_PARTS = ["all", "features", "instances", "views", "automations", "relationships", "apps", "templates", "units", "devices", "ai"] as const;
+const PARTS = SETUP_PARTS;
+
+type ModuleRow = AppModuleLike & { parts?: Array<{ id: string; label: string; on: boolean }> };
+type FieldSetRow = { key: string; label: string; hint?: string; status: "on" | "off" | "partial" };
 
 const tool: WorkspaceTool = {
   name: "get_workspace_setup",
   description:
-    "Read setup. Use part=devices to discover bridge machines.",
+    "Read setup. part=devices finds bridge machines.",
   mode: "read",
   paging: { by: "one-call", why: "a description of the setup, one area or a summary of all" },
   params: {
@@ -48,6 +53,32 @@ const tool: WorkspaceTool = {
       }
     };
     const out: Record<string, unknown> = {};
+
+    // Which features this workspace has on, and the ones it could turn on.
+    // platform:enable-module sends the model here; with no such area it read
+    // the kinds and actions, found no Sales, and told the person there was no
+    // way to track sales (#9337).
+    if (want("features")) {
+      const rows = await grab("/modules", (b) => (b.items as ModuleRow[] | undefined) ?? []);
+      if (rows) {
+        // Only rows shaped like a module: a list from another version, or a
+        // stub, is read as having none rather than throwing on a missing name.
+        const apps = appCatalog(rows.filter((m) => typeof m.name === "string" && typeof m.displayName === "string"));
+        const partsOf = new Map(rows.map((m) => [m.name, m.parts ?? []]));
+        out.features = {
+          on: apps.filter((a) => a.state !== "off").map((a) => {
+            const parts = partsOf.get(a.name) ?? [];
+            return parts.length
+              ? { feature: a.label, parts: parts.map((p) => `${p.label}: ${p.on ? "on" : "off"}`) }
+              : { feature: a.label };
+          }),
+          off: apps.filter((a) => a.state === "off").map((a) => ({ feature: a.label, about: a.description })),
+        };
+      }
+      // A field set is switched on the same way, so it is read in the same place.
+      const sets = await grab("/field-presets", (b) => (b.items as FieldSetRow[] | undefined) ?? []);
+      if (sets?.length) out.field_sets = sets.map((f) => ({ set: f.key, name: f.label, status: f.status, ...(f.hint ? { about: f.hint } : {}) }));
+    }
 
     if (want("instances")) {
       const rows = await grab("/instances", (b) => (b.items as InstanceRow[] | undefined) ?? []);

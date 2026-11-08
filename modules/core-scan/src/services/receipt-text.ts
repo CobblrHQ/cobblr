@@ -91,9 +91,15 @@ export function readTrailingAmount(line: string): { label: string; amount: numbe
   return { label, amount: negative ? -Math.abs(value) : value };
 }
 
+/** The money sign before a rate, as the engine reads it: "$" comes back as
+ *  "§" off a phone's receipt screen ("2.62 1b @ § 3.25/1b", #9270). Every rate
+ *  pattern below takes it from here, so a misread sign is one fix. Only where a
+ *  rate sits: it never says a receipt's currency. */
+const RATE_SIGN = "[$€£¥§]";
+
 /** "12 @ 3.98", "2.16 lb @ 0.58 /lb", "13.442 GAL @ 3.551 /GAL" — the
  *  quantity-times-unit-price form, wherever it appears. */
-export const QTY_AT = /(\d+(?:[.,]\d+)?)\s*([a-z]{1,6})?\s*@\s*[$€£¥]?\s*(\d+(?:[.,]\d+)?)/i;
+export const QTY_AT = new RegExp(String.raw`(\d+(?:[.,]\d+)?)\s*([a-z]{1,6})?\s*@\s*${RATE_SIGN}?\s*(\d+(?:[.,]\d+)?)`, "i");
 
 /** The engine reads "lb" as "1b" or "b" often enough that "2.40 1b @ 3.10" would
  *  otherwise be a quantity of 1 (the "1" of "1b" beside the "@"). */
@@ -101,7 +107,7 @@ const OCR_LB = /(\d)\s+[1I|]?b\b/g;
 /** The same "1b" run up against its number: "3.321b @ 1.29" is 3.32 lb. */
 const OCR_LB_GLUED = /(\d[.,]\d{2})[1I|]b\b/g;
 /** A leading zero read as a copyright mark, or lost: "@ $ ©.99", "@ .79". */
-const OCR_ZERO = /(@\s*[$€£¥]?\s*)[©®]?(?=[.,]\d)/g;
+const OCR_ZERO = new RegExp(String.raw`(@\s*${RATE_SIGN}?\s*)[©®]?(?=[.,]\d)`, "g");
 
 function parseQtyAt(s: string): { qty: number; unit_price: number; unit: string | null } | null {
   const m = s.replace(OCR_ZERO, "$10").replace(OCR_LB_GLUED, "$1 lb").replace(OCR_LB, "$1 lb").match(QTY_AT);
@@ -115,7 +121,7 @@ function parseQtyAt(s: string): { qty: number; unit_price: number; unit: string 
 /** "2.62 lb 0 $ 3.25/lb": a weight and a rate with the "@" misread. The weight's
  *  unit and the "$" say what this is, and the caller checks the two multiply out
  *  to the line above before believing it (#9270). */
-const WEIGHED_RATE = /^(\d+[.,]\d+)\s*(1b|ib|b|lbs?|kg|g|oz)\b\s*\S?\s*[$€£¥]\s*(\d+[.,]\d{2})\b/i;
+const WEIGHED_RATE = new RegExp(String.raw`^(\d+[.,]\d+)\s*(1b|ib|b|lbs?|kg|g|oz)\b\s*\S?\s*${RATE_SIGN}\s*(\d+[.,]\d{2})\b`, "i");
 const OCR_LB_WORD = /^(?:1b|ib|b|lbs?)$/i;
 
 function parseWeighedRate(s: string, lineTotal: number | null): { weight: number; unit: string; rate: number } | null {
@@ -133,7 +139,7 @@ function parseWeighedRate(s: string, lineTotal: number | null): { weight: number
  *  safe is that count times rate has to equal the item's own price. A misread
  *  count ("2.6 @ 3.99" under 7.98) gives way to the price when the price divides
  *  by the rate exactly. */
-const RATE_DETAIL = /^(\d+(?:[.,]\d+)?)\s*[@0©®e]+\s*[$€£¥]?\s*(\d+[.,]\d{2})\s*$/i;
+const RATE_DETAIL = new RegExp(String.raw`^(\d+(?:[.,]\d+)?)\s*[@0©®e]+\s*${RATE_SIGN}?\s*(\d+[.,]\d{2})\s*$`, "i");
 
 /** A row of a date and nothing else, where a shop's name would be: an app's
  *  order screen is headed by the day. */

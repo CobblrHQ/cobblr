@@ -578,7 +578,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Turn on a feature",
     description:
-      `Turn on one of ${productName()}'s features for this workspace (Purchases, Maintenance, Shipments, …) so its screens and records appear. Name it the way it is written in the app. Turning one on is safe and repeatable: a feature already on says so rather than doing anything. Runs on the workspace, not a record. Use get_workspace_setup to see what is already on.`,
+      `Turn on one of ${productName()}'s features for this workspace (Purchases, Maintenance, Shipments, …) so its screens and records appear. Name it the way it is written in the app. Turning one on is safe and repeatable: a feature already on says so rather than doing anything. Runs on the workspace, not a record. get_workspace_setup (features) lists every feature, on and off, with what each is for.`,
     icon: "toggle-right",
     scope: "workspace",
     invoke_handler: "platform.enable-module",
@@ -599,7 +599,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Turn part of a feature on or off",
     description:
-      `Turn one part of a feature on or off for this workspace (Robot arms in Digital Fabrication, …), so its screens, actions and tools appear or disappear. Off hides it and keeps everything it recorded; on again shows all of it. Name the feature and the part the way the app writes them; on is true or false, or omit it to follow the part's default again. Runs on the workspace, not a record. Use get_workspace_setup to see each feature's parts.`,
+      `Turn one part of a feature on or off for this workspace (Robot arms in Digital Fabrication, …), so its screens, actions and tools appear or disappear. Off hides it and keeps everything it recorded; on again shows all of it. Name the feature and the part the way the app writes them; on is true or false, or omit it to follow the part's default again. Runs on the workspace, not a record. get_workspace_setup (features) lists each feature's parts, on and off.`,
     icon: "toggle-right",
     scope: "workspace",
     invoke_handler: "platform.set-module-part",
@@ -1585,7 +1585,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Rename what a list is called",
     description:
-      "Rename a list or a kind of record: Parts becomes Spools, Machines becomes Printers. It renames the LABEL only, everywhere it is shown (navigation, headings, buttons); nothing recorded moves and no id changes. Give both the singular and the plural when they are not the plain +s. Runs on the workspace, not a record. Use get_workspace_setup to see what the lists are called now.",
+      "Rename a list or a kind of record: Parts becomes Spools, Machines becomes Printers. It renames the LABEL only, everywhere it is shown (navigation, headings, buttons); nothing recorded moves and no id changes. Give both the singular and the plural when they are not the plain +s. Runs on the workspace, not a record. Use get_workspace_setup (instances) to see what the lists are called now.",
     icon: "text-cursor-input",
     scope: "workspace",
     invoke_handler: "platform.rename-thing",
@@ -1738,7 +1738,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Switch a set of fields on or off",
     description:
-      "Switch on a named SET of fields the workspace already defines, in one go, across everything they apply to: 'provenance' puts where each thing came from, when, and what it cost onto every physical thing the workspace tracks, now and in future. Only a set that exists (get_workspace_setup lists them); this never makes a new field, so 'track a colour on everything' is platform:add-field with entity_kind @physical, not a preset called colour. Switching a set off takes the fields away and KEEPS anything already recorded in them, which comes back if it goes on again. Runs on the workspace, not a record.",
+      "Switch on a named SET of fields the workspace already defines, in one go, across everything they apply to: 'provenance' puts where each thing came from, when, and what it cost onto every physical thing the workspace tracks, now and in future. Only a set that exists (get_workspace_setup (features) lists them); this never makes a new field, so 'track a colour on everything' is platform:add-field with entity_kind @physical, not a preset called colour. Switching a set off takes the fields away and KEEPS anything already recorded in them, which comes back if it goes on again. Runs on the workspace, not a record.",
     icon: "layers",
     scope: "workspace",
     invoke_handler: "platform.set-field-preset",

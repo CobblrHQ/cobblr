@@ -4,7 +4,9 @@
 // DONE WHEN: /healthz reads 0 for this shim on prod, canary, staging and app. It
 // records the count itself through registerHealPass (noteHealShim). Nothing
 // re-creates the shape: the match no longer searches a picture below the floor
-// (pictureAfterMatchAllowed). Delete this file and its boot call then.
+// (pictureAfterMatchAllowed), and neither does its retry, the pictures sweep
+// (nameIsAGuess), which until then put the picture back within twenty minutes.
+// Delete this file and its boot call then.
 //
 // WHY IT EXISTS: "Assorted Thin", a grocer's line sold by weight, was shown with
 // a photo of sewing needles at 30%, and filing would have put it on the record. A

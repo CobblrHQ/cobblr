@@ -218,7 +218,7 @@ async function unjudgedPage(orgId: string, limit: number): Promise<RerouteRow[]>
  *  minted for the workspace's own member: the menu is an org read, and a
  *  background pass has no request to borrow a bearer from. Null when the
  *  workspace has nobody to act as. */
-async function menuFor(orgId: string): Promise<ScanMenuEntry[] | null> {
+export async function menuFor(orgId: string): Promise<ScanMenuEntry[] | null> {
   const who = await workspaceIdentity(orgId);
   if (!who) return null;
   const token = await platform().auth.mintSession({ userId: who.userId });

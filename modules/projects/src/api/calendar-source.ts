@@ -64,6 +64,7 @@ interface LateTaskRow {
 export function registerProjectsOverdueSource(): void {
   platform().calendar.registerOverdueSource({
     kind: "projects:task",
+    module: "projects",
     read: async (orgId, today) => {
       const tdb = (await platform().tenants.getDb(orgId)) as Kysely<unknown>;
       const compiled = sql<LateTaskRow>`

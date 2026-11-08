@@ -28,7 +28,11 @@
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { narrowSweep } from "@cobblr/platform-contract/sweep-candidates";
+import { personNameOf } from "@cobblr/platform-contract/display-identity";
+import { SCAN_REVIEW_CONFIDENCE } from "@cobblr/platform-contract/scan-triage";
 import { refreshCatalogImageByName } from "./enrich-photo.js";
+import { pictureSearchAfterMatch, rowShape } from "./intake.js";
+import { pictureAfterMatchAllowed } from "./line-is-food.js";
 import { startRetrimSweeper } from "./retrim-stored-pictures.js";
 import { startSplitSeriesHealer } from "./split-series-heal.js";
 import { startRerouteSweeper } from "./reroute-keyword-rows.js";
@@ -61,6 +65,31 @@ export interface UnpicturedRow {
   catalog_image_url: string | null;
   suggested_metadata: Record<string, unknown> | null;
   suggested_candidates: Array<{ category?: string; fields?: Record<string, unknown> }> | null;
+  ai_confidence?: string | number | null;
+  source_kind?: string | null;
+  barcode_text?: string | null;
+  source_url?: string | null;
+  image_file_id?: string | null;
+}
+
+/** A name below the floor is a guess, and the match never searches a picture
+ *  for a guess (pictureAfterMatchAllowed, #9270). The sweep is that search's
+ *  retry, so it holds the same line: otherwise a picture set aside for a guess
+ *  ("Assorted Thin" as sewing needles) comes back within twenty minutes. A name
+ *  a person gave is not a guess. */
+export function nameIsAGuess(r: UnpicturedRow): boolean {
+  if (r.ai_confidence === null || r.ai_confidence === undefined || r.ai_confidence === "") return false;
+  if (personNameOf(r.suggested_metadata)) return false;
+  const shape = rowShape({
+    source_kind: (r.source_kind ?? "photo") as Parameters<typeof rowShape>[0]["source_kind"],
+    barcode_text: r.barcode_text ?? null,
+    source_url: r.source_url ?? null,
+    image_file_id: r.image_file_id ?? null,
+    suggested_name: r.suggested_name,
+    suggested_metadata: r.suggested_metadata,
+  });
+  if (!pictureSearchAfterMatch(shape)) return false;
+  return !pictureAfterMatchAllowed(r.ai_confidence, SCAN_REVIEW_CONFIDENCE);
 }
 
 function askedAt(r: UnpicturedRow): number | null {
@@ -87,6 +116,7 @@ export function pickUnpictured(rows: readonly UnpicturedRow[], now: Date, engine
     .filter((r) => !r.suggested_metadata?.catalog_image_user_set)
     .filter((r) => !!r.suggested_name?.trim())
     .filter((r) => new Date(r.created_at).getTime() >= cutoff)
+    .filter((r) => !nameIsAGuess(r))
     .filter((r) => {
       const status = r.suggested_metadata?.catalog_image_status ?? null;
       if (status === "throttled") return !engineBackedOff;
@@ -154,7 +184,8 @@ async function visitWorkspace(orgId: string, tdb: Kysely<unknown>, now: Date): P
   const q = sql<UnpicturedRow>`
     select id, suggested_name, suggested_manufacturer, status, created_at,
            catalog_image_file_id, catalog_image_url,
-           suggested_metadata, suggested_candidates
+           suggested_metadata, suggested_candidates,
+           ai_confidence, source_kind, barcode_text, source_url, image_file_id
     from core_scan_inbox_items
     where status = 'pending'
       and catalog_image_file_id is null

@@ -13,6 +13,10 @@ export interface OverdueRow {
 export interface OverdueSource {
   /** The kind the rows are of (a task's `projects:task`). */
   kind: string;
+  /** The module whose records these are. Where it is off, the sweep never
+   *  calls `read`: a module that is off reminds no one, and its tables may not
+   *  exist in that workspace at all. */
+  module: string;
   /** Rows due on `today` or before, not done. */
   read(orgId: string, today: string): Promise<OverdueRow[]>;
 }

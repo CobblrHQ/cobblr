@@ -336,10 +336,11 @@ export function registerOverdueSource(source: OverdueSource): void {
  *  disposition (used up, thrown out, finished) is done and left out; a value
  *  that names no day is never late. The assignee is the kind's `assignee`-role
  *  field, read as a person. */
-async function overdueFieldRows(orgId: string, today: string): Promise<OverdueRow[]> {
+async function overdueFieldRows(orgId: string, today: string, isOn: (module: string) => Promise<boolean>): Promise<OverdueRow[]> {
   const out: OverdueRow[] = [];
   const tdb = (await getTenantDb(orgId)) as Kysely<unknown>;
   for (const spec of specsByKind.values()) {
+    if (!(await isOn(spec.entityModule))) continue;
     const instances = await meta
       .selectFrom("workspace_module_instances")
       .select(["instance_name"])
@@ -385,10 +386,20 @@ async function overdueFieldRows(orgId: string, today: string): Promise<OverdueRo
 }
 
 /** Every record due `today` or earlier, not done: the registered modules'
- *  own, then the `due`-role fields. */
+ *  own, then the `due`-role fields. Only of modules turned on here: a module
+ *  that is off keeps its records and reminds no one of them, and its tables
+ *  are never read (a workspace that never had it has none, and every such
+ *  query was an ERROR in the database's log, once a sweep per workspace). */
 export async function overdue(orgId: string, today: string): Promise<OverdueRow[]> {
+  const on = new Map<string, Promise<boolean>>();
+  const isOn = (module: string) => {
+    if (!on.has(module)) on.set(module, calendar.moduleIsOn(orgId, module));
+    return on.get(module)!;
+  };
   const out: OverdueRow[] = [];
-  for (const source of overdueSources.values()) out.push(...(await source.read(orgId, today)));
-  out.push(...(await overdueFieldRows(orgId, today)));
+  for (const source of overdueSources.values()) {
+    if (await isOn(source.module)) out.push(...(await source.read(orgId, today)));
+  }
+  out.push(...(await overdueFieldRows(orgId, today, isOn)));
   return out;
 }

@@ -25,7 +25,7 @@ import type { OrderPageSummary } from "@cobblr/platform-contract/order-page-link
 import { readFailureFrom, readFailureHistory, readHistoryAfterSuccess } from "../../services/receipt-read-state.js";
 import { cleanOrderRef, receiptDedupKey, receiptContentKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod, type ReceiptSource } from "../../services/receipt-shared.js";
 import { doubtedChecks, priceDoubted, sellerDoubted } from "../../services/receipt-facts.js";
-import { withSameLinesCombined } from "../../services/same-receipt-lines.js";
+import { oneLinePerProduct } from "../../services/same-receipt-lines.js";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
 import { optionalField, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 import { INTERNAL_API } from "./shared.js";
@@ -62,12 +62,6 @@ function checkValuesOf(receipt: { vendor?: string | null; seller?: string | null
 // every line rides the same matchmaker + confirm flow a barcode/photo scan
 // does — a receipt becomes N parts without retyping. The file is uploaded
 // separately via core-files (like image_file_id), keeping this body small.
-
-/** The receipt as its rows and its purchase are made from: the same product at
- *  the same price is one line, whichever door brought it in (#9268). */
-function oneLinePerProduct(receipt: ParsedReceipt, lineImages: readonly EmailLineImage[] | null): ParsedReceipt {
-  return withSameLinesCombined(receipt, lineImagesFor(receipt.items.map((l) => (l.kind ? "" : l.description)), lineImages ?? []));
-}
 
 /** Insert one inbox row per receipt line (source_kind "receipt", shared
  *  receipt_group_id, attached to the receipt's own batch) and kick off matching —

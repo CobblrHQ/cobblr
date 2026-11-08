@@ -6,6 +6,7 @@
 // made (heal-same-receipt-lines.ts). Pure.
 
 import { amountOf, centsFromAmount, type Cents } from "@cobblr/platform-contract/money";
+import { lineImagesFor, type EmailLineImage } from "@cobblr/platform-contract/email-line-images";
 import { lineQuantity, type ParsedReceipt, type ReceiptLine, type SourceLine } from "./receipt-shared.js";
 
 const words = (s: unknown): string => (typeof s === "string" ? s.toLowerCase().replace(/\s+/g, " ").trim() : "");
@@ -96,4 +97,10 @@ export function withSameLinesCombined(receipt: ParsedReceipt, photos: ReadonlyAr
     };
   }
   return out.length === receipt.items.length ? receipt : { ...receipt, items: out };
+}
+
+/** The receipt as its rows and its purchase are made from: the same product at
+ *  the same price is one line, whichever door brought it in (#9268). */
+export function oneLinePerProduct(receipt: ParsedReceipt, lineImages: readonly EmailLineImage[] | null): ParsedReceipt {
+  return withSameLinesCombined(receipt, lineImagesFor(receipt.items.map((l) => (l.kind ? "" : l.description)), lineImages ?? []));
 }
