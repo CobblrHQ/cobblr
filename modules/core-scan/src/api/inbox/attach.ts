@@ -1337,6 +1337,10 @@ attachRouter.post(
     // and ledger, else its module route. Nothing to move is not an error.
     const delta = parsed.data.set != null ? parsed.data.set - oldQty : (parsed.data.delta ?? 0);
     let newQty = oldQty;
+    // The record's own issued Undo, handed back as it came: it runs once, and
+    // only while the count is as this left it. An Undo that recounted to the
+    // old number took away every change made since (#9377).
+    let undo: Awaited<ReturnType<typeof moveQuantity>>["undo"];
     if (delta !== 0) {
       const moved = await moveQuantity(
         ctx.org.id,
@@ -1358,11 +1362,14 @@ attachRouter.post(
         return;
       }
       newQty = moved.newQty ?? oldQty + moved.delta;
+      const who = sessionUser(req)?.id;
+      if (moved.undo?.length && who) undo = await platform().actions.issueUndos(ctx.org.id, who, moved.undo);
     }
     res.json({
       entity_title: typeof entity.name === "string" ? entity.name : parsed.data.entity_id,
       old_qty: oldQty,
       new_qty: newQty,
+      ...(undo?.length ? { undo } : {}),
     });
   }),
 );

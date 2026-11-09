@@ -40,6 +40,7 @@ import {
 import { buildAuthResponse, provisionOrgForUser } from "./auth.js";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
+import { replayAccountWrite } from "../platform/request-replays.js";
 
 const startLimiter = makeIpLimiter(60_000, 30);
 const redeemLimiter = makeIpLimiter(60_000, 30);
@@ -119,6 +120,7 @@ oidcAuthRouter.get("/oidc/callback", async (req, res) => {
 });
 
 // AI-REACH: exempt: the browser trading its one-time sign-in code for a session.
+// REPLAY: spends a one-time sign-in code: a repeat finds it used
 oidcAuthRouter.post("/oidc/redeem", async (req, res, next) => {
   try {
     if (overLimit(redeemLimiter, req)) return void rateLimited(res);
@@ -161,6 +163,7 @@ oidcMeRouter.get("/me/oidc", requireAuth, async (req, res, next) => {
 
 // UI-REACH: Your account → Identity & password → Sign in with
 // AI-REACH: exempt: linking how a person signs in is theirs alone, signed in themselves.
+// REPLAY: hands back a sign-in URL; nothing is linked until the provider answers
 oidcMeRouter.post("/me/oidc/:slug/link", requireAuth, async (req, res, next) => {
   try {
     // Being signed in is the proof the provider account is this person's: a
@@ -237,7 +240,7 @@ oidcAdminRouter.get("/", async (req, res, next) => {
 
 // UI-REACH: Super admin → Sign-in → Add a provider
 // AI-REACH: exempt: an operator's instance setting holding a client secret.
-oidcAdminRouter.post("/providers", async (req, res, next) => {
+oidcAdminRouter.post("/providers", replayAccountWrite, async (req, res, next) => {
   try {
     const b = ProviderBody.safeParse(req.body);
     if (!b.success) return void res.status(400).json({ error: { code: "invalid_body", message: b.error.issues[0]?.message ?? "Check the provider's settings.", details: b.error.issues } });
@@ -302,6 +305,7 @@ oidcAdminRouter.delete("/providers/:id", async (req, res, next) => {
 
 // UI-REACH: Super admin → Sign-in → a provider → Test
 // AI-REACH: exempt: an operator checking their provider answers.
+// REPLAY: reads what the provider answers and makes nothing
 oidcAdminRouter.post("/providers/:id/test", async (req, res, next) => {
   try {
     const row = await meta.selectFrom("oidc_providers").selectAll().where("id", "=", String(req.params.id)).executeTakeFirst();

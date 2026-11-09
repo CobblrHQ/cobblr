@@ -73,9 +73,9 @@ export default defineModule({
         invokeHandler: "core-documents.link-item",
         undoable: true,
         argsSchema: {
-          item: { label: "Which item, in words from its title", type: "text" },
+          item: { label: "Which item, in words from its title", type: "text", oneOf: "which-item" },
           connection_id: { label: "The library's connection id (from library.find)", type: "text" },
-          ref: { label: "The item's ref (from library.find)", type: "text" },
+          ref: { label: "The item's ref (from library.find)", type: "text", oneOf: "which-item" },
         },
         // The person's door is the record's library panel, not a button in
         // the action bar.

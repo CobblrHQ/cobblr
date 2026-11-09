@@ -3,6 +3,7 @@ import { invalidateRateCache } from "../platform/money.js";
 // in server.ts ONLY when COBBLR_TEST_ORG_POOL is set — it is NOT reachable in
 // prod (checkout-org mints a token for a pooled org's owner, so it must never
 // exist outside CI / the rig). See db/test-org-pool.ts.
+// REPLAY-FILE: mounted only for the test harness, never in production; a test retries by its own design.
 import { Router } from "express";
 import { checkoutTestOrg, poolStatus } from "../db/test-org-pool.js";
 import { workspaceShape } from "../db/workspace-shape.js";

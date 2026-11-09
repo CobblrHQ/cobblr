@@ -276,9 +276,9 @@ export default defineModule({
         appliesTo: { kinds: ["assets:asset"] },
         invokeHandler: "assets.record-wear",
         argsSchema: {
-          cycles: { label: "Cycles the machine made with it", type: "number" },
-          prints: { label: "Prints the machine made with it", type: "number" },
-          hours: { label: "Hours it was in use", type: "number" },
+          cycles: { label: "Cycles the machine made with it", type: "number", oneOf: "count" },
+          prints: { label: "Prints the machine made with it", type: "number", oneOf: "count" },
+          hours: { label: "Hours it was in use", type: "number", oneOf: "count" },
         },
       },
     ],

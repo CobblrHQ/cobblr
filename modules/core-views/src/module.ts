@@ -74,8 +74,8 @@ export default defineModule({
         scope: "workspace" as const,
         invokeHandler: "core-views.delete-view",
         argsSchema: {
-          view: { label: "Which view (its name)", type: "text" },
-          view_id: { label: "The view's id, when it is known", type: "text" },
+          view: { label: "Which view (its name)", type: "text", oneOf: "which-view" },
+          view_id: { label: "The view's id, when it is known", type: "text", oneOf: "which-view" },
         },
       },
       {

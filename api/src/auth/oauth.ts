@@ -152,6 +152,7 @@ const RegisterBody = z.object({
 });
 
 // AI-REACH: exempt — the OAuth handshake a connector performs, not a workspace action.
+// REPLAY: a connector registering itself, with no session to keep an answer under; a second registration is an unused public client
 oauthRouter.post("/oauth/register", async (req, res, next) => {
   try {
     if (over(registerLimiter, req)) return void oauthError(res, 429, "slow_down", "Too many registrations; wait a minute.");
@@ -243,6 +244,7 @@ const ApproveBody = AuthorizeQuery.extend({
 });
 
 // AI-REACH: exempt — a person approving a connector on the consent screen, not a workspace action.
+// REPLAY: mints a one-time code for the redirect; a second press mints another and the first lapses unused
 oauthRouter.post("/oauth/authorize", requireAuth, async (req, res, next) => {
   try {
     // A token cannot approve a connector: only the person, signed in.
@@ -338,6 +340,7 @@ export async function revokeGrant(grantId: string): Promise<void> {
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
 // AI-REACH: exempt — the OAuth token endpoint a connector calls, not a workspace action.
+// REPLAY: the token endpoint: a code is single-use and a refresh token rotates
 oauthRouter.post("/oauth/token", async (req, res, next) => {
   try {
     res.setHeader("Cache-Control", "no-store");
@@ -400,6 +403,7 @@ oauthRouter.post("/oauth/token", async (req, res, next) => {
 });
 
 // AI-REACH: exempt — RFC 7009 revocation a connector calls, not a workspace action.
+// REPLAY: revoked twice is revoked once
 oauthRouter.post("/oauth/revoke", async (req, res, next) => {
   try {
     const token = str((req.body ?? {}).token);

@@ -68,6 +68,22 @@
 #      barely moved was 1.5 GB of new chunks a night. On 2026-10-31 that copy,
 #      on the same disk, filled it after the dump had made room (#8940).
 #      gzip --rsyncable keeps unchanged stretches byte-identical.
+#   9. ONE DUMP AT A TIME. Recreating the container starts its loop, which
+#      dumps at once; an operator's `--once` a few seconds later ran beside it
+#      (2026-11-09, #8940): two pg_dumpalls of the same database and two
+#      prunes over the same files, an hour of disk and CPU twice, and the
+#      `--once` did not come back. Each dump and its retention now hold
+#      <dir>/.dump.lock. A `--once` that finds it held waits, and when the
+#      dump it waited on is published it reports that one rather than making
+#      a second; the loop takes its turn the same way and lets go before it
+#      sleeps.
+#  10. A --ONCE NEVER RUNS THE LOOP. On that same day the --once's prune sized
+#      a dump the loop had just removed: `$(( total - $(stat …) ))` had no
+#      operand, and an arithmetic error makes bash abandon the whole command
+#      it is in, the `if --once … exit` block included, and carry on with the
+#      next one, the loop. Every size is now read through size_of (0 for a file
+#      that is gone), and a --once that is cut short by any error stops
+#      before the loop.
 #
 # Env (every one has a default; a compose file overrides what it needs):
 #   BACKUP_AT               local HH:MM to dump at, or "interval" to keep the
@@ -193,6 +209,31 @@ ONCE=0
 
 mkdir -p "$DIR/daily" "$DIR/weekly"
 
+# One dump at a time on this directory (9 above). The lock is an flock on fd 9,
+# released before the loop sleeps; a box without flock dumps as before and
+# says so, since a missed lock is two dumps, never none.
+LOCK="$DIR/.dump.lock"
+HAVE_LOCK=0
+if command -v flock >/dev/null 2>&1 && exec 9>>"$LOCK"; then
+  HAVE_LOCK=1
+else
+  echo "[backup] no flock here (or $LOCK cannot be opened): a --once can run beside the loop" >&2
+fi
+# Wait for any other dump on $DIR. Returns 1 when one was running and has
+# published a dump while we waited: that dump is the one the caller wanted.
+take_turn() {
+  [ "$HAVE_LOCK" = "1" ] || return 0
+  flock -n 9 && return 0
+  local before
+  before=$(cat "$DIR/last-dump" 2>/dev/null || true)
+  echo "[backup] another dump on $DIR is running (the container's own loop, or an operator's --once); waiting for it"
+  flock 9
+  [ "$(cat "$DIR/last-dump" 2>/dev/null || true)" = "$before" ] && return 0
+  echo "[backup] the dump it was making is done: $(cat "$DIR/last-dump")"
+  return 1
+}
+end_turn() { [ "$HAVE_LOCK" = "1" ] && flock -u 9; return 0; }
+
 # A published dump is readable by others: an off-box copy pulls it as a user
 # that is not its owner (a restic job, a self-hoster's rsync). mktemp makes the
 # partial 0600 and a rename keeps the mode, so it is set before the rename,
@@ -213,6 +254,10 @@ verified_dump() {
   gzip -dc "$file" 2>/dev/null | tail -n 12 | grep -Fx -- '-- PostgreSQL database cluster dump complete' >/dev/null
 }
 
+# A file's size, or 0 when it is gone: another prune, an operator or an
+# off-box copy may remove it between listing and sizing (10 above).
+size_of() { stat -c%s "$1" 2>/dev/null || echo 0; }
+
 free_bytes() { df -PB1 "$DIR/daily" 2>/dev/null | awk 'NR==2{print $4}'; }
 
 # The daily dumps, newest first, past the floor: what space-pruning may take.
@@ -223,7 +268,7 @@ removable_dailies() { ls -1t "$DIR"/daily/*.sql.gz 2>/dev/null | tail -n +$(( FL
 make_room() {
   local last need free f
   last=$(ls -1t "$DIR"/daily/*.sql.gz 2>/dev/null | head -n1)
-  need=$(( RESERVE + 2 * $( [ -n "$last" ] && stat -c%s "$last" 2>/dev/null || echo 0) ))
+  need=$(( RESERVE + 2 * $( [ -n "$last" ] && size_of "$last" || echo 0) ))
   free=$(free_bytes)
   [ -n "$free" ] || { echo "[backup] could not read free space on $DIR; dumping without the check"; return 0; }
   [ "$free" -ge "$need" ] && return 0
@@ -290,30 +335,43 @@ prune() {
     local total f
     total=$(stat -c%s "$DIR"/daily/*.sql.gz 2>/dev/null | awk '{t+=$1} END{print t+0}')
     while [ "$total" -gt "$DAILY_MAX" ] && f=$(removable_dailies | tail -n1) && [ -n "$f" ]; do
-      total=$(( total - $(stat -c%s "$f") )); rm -f "$f" && echo "[backup] removed $f: daily dumps over BACKUP_DAILY_MAX_BYTES ($DAILY_MAX)"
+      total=$(( total - $(size_of "$f") )); rm -f "$f" && echo "[backup] removed $f: daily dumps over BACKUP_DAILY_MAX_BYTES ($DAILY_MAX)"
     done
   fi
   if [ "$WEEKLY_MAX" -gt 0 ]; then
     local wtotal w
     wtotal=$(stat -c%s "$DIR"/weekly/*.sql.gz 2>/dev/null | awk '{t+=$1} END{print t+0}')
     while [ "$wtotal" -gt "$WEEKLY_MAX" ] && w=$(ls -1t "$DIR"/weekly/*.sql.gz 2>/dev/null | tail -n +$(( WEEKLY_FLOOR + 1 )) | tail -n1) && [ -n "$w" ]; do
-      wtotal=$(( wtotal - $(stat -c%s "$w") )); rm -f "$w" && echo "[backup] removed $w: weekly copies over BACKUP_WEEKLY_MAX_BYTES ($WEEKLY_MAX)"
+      wtotal=$(( wtotal - $(size_of "$w") )); rm -f "$w" && echo "[backup] removed $w: weekly copies over BACKUP_WEEKLY_MAX_BYTES ($WEEKLY_MAX)"
     done
   fi
 }
 
 if [ "$ONCE" = "1" ]; then
+  take_turn || exit 0
   dump_once; rc=$?
   prune
+  end_turn
   exit $rc
+fi
+# Its own command, so it runs even when bash abandoned the block above without
+# reaching its exit (10 above): a --once never falls through to the loop.
+if [ "$ONCE" = "1" ]; then
+  echo "[backup] --once was cut short by an error above; it stops here rather than start the loop" >&2
+  exit 1
 fi
 
 echo "[backup] dumping at ${AT} local (${ZONE}), prefix ${PREFIX}, floor ${MIN} bytes"
 [ "$ZONE" = "UTC" ] && [ "$AT" != "interval" ] && echo "[backup] note: ${AT} is read in UTC; set BACKUP_TZ to the zone your off-box copy runs in"
 fails=0
 while true; do
-  if dump_once; then fails=0; else fails=$(( fails + 1 )); fi
-  prune
+  if take_turn; then
+    if dump_once; then fails=0; else fails=$(( fails + 1 )); fi
+    prune
+  else
+    fails=0
+  fi
+  end_turn
   if [ "$fails" -gt 0 ]; then
     # A failed dump must not cost a day of coverage.
     wait=$(( fails * 300 )); [ "$wait" -gt 3600 ] && wait=3600

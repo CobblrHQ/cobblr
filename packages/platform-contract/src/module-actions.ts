@@ -263,6 +263,12 @@ export interface PlatformActions {
    *  wants to keep its inverse beside its own record (a scan attach keeping
    *  the restock's) asks here, the same way the invoke route does. */
   undoFor(actionId: string, result: unknown, ctx: ActionUndoContext): Promise<ActionUndoStep[] | null>;
+  /** Issue a way back to the person who ran the run, as the invoke route does:
+   *  each step comes back carrying the undo_id its Undo presents, so it runs
+   *  once and is refused over a later change (#7924). A module's own route
+   *  that hands an Undo to a client issues it here; a bare step is refused
+   *  when pressed (#9377). */
+  issueUndos(orgId: string, userId: string, steps: readonly ActionUndoStep[]): Promise<ActionUndoStep[]>;
   /** What the actions' arguments pick from, for one kind: returns a function
    *  that gives an `args_schema` with every `choicesFrom` argument filled in
    *  as `choices` (the usage counters, the workspace's People). The same fill

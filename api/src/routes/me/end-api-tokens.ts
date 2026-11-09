@@ -6,6 +6,7 @@ import { endApiTokensAndLog, endedSentence } from "../../platform/api-tokens-aft
 export const endApiTokensRouter = Router();
 
 // AI-REACH: platform:end-my-api-tokens
+// REPLAY: ends every token; a repeat finds none left
 endApiTokensRouter.post("/me/api-tokens/end-all", requireAuth, async (req, res, next) => {
   try {
     const ended = await endApiTokensAndLog(req.session!.id);

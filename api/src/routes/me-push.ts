@@ -129,6 +129,7 @@ mePushRouter.get("/me/push", requireAuth, async (req, res, next) => {
 });
 
 // AI-REACH: exempt — a browser subscribing itself; only the device can.
+// REPLAY: one row per endpoint: subscribing again updates it
 mePushRouter.post("/me/push/devices", requireAuth, async (req, res, next) => {
   try {
     const parsed = Subscribe.safeParse(req.body);
@@ -192,6 +193,7 @@ mePushRouter.delete("/me/push/devices/:id", requireAuth, async (req, res, next) 
 // Signing out leaves the browser with whoever uses it next, so the account's
 // notices stop coming to it (#7124). Idempotent: a browser that was never
 // subscribed for this person is already let go.
+// REPLAY: deletes; a repeat finds nothing to delete
 mePushRouter.post("/me/push/devices/forget", requireAuth, async (req, res, next) => {
   try {
     const parsed = Forget.safeParse(req.body);
@@ -205,6 +207,7 @@ mePushRouter.post("/me/push/devices/forget", requireAuth, async (req, res, next)
 
 // AI-REACH: exempt — a test push to the person's own device, which proves the
 // whole path: the key, the push service, the device and its permission.
+// REPLAY: a test push; a second press is a second test
 mePushRouter.post("/me/push/devices/:id/test", requireAuth, async (req, res, next) => {
   try {
     const userId = req.session!.id;
@@ -263,6 +266,7 @@ mePushRouter.put("/me/push/settings", requireAuth, async (req, res, next) => {
 
 // AI-REACH: exempt — answering the person's own "turn the others off?" prompt
 // after they turned push on: which of their channels to silence is theirs.
+// REPLAY: sets which channels are quiet; a repeat sets the same
 mePushRouter.post("/me/push/handoff", requireAuth, async (req, res, next) => {
   try {
     const parsed = HandoffBody.safeParse(req.body);
@@ -276,6 +280,7 @@ mePushRouter.post("/me/push/handoff", requireAuth, async (req, res, next) => {
 });
 
 // AI-REACH: exempt — the person skipping that prompt; nothing else changes.
+// REPLAY: marks the prompt skipped; a repeat finds it skipped
 mePushRouter.post("/me/push/handoff/skip", requireAuth, async (req, res, next) => {
   try {
     await skipHandoff(req.session!.id);

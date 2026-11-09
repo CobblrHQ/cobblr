@@ -44,6 +44,7 @@ scanResolversRouter.get("/", async (_req, res, next) => {
 });
 
 // POST / — add a vendor (or override a built-in by reusing its id). Upsert.
+// REPLAY: an upsert by the resolver's id: a repeat writes the same row
 scanResolversRouter.post("/", async (req, res, next) => {
   try {
     const parsed = ScanUrlResolverManifest.safeParse(req.body?.manifest);
@@ -145,6 +146,7 @@ scanResolversRouter.delete("/:id", async (req, res, next) => {
 });
 
 // POST /test — resolve a sample URL through the live resolver chain.
+// REPLAY: resolves a sample URL and makes nothing
 scanResolversRouter.post("/test", async (req, res, next) => {
   try {
     const body = z.object({ url: z.string().min(1).max(2000) }).safeParse(req.body);

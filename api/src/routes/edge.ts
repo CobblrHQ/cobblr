@@ -459,6 +459,7 @@ edgePairRouter.get("/install-windows.ps1", (req, res) => {
 
 // AI-REACH: exempt — spoken by the installer on the bridge's box, never by a person or the assistant.
 // UI-REACH: spoken by the installer on the bridge's box
+// REPLAY: the installer spends a one-time pairing code: a repeat finds it spent
 edgePairRouter.post("/pair", async (req, res, next) => {
   if (overLimit(pairLimiter, req)) return void rateLimited(res);
   try {

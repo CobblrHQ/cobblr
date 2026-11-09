@@ -671,6 +671,7 @@ invitesRootRouter.get("/invites/:token", async (req, res, next) => {
 // POST /invites/:token/accept — must be signed in. Creates a
 // membership row for the current user; idempotent if they're
 // already a member.
+// REPLAY: a member already is answered as one
 invitesRootRouter.post("/invites/:token/accept", requireAuth, async (req, res, next) => {
   try {
     const token = req.params.token;
@@ -719,6 +720,7 @@ invitesRootRouter.post("/invites/:token/accept", requireAuth, async (req, res, n
 // in silence. Anyone signed in may decline an invite addressed to them, which
 // is the same standing `accept` requires; an invite to another address is not
 // theirs to answer.
+// REPLAY: declines an invite; a repeat finds it declined
 invitesRootRouter.post("/invites/:token/decline", requireAuth, async (req, res, next) => {
   try {
     const token = req.params.token;
@@ -787,6 +789,7 @@ const AcceptSignup = z.object({
   password: z.string().min(8).max(128),
   display_name: readableNameField(120),
 });
+// REPLAY: no session yet to keep an answer under; the first acceptance spends the invite
 invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) => {
   try {
     const token = req.params.token;

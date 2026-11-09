@@ -60,5 +60,6 @@ async function dispatch(req: Request, res: Response, next: NextFunction): Promis
   }
 }
 
+// REPLAY: an outside service's webhook, with no person's session to keep an answer under; the hook decides what a repeated delivery does
 hooksRouter.post("/:id", dispatch);
 hooksRouter.get("/:id", dispatch);

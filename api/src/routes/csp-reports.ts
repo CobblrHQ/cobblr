@@ -12,6 +12,7 @@ const limiter = makeIpLimiter(60_000, 60);
 
 // AI-REACH: exempt (a browser's own report of a refused source; nobody, person or agent, acts here)
 // UI-REACH: the browser posts it itself, named by the policy's report-uri; no screen should
+// REPLAY: a browser's own report, rate-limited; nothing a person made
 cspReportsRouter.post("/csp-reports", async (req, res) => {
   if (!overLimit(limiter, req)) {
     const list = violationsIn(req.body);

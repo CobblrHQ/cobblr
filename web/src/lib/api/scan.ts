@@ -1531,7 +1531,7 @@ export const scanApi = {
     locationId: string,
     body: { kind: string; entity_id: string; instance?: string; delta?: number; set?: number },
   ) =>
-    request<{ entity_title: string; old_qty: number; new_qty: number }>(
+    request<{ entity_title: string; old_qty: number; new_qty: number; undo?: unknown }>(
       "POST",
       `/orgs/${slug}/modules/core-scan/bin/${locationId}/adjust`,
       body,

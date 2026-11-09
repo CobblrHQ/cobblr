@@ -10,7 +10,7 @@ import { FAMILY_ACTIONS, FAMILY_NOTIFICATIONS, FAMILY_PANELS, FAMILY_PARTS } fro
 
 export default defineModule({
   name: "digifab",
-  version: "0.45.6",
+  version: "0.45.7",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -338,9 +338,12 @@ export default defineModule({
         invokeHandler: "digifab.stop", effect: "stops", undoable: false,
         argsSchema: {
           command: { label: "Stop or pause", type: "text", choices: [{ value: "stop", label: "Stop" }, { value: "pause", label: "Pause" }] },
-          job_id: { label: "Job", type: "text" },
-          connection_id: { label: "Connection", type: "text" },
-          device_id: { label: "Machine", type: "text" },
+          // Which one, always: a bare "stop" proposed a stop of nothing, a
+          // card that could only fail, where the person needed to be asked
+          // which machine (#9337). The handler's own rule (StopArgs).
+          job_id: { label: "Job", type: "text", oneOf: "what-to-stop" },
+          connection_id: { label: "Connection", type: "text", with: "device_id" },
+          device_id: { label: "Machine", type: "text", oneOf: "what-to-stop", with: "connection_id" },
         },
       },
       {
@@ -449,8 +452,8 @@ export default defineModule({
         userInvokable: true,
         argsSchema: {
           job: { label: "Which job (its file name or id)", type: "text", required: true },
-          priority: { label: "Priority, 0 to 100 (higher goes first)", type: "number" },
-          max_attempts: { label: "How many tries, 1 to 10", type: "number" },
+          priority: { label: "Priority, 0 to 100 (higher goes first)", type: "number", oneOf: "change" },
+          max_attempts: { label: "How many tries, 1 to 10", type: "number", oneOf: "change" },
         },
       },
       {
@@ -503,8 +506,8 @@ export default defineModule({
         userInvokable: true,
         argsSchema: {
           file: { label: "Which file (its name)", type: "text", required: true },
-          name: { label: "Its new name", type: "text" },
-          notes: { label: "Notes", type: "text" },
+          name: { label: "Its new name", type: "text", oneOf: "change" },
+          notes: { label: "Notes", type: "text", oneOf: "change" },
         },
       },
       {

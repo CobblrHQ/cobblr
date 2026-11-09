@@ -1767,6 +1767,9 @@ export interface RequestReplaysTable {
   created_at: Generated<Date>;
 }
 
+/** The same, for a write that is a person's rather than a workspace's (20261109-256). */
+export type AccountRequestReplaysTable = Omit<RequestReplaysTable, "org_id">;
+
 /** An undo step handed back to the person who ran its run (20261007-204). */
 export interface IssuedUndosTable {
   id: Generated<string>;
@@ -2107,6 +2110,7 @@ export interface MetaDB {
   ai_held_changes: AiHeldChangesTable;
   issued_undos: IssuedUndosTable;
   request_replays: RequestReplaysTable;
+  account_request_replays: AccountRequestReplaysTable;
   service_job_cards: ServiceJobCardsTable;
   service_pending_confirms: { org_id: string; job_id: string; since: Generated<Date> };
   service_confirm_triggers: {

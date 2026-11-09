@@ -481,15 +481,22 @@ export function ScanResultModal({
     // reject it (Discard), or hand the camera an arm. A gesture that silently
     // does one of those is how "what did the X do?" happens (reported 2026-08-03:
     // "user needs to confirm or reject the result or at least move on").
+    // NEVER SCROLLS ON A PHONE (#9379): the card sits between the camera's bars,
+    // which leave it about 420 px in Safari on an iPhone, and everything this
+    // scan can do has to be in that without scrolling a card over a live camera.
+    // So the gaps are tight, the lead picture is drawn once (never again as a
+    // tile), the strip shares its row with the quantity, and the second actions
+    // share rows. e2e/walks/a-scan-result-card-never-scrolls-on-a-phone.json
+    // holds the worst case: a long name, two pictures and every action.
     <CaptureSheetShell title="Scanned">
-      <div className="space-y-4">
+      <div className="space-y-2.5">
         <div className="flex items-center gap-3">
-          <div className="w-24 h-24 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700">
+          <div className="w-20 h-20 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700">
             <EntityPhoto
               key={catalogImg ?? "none"}
               src={catalogImg}
               alt=""
-              size={96}
+              size={80}
               onBroken={() => catalogImg && setBrokenSrcs((prev) => new Set(prev).add(catalogImg))}
               placeholder={<ScanLine size={24} className={stillEnriching ? "text-faint animate-pulse" : "text-faint"} />}
             />
@@ -584,29 +591,35 @@ export function ScanResultModal({
             under your thumb and the ＋ arrived exactly where you were about to
             tap. The shape is fixed from first paint now; only the contents
             fill in. */}
-        <div className="flex items-center gap-1.5">
+        {/* The lead picture is the big one above; its tile is left out, so the
+            same photo is never shown twice (#9379). Every other picture is a
+            tile, a tap from leading. The quantity shares this row. */}
+        {/* At large text the quantity drops to its own line rather than run
+            past the card's edge. */}
+        <div data-photo-strip className="flex flex-wrap items-center gap-1.5">
+          {/* Many pictures slide sideways here, never push the quantity off. */}
+          <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto">
           {!item && (
             <div
               className="w-11 h-11 shrink-0 rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 animate-pulse"
               aria-hidden
             />
           )}
-            {item?.catalog_image_file_id && (
+            {item?.catalog_image_file_id && lead.role !== "catalog" && (
               <StripTile
                 src={scanFileUrl(activeSlug, item.catalog_image_file_id, "thumb")}
-                active={lead.role === "catalog"}
                 checking={lead.pending}
                 label={
                   lead.pending
                     ? "Catalog photo - being checked against your photo"
-                    : "Display photo"
+                    : "Catalog photo"
                 }
               />
             )}
             {/* The row's own pictures from the one resolver: the lead one
                 (your photo, or a split child's crop), then the group shot and
                 the added photos, each a tap from being the display photo. */}
-            {yourPictures(resolved.pictures).map((p) => (
+            {yourPictures(resolved.pictures).filter((p) => !(p === yoursPicture && lead.role === "yours")).map((p) => (
               <StripTile
                 key={p.key}
                 src={resolved.src(p, "thumb") ?? ""}
@@ -622,6 +635,7 @@ export function ScanResultModal({
                 busy={makeDisplay.isPending}
               />
             ))}
+          </div>
             {onAddPhoto && (
               <button
                 type="button"
@@ -651,19 +665,18 @@ export function ScanResultModal({
                 <Plus size={16} />
               </button>
             )}
+          {/* Quantity — the LOCKED stepper (shared with the drawer), not a
+              circles-and-input variant of its own. */}
+          {/* A scan of something the workspace already counts says how many
+              in the match's own count (Change by / Set total) below; a second
+              stepper here would ask the same question twice (#3884). */}
+          {!alreadyOwned && !inventoryCheck && (
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <span className="text-[10px] uppercase tracking-widest text-muted">qty</span>
+              <QtyStepper value={qty} onSet={setQty} big />
+            </div>
+          )}
         </div>
-
-        {/* Quantity — the LOCKED stepper (shared with the drawer), not a
-            circles-and-input variant of its own. */}
-        {/* A scan of something the workspace already counts says how many
-            in the match's own count (Change by / Set total) below; a second
-            stepper here would ask the same question twice (#3884). */}
-        {!alreadyOwned && !inventoryCheck && (
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-widest text-muted">quantity</span>
-            <QtyStepper value={qty} onSet={setQty} big />
-          </div>
-        )}
 
         {/* "Already tracked" — act on the EXISTING entity
             instead of duplicating; in Move mode a single exact barcode match
@@ -733,48 +746,54 @@ export function ScanResultModal({
             </div>
           )
         )}
-        {!looking && ranOutHere.offered && (
-          <button
-            type="button"
-            data-testid="sheet-ran-out"
-            disabled={ranOutHere.pending || busy}
-            onClick={ranOutHere.run}
-            title={RAN_OUT_HINT}
-            className="w-full min-h-11 inline-flex items-center justify-center gap-2 rounded-lg border border-line dark:border-slate-600 px-3 text-sm text-content dark:text-mortar-100 hover:bg-surface disabled:opacity-50"
-          >
-            {ranOutHere.pending ? <Loader2 size={15} className="animate-spin" /> : <PackageX size={15} />} {RAN_OUT_LABEL}
-          </button>
-        )}
-
-        {/* This scan IS a container (#6891): one tap makes it the next free
-            Bin N with the tote's identity on it, and the camera files the
-            next scans into it. Offered up front when the row looks like a
-            container (the contract's tool rule), quietly otherwise. */}
-        {item && onBinMade && item.status === "pending" && item.suggested_name && !countingWhatYouHave && item.tool_hints?.bin && (
-          item.tool_hints.bin.relevance === "likely" ? (
-            <button
-              type="button"
-              data-testid="sheet-turn-into-bin"
-              disabled={busy || makeBin.isPending}
-              onClick={() => makeBin.mutate()}
-              title="This IS a container: make it a bin and scan things into it"
-              className="w-full min-h-11 inline-flex items-center justify-center gap-2 rounded-lg border border-line dark:border-slate-600 px-3 text-sm text-content dark:text-mortar-100 hover:bg-surface disabled:opacity-50"
-            >
-              {makeBin.isPending ? <Loader2 size={15} className="animate-spin" /> : <Box size={15} />} Turn into a bin
-            </button>
-          ) : (
-            <button
-              type="button"
-              data-testid="sheet-turn-into-bin"
-              disabled={busy || makeBin.isPending}
-              onClick={() => makeBin.mutate()}
-              className="min-h-11 self-start text-xs text-muted underline decoration-dotted underline-offset-2 hover:text-content disabled:opacity-50"
-            >
-              Is this a container? Turn into a bin
-            </button>
-          )
-        )}
-
+        {/* The second actions share a row (#9379): "I just ran out of this"
+            (#6526) and "this IS a container" (#6891), each still one tap. The
+            bin is offered up front when the row looks like a container (the
+            contract's tool rule), quietly otherwise. */}
+        {(() => {
+          const ranOut = !looking && ranOutHere.offered;
+          const bin = !!(item && onBinMade && item.status === "pending" && item.suggested_name && !countingWhatYouHave && item.tool_hints?.bin);
+          if (!ranOut && !bin) return null;
+          const binLikely = item?.tool_hints?.bin?.relevance === "likely";
+          return (
+            <div className="flex items-stretch gap-2">
+              {ranOut && (
+                <button
+                  type="button"
+                  data-testid="sheet-ran-out"
+                  disabled={ranOutHere.pending || busy}
+                  onClick={ranOutHere.run}
+                  title={RAN_OUT_HINT}
+                  className="flex-1 min-w-0 min-h-11 inline-flex items-center justify-center gap-2 rounded-lg border border-line dark:border-slate-600 px-2 text-sm text-content dark:text-mortar-100 hover:bg-surface disabled:opacity-50"
+                >
+                  {ranOutHere.pending ? <Loader2 size={15} className="animate-spin" /> : <PackageX size={15} />} {RAN_OUT_LABEL}
+                </button>
+              )}
+              {bin && (binLikely ? (
+                <button
+                  type="button"
+                  data-testid="sheet-turn-into-bin"
+                  disabled={busy || makeBin.isPending}
+                  onClick={() => makeBin.mutate()}
+                  title="This IS a container: make it a bin and scan things into it"
+                  className="flex-1 min-w-0 min-h-11 inline-flex items-center justify-center gap-2 rounded-lg border border-line dark:border-slate-600 px-2 text-sm text-content dark:text-mortar-100 hover:bg-surface disabled:opacity-50"
+                >
+                  {makeBin.isPending ? <Loader2 size={15} className="animate-spin" /> : <Box size={15} />} Turn into a bin
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="sheet-turn-into-bin"
+                  disabled={busy || makeBin.isPending}
+                  onClick={() => makeBin.mutate()}
+                  className="flex-1 min-w-0 min-h-11 px-2 text-xs text-muted underline decoration-dotted underline-offset-2 hover:text-content disabled:opacity-50"
+                >
+                  Is this a container? Turn into a bin
+                </button>
+              ))}
+            </div>
+          );
+        })()}
         {/* Paired-scan: the bin's QR said WHICH record; this UPC says WHAT it
             is. Writes the product identity onto the active bin itself instead
             of filing a new item into it. Only offered when a location bin is
@@ -799,7 +818,7 @@ export function ScanResultModal({
             "Nice photo" is gone — the + shutter covers it: a barcode item's
             next shot becomes its display photo, a photo item's next shot joins
             the record. One button fewer, same power. */}
-        <div className="flex items-center gap-2 pt-1">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             disabled={busy}
@@ -829,22 +848,31 @@ export function ScanResultModal({
               <Camera size={14} /> {noMatch ? "Take a photo" : "Not it? Take a photo"}
             </button>
           )}
+          {/* With a one-tap destination above, keeping the scan for later is
+              the second choice, says so (it goes to the inbox), and shares this
+              row (#9379). */}
+          {oneTap && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={saveAndNext}
+              className="flex-1 h-11 inline-flex items-center justify-center gap-1.5 rounded-lg border border-line dark:border-slate-600 text-content dark:text-mortar-100 text-[12.5px] font-medium px-2 disabled:opacity-50"
+            >
+              <Check size={14} /> Keep for later
+            </button>
+          )}
         </div>
-        {/* With a one-tap destination above, keeping the scan for later is
-            the second choice, and says so: it goes to the inbox. */}
         {/* COLOUR-NOT-STATE: Save & next is the main way when there is nowhere one tap files it, and its label says so. */}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={saveAndNext}
-          className={
-            oneTap
-              ? "w-full h-11 inline-flex items-center justify-center gap-1.5 rounded-lg border border-line dark:border-slate-600 text-content dark:text-mortar-100 text-[13px] font-medium disabled:opacity-50"
-              : "w-full h-11 inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold disabled:opacity-50"
-          }
-        >
-          <Check size={15} /> {oneTap ? "Keep for later" : <>Save &amp; next</>}
-        </button>
+        {!oneTap && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={saveAndNext}
+            className="w-full h-11 inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold disabled:opacity-50"
+          >
+            <Check size={15} /> Save &amp; next
+          </button>
+        )}
       </div>
     </CaptureSheetShell>
   );

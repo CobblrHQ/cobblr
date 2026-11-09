@@ -14,7 +14,8 @@
 // unknown (platform-web write-identity.ts), so a deliberate second create is
 // still a second create. The kernel door every workspace route passes
 // (withTenant) asks here, so a route added tomorrow is covered the day it
-// lands.
+// lands. A person's write that no workspace holds yet (making a workspace)
+// asks through replayAccountWrite, kept per person instead.
 
 import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
@@ -39,9 +40,63 @@ function fingerprintOf(req: Request): string {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Answer a repeated write from what its first answer was, or record this
- *  one's answer. True when the request has been answered here. */
-export async function replayOrRecord(req: Request, res: Response, next: NextFunction, orgId: string, userId: string): Promise<boolean> {
+type Kept = { fingerprint: string; state: "running" | "done" | "unreplayable"; status: number | null; content_type: string | null; body: string | null; created_at: Date };
+type Settled = { state: "done" | "unreplayable"; status: number; content_type?: string | null; body?: string };
+
+/** Where one scope keeps its answers: a workspace's writes per person, or a
+ *  person's own writes that belong to no workspace yet (making one). */
+interface ReplayStore {
+  claim(key: string, fingerprint: string): Promise<boolean>;
+  find(key: string): Promise<Kept | undefined>;
+  dropRunning(key: string): Promise<void>;
+  forget(key: string): Promise<unknown>;
+  settle(key: string, kept: Settled): Promise<unknown>;
+}
+
+function workspaceStore(orgId: string, userId: string): ReplayStore {
+  return {
+    claim: async (key, fingerprint) => !!(await meta.insertInto("request_replays").values({ org_id: orgId, user_id: userId, key, fingerprint }).onConflict((oc) => oc.doNothing()).returning("key").executeTakeFirst()),
+    find: (key) => meta.selectFrom("request_replays").selectAll().where("org_id", "=", orgId).where("user_id", "=", userId).where("key", "=", key).executeTakeFirst(),
+    dropRunning: async (key) => { await meta.deleteFrom("request_replays").where("org_id", "=", orgId).where("user_id", "=", userId).where("key", "=", key).where("state", "=", "running").execute(); },
+    forget: (key) => meta.deleteFrom("request_replays").where("org_id", "=", orgId).where("user_id", "=", userId).where("key", "=", key).execute(),
+    settle: (key, kept) => meta.updateTable("request_replays").set(kept).where("org_id", "=", orgId).where("user_id", "=", userId).where("key", "=", key).execute(),
+  };
+}
+
+function accountStore(userId: string): ReplayStore {
+  return {
+    claim: async (key, fingerprint) => {
+      // This person's answers older than a day go as they send the next one:
+      // no walk of every account is needed to keep the table small.
+      await meta.deleteFrom("account_request_replays").where("user_id", "=", userId).where("created_at", "<", new Date(Date.now() - REPLAY_KEPT_MS)).execute();
+      return !!(await meta.insertInto("account_request_replays").values({ user_id: userId, key, fingerprint }).onConflict((oc) => oc.doNothing()).returning("key").executeTakeFirst());
+    },
+    find: (key) => meta.selectFrom("account_request_replays").selectAll().where("user_id", "=", userId).where("key", "=", key).executeTakeFirst(),
+    dropRunning: async (key) => { await meta.deleteFrom("account_request_replays").where("user_id", "=", userId).where("key", "=", key).where("state", "=", "running").execute(); },
+    forget: (key) => meta.deleteFrom("account_request_replays").where("user_id", "=", userId).where("key", "=", key).execute(),
+    settle: (key, kept) => meta.updateTable("account_request_replays").set(kept).where("user_id", "=", userId).where("key", "=", key).execute(),
+  };
+}
+
+/** Answer a repeated workspace write from what its first answer was, or
+ *  record this one's answer. True when the request has been answered here. */
+export function replayOrRecord(req: Request, res: Response, next: NextFunction, orgId: string, userId: string): Promise<boolean> {
+  return replayFrom(workspaceStore(orgId, userId), req, res, next);
+}
+
+/** The same door for a person's write that no workspace holds: making a
+ *  workspace. Its answer was lost, Create was pressed again, and a second
+ *  workspace was made (#7923). Mounted after requireAuth. */
+export async function replayAccountWrite(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.session) return next();
+    if (!(await replayFrom(accountStore(req.session.id), req, res, next))) next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function replayFrom(store: ReplayStore, req: Request, res: Response, next: NextFunction): Promise<boolean> {
   const key = req.get("idempotency-key");
   if (!key || !MUTATING.has(req.method)) return false;
   if (!KEY.test(key)) {
@@ -50,18 +105,12 @@ export async function replayOrRecord(req: Request, res: Response, next: NextFunc
   }
   const fingerprint = fingerprintOf(req);
   for (const deadline = Date.now() + WAIT_FOR_RUNNING_MS; ; ) {
-    const claimed = await meta
-      .insertInto("request_replays")
-      .values({ org_id: orgId, user_id: userId, key, fingerprint })
-      .onConflict((oc) => oc.doNothing())
-      .returning("key")
-      .executeTakeFirst();
-    if (claimed) {
-      record(res, orgId, userId, key);
+    if (await store.claim(key, fingerprint)) {
+      record(res, store, key);
       next();
       return true;
     }
-    const row = await meta.selectFrom("request_replays").selectAll().where("org_id", "=", orgId).where("user_id", "=", userId).where("key", "=", key).executeTakeFirst();
+    const row = await store.find(key);
     if (!row) continue;
     if (row.fingerprint !== fingerprint) {
       res.status(422).json({ error: { code: "idempotency_key_reused", message: "This Idempotency-Key was already used for a different request." } });
@@ -78,7 +127,7 @@ export async function replayOrRecord(req: Request, res: Response, next: NextFunc
       return true;
     }
     if (Date.now() - new Date(row.created_at).getTime() > RUNNING_GIVES_UP_MS) {
-      await meta.deleteFrom("request_replays").where("org_id", "=", orgId).where("user_id", "=", userId).where("key", "=", key).where("state", "=", "running").execute();
+      await store.dropRunning(key);
       continue;
     }
     if (Date.now() > deadline) {
@@ -90,7 +139,7 @@ export async function replayOrRecord(req: Request, res: Response, next: NextFunc
 }
 
 /** Keep this response's status and body under its key once it is sent. */
-function record(res: Response, orgId: string, userId: string, key: string): void {
+function record(res: Response, store: ReplayStore, key: string): void {
   const chunks: Buffer[] = [];
   let size = 0;
   let streamed = false;
@@ -119,13 +168,12 @@ function record(res: Response, orgId: string, userId: string, key: string): void
     return end(chunk, ...rest);
   }) as typeof res.end;
   function settle() {
-    const where = meta.updateTable("request_replays").where("org_id", "=", orgId).where("user_id", "=", userId).where("key", "=", key);
     const done =
       res.statusCode >= 500
-        ? meta.deleteFrom("request_replays").where("org_id", "=", orgId).where("user_id", "=", userId).where("key", "=", key).execute()
+        ? store.forget(key)
         : streamed || size > KEPT_BODY_MAX
-          ? where.set({ state: "unreplayable", status: res.statusCode }).execute()
-          : where.set({ state: "done", status: res.statusCode, content_type: String(res.getHeader("content-type") ?? "") || null, body: Buffer.concat(chunks).toString("utf8") }).execute();
+          ? store.settle(key, { state: "unreplayable", status: res.statusCode })
+          : store.settle(key, { state: "done", status: res.statusCode, content_type: String(res.getHeader("content-type") ?? "") || null, body: Buffer.concat(chunks).toString("utf8") });
     done.catch((err: Error) => console.warn(`[request-replays] could not keep the answer to ${key}: ${err.message}`));
   }
 }

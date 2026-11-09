@@ -89,7 +89,7 @@ export interface PlatformActionDecl {
   // whose choice decides this one's fields (a capability's input schema).
   args_schema: Record<
     string,
-    { label: string; type: "text" | "boolean" | "number" | "list" | "json"; required?: boolean; oneOf?: string; picker?: "service-capability"; schema_from?: string }
+    { label: string; type: "text" | "boolean" | "number" | "list" | "json"; required?: boolean; oneOf?: string; with?: string; picker?: "service-capability"; schema_from?: string }
   >;
   version: string;
   /** Never offered to the assistant, on the rail or in list_actions, and
@@ -503,7 +503,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     args_schema: {
       entity_kind: { label: "Which kind of record (e.g. inventory:part); may be left out when renaming a heading only one kind has", type: "text" },
       section: { label: "The heading to put them under (e.g. Buying)", type: "text", required: true },
-      fields: { label: "The fields, comma-separated, by their labels on the form", type: "text", oneOf: "what-to-change" },
+      fields: { label: "The fields, comma-separated, by their labels on the form", type: "text", oneOf: "what-to-change", with: "entity_kind" },
       rename_to: { label: "To RENAME the heading instead: what to call it now", type: "text", oneOf: "what-to-change" },
     },
     version: "0.2.0",
@@ -876,17 +876,17 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     examples: ["make the low stock automation fire at 2 instead of 5", "point the restock wire at the Pantry list"],
     args_schema: {
       wire_id: { label: "The automation's id", type: "text", required: true },
-      source_kind: { label: "The kind of record it watches or runs on (e.g. inventory:part)", type: "text" },
-      action_id: { label: "The action it runs (list_actions)", type: "text" },
-      trigger_type: { label: "When it runs: user-invoked (a button), event, on-create, on-update, on-delete or schedule", type: "text" },
-      trigger_event: { label: "For trigger_type event: the event it listens for", type: "text" },
-      trigger_schedule: { label: "For trigger_type schedule: an RRULE (FREQ=WEEKLY;BYDAY=MO)", type: "text" },
-      args: { label: "The action's arguments, as an object", type: "json" },
-      filter: { label: "Only when the record matches this filter (field: value)", type: "json" },
-      target: { label: "What it runs on: \"self\" (default), \"none\", or {rel, dir, kind} to reach a linked record", type: "json" },
-      template: { label: "A message template, for actions that send one", type: "text" },
-      label: { label: "For a button: what it says", type: "text" },
-      ask: { label: "For a button: what it asks before it runs", type: "json" },
+      source_kind: { label: "The kind of record it watches or runs on (e.g. inventory:part)", type: "text", oneOf: "what-to-change" },
+      action_id: { label: "The action it runs (list_actions)", type: "text", oneOf: "what-to-change" },
+      trigger_type: { label: "When it runs: user-invoked (a button), event, on-create, on-update, on-delete or schedule", type: "text", oneOf: "what-to-change" },
+      trigger_event: { label: "For trigger_type event: the event it listens for", type: "text", oneOf: "what-to-change" },
+      trigger_schedule: { label: "For trigger_type schedule: an RRULE (FREQ=WEEKLY;BYDAY=MO)", type: "text", oneOf: "what-to-change" },
+      args: { label: "The action's arguments, as an object", type: "json", oneOf: "what-to-change" },
+      filter: { label: "Only when the record matches this filter (field: value)", type: "json", oneOf: "what-to-change" },
+      target: { label: "What it runs on: \"self\" (default), \"none\", or {rel, dir, kind} to reach a linked record", type: "json", oneOf: "what-to-change" },
+      template: { label: "A message template, for actions that send one", type: "text", oneOf: "what-to-change" },
+      label: { label: "For a button: what it says", type: "text", oneOf: "what-to-change" },
+      ask: { label: "For a button: what it asks before it runs", type: "json", oneOf: "what-to-change" },
     },
     version: "0.1.0",
   },
@@ -1140,8 +1140,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     examples: ["share the Voron with Vince", "let Sam see these three drills", "share 3D Printers with sam@example.com"],
     args_schema: {
       entity_kind: { label: "The kind of record", type: "text", required: true },
-      ids: { label: "The records, by id (read them first)", type: "list" },
-      collection: { label: "Share the whole collection, including future records (owner or admin)", type: "boolean" },
+      ids: { label: "The records, by id (read them first)", type: "list", oneOf: "which-records" },
+      collection: { label: "Share the whole collection, including future records (owner or admin)", type: "boolean", oneOf: "which-records" },
       with: { label: "Who to share them with: the person's name or the share's id (someone already shared with)", type: "text", required: true },
     },
     version: "0.3.0",
@@ -1164,8 +1164,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     examples: ["stop sharing the Voron with Vince"],
     args_schema: {
       entity_kind: { label: "The kind of record", type: "text", required: true },
-      ids: { label: "The records, by id (read them first)", type: "list" },
-      collection: { label: "Remove the whole-collection rule (owner or admin)", type: "boolean" },
+      ids: { label: "The records, by id (read them first)", type: "list", oneOf: "which-records" },
+      collection: { label: "Remove the whole-collection rule (owner or admin)", type: "boolean", oneOf: "which-records" },
       with: { label: "Who to stop sharing them with: the person's name, or the share's id", type: "text", required: true },
     },
     version: "0.2.0",
@@ -1253,10 +1253,10 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["accept Vince's suggestions on the CR-10", "accept all of Sam's edits"],
     args_schema: {
-      ids: { label: "The suggestions, by id", type: "list" },
-      entity_kind: { label: "A record's kind, to decide everything suggested on it", type: "text" },
-      entity_id: { label: "That record's id", type: "text" },
-      from: { label: "A person's name, to decide everything they suggested", type: "text" },
+      ids: { label: "The suggestions, by id", type: "list", oneOf: "which" },
+      entity_kind: { label: "A record's kind, to decide everything suggested on it", type: "text", oneOf: "which", with: "entity_id" },
+      entity_id: { label: "That record's id", type: "text", with: "entity_kind" },
+      from: { label: "A person's name, to decide everything they suggested", type: "text", oneOf: "which" },
     },
     version: "0.1.0",
   },
@@ -1276,10 +1276,10 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["reject Vince's edit to the Voron's colour"],
     args_schema: {
-      ids: { label: "The suggestions, by id", type: "list" },
-      entity_kind: { label: "A record's kind, to decide everything suggested on it", type: "text" },
-      entity_id: { label: "That record's id", type: "text" },
-      from: { label: "A person's name, to decide everything they suggested", type: "text" },
+      ids: { label: "The suggestions, by id", type: "list", oneOf: "which" },
+      entity_kind: { label: "A record's kind, to decide everything suggested on it", type: "text", oneOf: "which", with: "entity_id" },
+      entity_id: { label: "That record's id", type: "text", with: "entity_kind" },
+      from: { label: "A person's name, to decide everything they suggested", type: "text", oneOf: "which" },
     },
     version: "0.1.0",
   },
@@ -1421,8 +1421,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     examples: ["turn on embroidery for sewing", "I don't need the wishlist part of board games"],
     args_schema: {
       bundle: { label: "The installed bundle", type: "text", required: true },
-      turn_on: { label: "Parts to turn on, by name, comma separated", type: "text" },
-      turn_off: { label: "Parts to turn off, by name, comma separated", type: "text" },
+      turn_on: { label: "Parts to turn on, by name, comma separated", type: "text", oneOf: "which-parts" },
+      turn_off: { label: "Parts to turn off, by name, comma separated", type: "text", oneOf: "which-parts" },
     },
     version: "0.1.0",
   },
@@ -1566,8 +1566,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["hide Bookshelf from navigation", "give my tools the wrench icon", "call one thing in Bookshelf a book and several books", "nest Spices under Inventory"],
     args_schema: {
-      target: { label: "The list, by its current name or kind ID", type: "text" },
-      entity_kind: { label: "Kind ID, instead of a list name", type: "text" },
+      target: { label: "The list, by its current name or kind ID", type: "text", oneOf: "which-list" },
+      entity_kind: { label: "Kind ID, instead of a list name", type: "text", oneOf: "which-list" },
       icon: { label: "Icon name, such as wrench; empty restores the default", type: "text" },
       hidden: { label: "Hide from navigation", type: "boolean" },
       nav_order: { label: "Navigation order; lower comes first, null restores the default", type: "number" },

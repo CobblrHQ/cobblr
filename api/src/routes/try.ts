@@ -59,6 +59,7 @@ import { intentQuery, startHtml, startIntentOf, startNonce, startPolicy } from "
 import { trackProductEvent } from "../platform/product-events.js";
 import { goneHtml } from "./try-gone-page.js";
 import { KEPT_TRIALS_PER_ADDRESS, consumeKeepJoin, requestKeepJoin } from "../platform/try-keep-join.js";
+import { replayAccountWrite } from "../platform/request-replays.js";
 
 /** Not an error: a pooled sandbox was filled before it was handed over, so the
  *  seed step is skipped rather than run a second time and double everything. */
@@ -218,6 +219,7 @@ const KeepBody = z.object({
 tryRouter.post(
   "/try/keep",
   requireAuth,
+  replayAccountWrite,
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!sandboxEnabled()) {
@@ -298,6 +300,7 @@ tryRouter.post(
 // another of its workspaces, and the link signs the address in. No session:
 // the token, sent only to that address, is the proof.
 // AI-REACH: consumes a link from a person's own inbox; not an agent's to open.
+// REPLAY: spends a link from the person's own inbox: a repeat finds it used
 tryRouter.post(
   "/try/join",
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -349,6 +352,7 @@ function keepLinkCopy() {
 // AI-REACH: sends a sign-in link to the account's own address. A credential
 // action the person takes on themselves from the strip; an agent has no
 // business asking for someone's way in.
+// REPLAY: sends the link again, as asked
 tryRouter.post(
   "/try/resend-link",
   requireAuth,
@@ -384,6 +388,7 @@ const SetPasswordBody = z.object({ password: z.string().min(8).max(200) });
 // POST /try/set-password
 // AI-REACH: chooses the account's password. Self-only credential write, the
 // same class as /me/password; never reachable by an agent.
+// REPLAY: sets the password; a repeat sets the same one
 tryRouter.post(
   "/try/set-password",
   requireAuth,
@@ -443,6 +448,7 @@ function bringUrl(link: string): string | null {
 tryRouter.post(
   "/try/take",
   requireAuth,
+  replayAccountWrite,
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!sandboxEnabled()) {
@@ -544,6 +550,7 @@ tryRouter.get(
 // anything. They arrive stocked, poke at real data, and clear it when they know
 // what they want their own to look like.
 // AI-REACH: a visitor's trial sandbox, behind the door's challenge; it belongs to the visitor
+// REPLAY: empties the person's own sandbox; a repeat finds it empty
 tryRouter.post(
   "/try/empty",
   requireAuth,
@@ -654,6 +661,7 @@ tryRouter.get(
 //
 // AI-REACH: hands the person a credential to their own workspace for another
 // server to present; an agent has no business minting one.
+// REPLAY: mints a one-time grant for another server, which a kept answer would store; an unused one lapses
 tryRouter.post(
   "/try/carry",
   requireAuth,
@@ -735,6 +743,7 @@ tryRouter.get(
 // AI-REACH: server to server, on a grant that only the replaying server holds;
 // ending a workspace is not an agent's to do.
 // UI-REACH: server to server, on a grant only the replaying server holds
+// REPLAY: server to server, on a grant the first call ends: a repeat finds it ended
 tryRouter.post(
   "/try/carry/:token/done",
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {

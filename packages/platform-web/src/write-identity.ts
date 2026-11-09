@@ -42,11 +42,48 @@ export function outcomeOf(status: number, retryAfter: string | null): WriteOutco
   return status >= 500 || (status === 409 && retryAfter !== null) ? "unknown" : "answered";
 }
 
-/** Begin one write to a workspace (`path` under /orgs/): the key to send, and
- *  how it ended. Null for a read or a path outside a workspace. */
+/** A person's writes outside a workspace whose answers the server keeps
+ *  (replayAccountWrite, api/src/platform/request-replays.ts). Only these and a
+ *  workspace's writes carry a key: a keyed write is kept on the device and
+ *  sent again after a reload, and one whose answer the server does not keep
+ *  would run twice. lint:creating-writes-ask-the-replay-seam holds every
+ *  entry to a route that asks. */
+export const KEPT_ACCOUNT_WRITES = [
+  "POST /orgs",
+  "POST /me/connections",
+  "POST /me/notification-channels",
+  "POST /me/notifications/:id/actions/:actionId",
+  "POST /me/links",
+  "POST /feedback",
+  "POST /feedback/:id/reply",
+  "POST /share-links/accept",
+  "POST /try/keep",
+  "POST /try/take",
+  "POST /super-admin/demos",
+  "POST /super-admin/announce",
+  "POST /super-admin/notices",
+  "POST /super-admin/feedback/batch-resolve",
+  "POST /super-admin/sign-in/providers",
+] as const;
+
+const keptAccountWrite = KEPT_ACCOUNT_WRITES.map((w) => {
+  const [verb, route] = w.split(" ") as [string, string];
+  return { verb, path: new RegExp(`^${route.replace(/:[A-Za-z]+/g, "[^/]+")}$`) };
+});
+
+/** Whether the server keeps this write's answer: every write to a workspace
+ *  (`path` under /orgs/), and the person's own writes listed above. */
+function isKept(verb: string, path: string): boolean {
+  if (path.startsWith("/orgs/")) return true;
+  const bare = path.split("?")[0]!;
+  return keptAccountWrite.some((w) => w.verb === verb && w.path.test(bare));
+}
+
+/** Begin one write whose answer the server keeps: the key to send, and how
+ *  it ended. Null for a read, or a write the server keeps no answer for. */
 export function beginWrite(method: string, path: string, body: string | null | undefined): { key: string; settle: (outcome: WriteOutcome) => void } | null {
   const verb = method.toUpperCase();
-  if (!MUTATING.has(verb) || !path.startsWith("/orgs/")) return null;
+  if (!MUTATING.has(verb) || !isKept(verb, path)) return null;
   const id = `${verb} ${path}\n${body ?? ""}`;
   let entry = open.get(id);
   if (entry && entry.inFlight === 0 && (entry.unknownSince === null || Date.now() - entry.unknownSince > KEPT_MS)) entry = undefined;

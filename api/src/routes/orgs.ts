@@ -1,4 +1,5 @@
 import { clearPart, partStates, setPart } from "../platform/module-parts.js";
+import { replayAccountWrite } from "../platform/request-replays.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { activityPresentation } from "@cobblr/platform-contract/activity-summary";
@@ -79,6 +80,7 @@ export const FINISH_SETUP_AFTER_MS = 2 * 60_000;
 // everything here, which is the state this door exists to leave. Any member
 // (never a guest) may press it; it is idempotent, and a workspace already whole answers so.
 // AI-REACH: exempt - a workspace with no database answers 503 to every assistant call; finishing it is the person's own button on the screen that says it is not set up yet.
+// REPLAY: finishes a workspace's database; a workspace already whole answers so
 orgsRouter.post("/:slug/finish-setup", requireAuth, async (req, res, next) => {
   try {
     const org = await meta
@@ -728,7 +730,7 @@ orgsRouter.post("/:slug/import-app", requireAuth, withTenant, async (req, res, n
 
 // AI-REACH: creating a workspace is account-level and happens before any
 // workspace exists to ask in. The assistant lives inside one.
-orgsRouter.post("/", requireAuth, async (req, res, next) => {
+orgsRouter.post("/", requireAuth, replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = CreateOrgBody.safeParse(req.body);
     if (!parsed.success) {
@@ -836,7 +838,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
 const ProvisionAppBody = z.object({ app: z.string().min(1), manifest: z.unknown() });
 // AI-REACH: provisioning a new app workspace: account-level, same as creating one.
 // UI-REACH: manifest-based provisioning for managed-app clients; people create an app workspace through signup or the workspace picker, which resolve the manifest server-side.
-orgsRouter.post("/provision-app", requireAuth, async (req, res, next) => {
+orgsRouter.post("/provision-app", requireAuth, replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = ProvisionAppBody.safeParse(req.body);
     if (!parsed.success) {

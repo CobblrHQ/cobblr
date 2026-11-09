@@ -46,6 +46,7 @@ import {
   type StoredNotification,
 } from "../platform/discord-interaction.js";
 import { customIdFor } from "../platform/channels/discord-card.js";
+import { replayAccountWrite } from "../platform/request-replays.js";
 
 export const discordInteractionsRouter = Router();
 
@@ -55,6 +56,7 @@ const publicKey = (): string => (process.env.COBBLR_DISCORD_PUBLIC_KEY || "").tr
 /** The DIRECT door: Discord posts here itself, for a deployment with its own
  *  app and no bot process. Unauthenticated by necessity — the Ed25519
  *  signature is the entire gate. */
+// REPLAY: Discord's signed call, with no person's session to keep an answer under
 discordInteractionsRouter.post("/discord/interactions", async (req, res) => {
   const key = publicKey();
   if (!key) {
@@ -107,6 +109,7 @@ discordInteractionsRouter.post("/discord/interactions", async (req, res) => {
 discordInteractionsRouter.post(
   "/discord/interactions/forwarded",
   requireAuth,
+  replayAccountWrite,
   async (req, res) => {
     if (!requireScope(req, res, "discord:interactions")) return;
     await handlePress(req, res);

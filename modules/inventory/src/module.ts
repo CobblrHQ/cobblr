@@ -1267,8 +1267,8 @@ export default defineModule({
         invokeHandler: "inventory.clear-expired",
         userInvokable: true,
         argsSchema: {
-          partIds: { label: "The items to clear, by id (else a whole list)", type: "list" },
-          instance: { label: "The list to clear, by its name, when no items are named", type: "text" },
+          partIds: { label: "The items to clear, by id (else a whole list)", type: "list", oneOf: "what-to-clear" },
+          instance: { label: "The list to clear, by its name, when no items are named", type: "text", oneOf: "what-to-clear" },
           ended: { label: "Used up (used) or threw out (spoiled); used when absent", type: "text" },
           timezone: { label: "Timezone to date it in", type: "text" },
           dry_run: { label: "true to only say what would be cleared", type: "text" },

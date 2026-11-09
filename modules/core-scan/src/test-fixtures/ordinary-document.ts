@@ -52,3 +52,31 @@ export function imagePdf(jpeg: Buffer, width: number, height: number, textLayer 
   parts.push(Buffer.from(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((n) => `${String(n).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${offset}\n%%EOF\n`));
   return Buffer.concat(parts);
 }
+
+/** A PDF of many pages, each with its own text layer, and optionally a JPEG
+ *  drawn full-page on some of them: a tiled print-at-home pattern, or the same
+ *  with one page that is a scan (#9360). */
+export function pagedPdf(pages: ReadonlyArray<{ text: string; jpeg?: { bytes: Buffer; width: number; height: number } }>): Buffer {
+  const objects: Buffer[] = [];
+  const add = (b: Buffer) => { objects.push(b); return objects.length; };
+  const catalog = add(Buffer.alloc(0));
+  const pagesObj = add(Buffer.alloc(0));
+  const font = add(Buffer.from("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"));
+  const kids: number[] = [];
+  for (const p of pages) {
+    const words = p.text.replace(/[^\x20-\x7e]/g, " ").replace(/[\\()]/g, "\\$&");
+    const image = p.jpeg ? add(Buffer.concat([Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${p.jpeg.width} /Height ${p.jpeg.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpeg.bytes.length} >>\nstream\n`), p.jpeg.bytes, Buffer.from("\nendstream")])) : 0;
+    const stream = `${image ? "q 612 0 0 792 0 0 cm /Im1 Do Q " : ""}BT /F1 12 Tf 40 750 Td (${words}) Tj ET 0.5 w 40 40 m 572 40 l 572 700 l 40 700 l h S`;
+    const content = add(Buffer.from(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`));
+    const res = `<< /Font << /F1 ${font} 0 R >>${image ? ` /XObject << /Im1 ${image} 0 R >>` : ""} >>`;
+    kids.push(add(Buffer.from(`<< /Type /Page /Parent ${pagesObj} 0 R /MediaBox [0 0 612 792] /Resources ${res} /Contents ${content} 0 R >>`)));
+  }
+  objects[catalog - 1] = Buffer.from(`<< /Type /Catalog /Pages ${pagesObj} 0 R >>`);
+  objects[pagesObj - 1] = Buffer.from(`<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(" ")}] /Count ${kids.length} >>`);
+  const parts = [Buffer.from("%PDF-1.4\n")]; const offsets: number[] = []; let offset = parts[0]!.length;
+  objects.forEach((object, index) => {
+    offsets.push(offset); const part = Buffer.concat([Buffer.from(`${index + 1} 0 obj\n`), object, Buffer.from("\nendobj\n")]); parts.push(part); offset += part.length;
+  });
+  parts.push(Buffer.from(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((n) => `${String(n).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${offset}\n%%EOF\n`));
+  return Buffer.concat(parts);
+}

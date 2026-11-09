@@ -283,6 +283,7 @@ const UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-
 // handing it back on a one-shot URL adds no capability (#3300). Registered
 // ABOVE /:token so the literal path is reachable (lint:route-shadowing).
 // AI-REACH: exempt — the same rendering detail, for the anonymous page.
+// REPLAY: a sixty-second render ticket the page spends at once; a second is another ticket, never a record
 publicRouter.post("/:token/frame-docs", (req, res, next) => {
   void (async () => {
     const tok = await resolveToken(String(req.params.token ?? ""));
@@ -794,6 +795,7 @@ publicRouter.get("/external-stop/:token", async (req, res, next) => {
 
 // AI-REACH: exempt: the recipient's own stop, from a link in an email, with
 // no account; there is nobody for the assistant to act for.
+// REPLAY: stops messages to the recipient; a repeat finds them stopped
 publicRouter.post("/external-stop/:token", async (req, res, next) => {
   try {
     const claim = readStopToken(req.params.token ?? "");
@@ -825,6 +827,7 @@ publicRouter.get("/external-reply/:token", async (req, res, next) => {
 const ReplyBody = z.object({ answer: z.enum(["got", "bought"]) });
 // AI-REACH: exempt: the answer of someone outside the workspace, from a link in
 // an email, with no account; there is nobody for the assistant to act for.
+// REPLAY: no session to keep an answer under; it sets the answer to one request, and a repeat sets the same
 publicRouter.post("/external-reply/:token", async (req, res, next) => {
   try {
     const body = ReplyBody.safeParse(req.body ?? {});

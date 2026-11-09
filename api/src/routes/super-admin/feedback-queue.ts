@@ -21,6 +21,7 @@ import { emailableUrl } from "../../platform/link-origin.js";
 import { notifyAccount } from "../../platform/notifications.js";
 import { productName } from "../../platform/product-name.js";
 import { deliverReporterReply, reflectFeedbackCard } from "./feedback-delivery.js";
+import { replayAccountWrite } from "../../platform/request-replays.js";
 
 export const feedbackQueueRouter = Router();
 
@@ -102,7 +103,7 @@ function feedbackStage(row: { status: string | null; admin_notes: string | null 
 // Gated by the same feedback:ingest scope the bot already holds.
 const ResolveByThread = z.object({ thread_id: z.string().min(1), by: z.string().max(120).optional() });
 // UI-REACH: the support bot closing a ticket from its thread
-feedbackQueueRouter.post("/resolve-by-thread", async (req, res, next) => {
+feedbackQueueRouter.post("/resolve-by-thread", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = ResolveByThread.safeParse(req.body);
     if (!parsed.success) {
@@ -273,7 +274,7 @@ const BatchResolveBody = z.object({
   notify_reporter: z.boolean().optional(),
 });
 
-feedbackQueueRouter.post("/batch-resolve", async (req, res, next) => {
+feedbackQueueRouter.post("/batch-resolve", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = BatchResolveBody.safeParse(req.body);
     if (!parsed.success) {

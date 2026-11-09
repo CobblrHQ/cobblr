@@ -39,6 +39,7 @@ interface InboundTokenRow {
   enabled: boolean;
 }
 
+// REPLAY: an outside service's webhook on its own token, with no person's session to keep an answer under
 integrationsInboundRouter.post(
   "/:connector/:token/webhook",
   async (req: Request, res: Response, next: NextFunction) => {

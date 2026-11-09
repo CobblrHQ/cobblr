@@ -50,6 +50,15 @@ function RowPicture({ item, size, eager, yours }: { item: ScanInboxItem; size: n
   );
 }
 
+/** Whether a part's card, as the page shows it now, is in use: focus is in it,
+ *  or one of its menus is open (its button says aria-expanded). Read while
+ *  rendering, before the card could be folded away under the person (#7404). */
+function cardInUse(id: string): boolean {
+  if (typeof document === "undefined") return false;
+  const card = document.getElementById(`scan-item-${id}`);
+  return !!card && (card.contains(document.activeElement) || !!card.querySelector('[aria-haspopup][aria-expanded="true"]'));
+}
+
 const phone = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 639.98px)").matches;
 
 export function SplitLineGroup({
@@ -287,9 +296,21 @@ export function SplitLineGroup({
         <div className="space-y-2 border-t border-line dark:border-slate-700 p-2 pl-3 sm:pl-6" data-testid="split-line-parts">
           {parts.map((p) => {
             const short = shortOf.get(p.id);
-            if (!short) return renderPart(p);
+            // One wrapper per part, its card always the wrapper's second child:
+            // a part that turns into a short row as its table arrives keeps the
+            // same card element, never a new one. Swapped, the card a person was
+            // using vanished under them, its open menu with it, and focus fell to
+            // the page (#7404). Focus inside a part's card (its menus too: React
+            // bubbles their focus through the portal) keeps that card open under
+            // its new short row.
             return (
-              <div key={p.id}>
+              <div
+                key={p.id}
+                onFocusCapture={() => {
+                  if (!short && opened !== p.id) setOpened(p.id);
+                }}
+              >
+                {short && (
                 <div className="flex items-center gap-2 py-0.5" data-testid="split-part-row" data-part-id={p.id}>
                   <RowPicture item={p} size={40} />
                   <div className="min-w-0 flex-1">
@@ -332,7 +353,8 @@ export function SplitLineGroup({
                     {opened === p.id ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
                   </button>
                 </div>
-                {opened === p.id && renderPart(p)}
+                )}
+                {(!short || opened === p.id || cardInUse(p.id)) && renderPart(p)}
               </div>
             );
           })}

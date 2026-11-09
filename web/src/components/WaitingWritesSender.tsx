@@ -10,21 +10,29 @@ import { browserOffline, keptByThisPage, useToast } from "@cobblr/platform-web";
 import { subscribeConnectivity } from "../lib/api";
 import { sendWaitingWritesNow } from "../lib/offline-writes";
 
+/** When the server stopped a run without saying how long to wait. */
+export const TRY_AGAIN_AFTER_SEC = 30;
+
 export function WaitingWritesSender() {
   const qc = useQueryClient();
   const toast = useToast();
   useEffect(() => {
     let sending = false;
+    let again: ReturnType<typeof setTimeout> | undefined;
     const send = async () => {
       if (sending || browserOffline()) return;
       sending = true;
+      clearTimeout(again);
       try {
-        const { landed, refused } = await sendWaitingWritesNow();
+        const { landed, refused, stoppedFor } = await sendWaitingWritesNow();
         if (landed) {
           toast.success(landed === 1 ? "Saved the change you made offline." : `Saved the ${landed} changes you made offline.`);
           void qc.invalidateQueries();
         }
         for (const { reason } of refused) toast.error(`A change you made offline was not saved: ${reason || "it was refused."}`);
+        // Busy, signed out or failing on its side: what is left waits, and is
+        // tried again by itself once the time the server asked for has passed (#9366).
+        if (stoppedFor) again = setTimeout(() => void send(), (stoppedFor.retryAfterSec ?? TRY_AGAIN_AFTER_SEC) * 1000);
       } finally {
         sending = false;
       }
@@ -42,6 +50,7 @@ export function WaitingWritesSender() {
     window.addEventListener("online", send);
     window.addEventListener("beforeunload", leaving);
     return () => {
+      clearTimeout(again);
       off();
       window.removeEventListener("online", send);
       window.removeEventListener("beforeunload", leaving);

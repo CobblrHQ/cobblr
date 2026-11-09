@@ -22,8 +22,8 @@ import { awaitBlockedAction, carriesOnItself, raiseBlockedAction, refusedRequest
 import { primedRead } from "./primed-reads";
 import { sharedRead } from "./shared-reads";
 import { networkFailureMessage } from "./network-failure";
-import { EDITED_FROM_HEADER } from "@cobblr/platform-contract/edited-from";
-import { browserOffline, keepWaitingWrite, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites } from "./waiting-writes";
+import { EDITED_FROM_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
+import { browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites } from "./waiting-writes";
 import { KEPT_OFFLINE, KEPT_SENTENCE } from "./network-failure";
 import { beginWrite, outcomeOf } from "./write-identity";
 
@@ -180,6 +180,9 @@ async function sendOnce(input: string | URL | Request, init: RequestInit | undef
   // A kept write sent again by a later page brings the key it was first sent with.
   if (!headers.has("Idempotency-Key")) headers.set("Idempotency-Key", write.key);
   keepAsSent?.(headers.get("Idempotency-Key")!);
+  // Sent past the person's own earlier edits of this record still kept (#9365).
+  const opened = keepAsSent && headers.has(EDITED_FROM_HEADER) ? keptEditedFrom(headers.get("Idempotency-Key")!) : undefined;
+  if (opened) headers.set(EDITED_FROM_HEADER, encodeEditedFrom(opened));
   try {
     const res = await send(input, { ...init, headers }, method);
     write.settle(outcomeOf(res.status, res.headers.get("retry-after")));

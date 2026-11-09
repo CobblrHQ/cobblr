@@ -15,8 +15,8 @@ const action: ModuleActionInput = {
   scope: "workspace" as const,
   argsSchema: {
     item_id: { label: "The scan", type: "text", required: true },
-    line_id: { label: "The inbox order line", type: "text" },
-    order_item_id: { label: "Or the purchase's line", type: "text" },
+    line_id: { label: "The inbox order line", type: "text", oneOf: "which-line" },
+    order_item_id: { label: "Or the purchase's line", type: "text", oneOf: "which-line" },
   },
   invokeHandler: "core-scan.fill-order-line",
   userInvokable: false,

@@ -178,8 +178,8 @@ export default defineModule({
         invokeHandler: "sales.add-line",
         argsSchema: {
           qty: { label: "How many", type: "number", required: true },
-          description: { label: "What is being sold", type: "text" },
-          part_id: { label: "Id of a tracked part (optional)", type: "text" },
+          description: { label: "What is being sold", type: "text", oneOf: "what-it-is" },
+          part_id: { label: "Id of a tracked part (optional)", type: "text", oneOf: "what-it-is" },
           unit_price: { label: "Price each (optional)", type: "number" },
         },
       },
@@ -476,9 +476,9 @@ export default defineModule({
         invokeHandler: "sales.change-line",
         argsSchema: {
           line: { label: "Which line (what it says, or its id)", type: "text" },
-          qty: { label: "How many", type: "number" },
-          unit_price: { label: "Price each", type: "number" },
-          description: { label: "What it says", type: "text" },
+          qty: { label: "How many", type: "number", oneOf: "change" },
+          unit_price: { label: "Price each", type: "number", oneOf: "change" },
+          description: { label: "What it says", type: "text", oneOf: "change" },
         },
       },
     ],

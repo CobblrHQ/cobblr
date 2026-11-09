@@ -111,6 +111,7 @@ export async function dispatchInbound(payload: InboundPayload, resolved?: { user
   };
 }
 
+// REPLAY: the email worker's relay on a shared secret, with no person's session to keep an answer under
 inboundEmailRouter.post("/inbound-email", async (req, res, next) => {
   try {
     if (!inboundSecretOk(req.headers["x-inbound-secret"])) {
@@ -154,6 +155,7 @@ inboundEmailRouter.get("/inbound-email/reprocessable", async (req, res, next) =>
 });
 
 /** Replay one archived message through the current pipeline. */
+// REPLAY: runs a stored message again, on purpose
 inboundEmailRouter.post("/inbound-email/:id/reprocess", async (req, res, next) => {
   try {
     if (!inboundSecretOk(req.headers["x-inbound-secret"])) {

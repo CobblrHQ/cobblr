@@ -677,6 +677,7 @@ export async function ingestReceiptEmail(
 
 export const receiptInboundRouter = Router();
 
+// REPLAY: the email worker's relay on a shared secret, with no person's session to keep an answer under
 receiptInboundRouter.post("/receipt-ingest/email", async (req, res, next) => {
   try {
     if (!inboundSecretOk(req.headers["x-inbound-secret"])) {

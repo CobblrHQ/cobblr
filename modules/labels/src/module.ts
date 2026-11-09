@@ -127,8 +127,8 @@ export default defineModule({
         userInvokable: true,
         argsSchema: {
           label: { label: "Which queued label (its caption; empty: the only one)", type: "text" },
-          qty: { label: "How many to print, 1 to 99", type: "number" },
-          caption: { label: "The caption printed on it", type: "text" },
+          qty: { label: "How many to print, 1 to 99", type: "number", oneOf: "change" },
+          caption: { label: "The caption printed on it", type: "text", oneOf: "change" },
         },
       },
       {

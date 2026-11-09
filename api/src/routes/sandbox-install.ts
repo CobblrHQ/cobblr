@@ -123,6 +123,7 @@ function auditTarballMembers(tmpTar: string): string | null {
 }
 
 // AI-REACH: running third-party module code is an operator's trust decision, made at the console
+// REPLAY: an operator installing one named module version; a repeat names the same version
 sandboxInstallRouter.post("/install", async (req, res, next) => {
   try {
     const parsed = InstallBody.safeParse(req.body);

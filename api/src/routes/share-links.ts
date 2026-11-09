@@ -49,6 +49,7 @@ import { listOffers, offerTargets, receivedOffer, sendBack, withdrawOffer } from
 import { ownConnections, receiveConnectedSend } from "../platform/record-send-connected.js";
 import { SendError, requireSendToken } from "../platform/record-send.js";
 import { kindHoldable, shareRefusal } from "../platform/kind-writer.js";
+import { replayAccountWrite } from "../platform/request-replays.js";
 
 export const shareLinksOrgRouter = Router();
 export const shareLinksRouter = Router();
@@ -167,6 +168,7 @@ const AcceptBody = z.object({ invite: z.string().min(8).max(4000), target_org: z
 
 // UI-REACH: /share/join (the invite page, before Accept)
 // AI-REACH: exempt — the invite page reads who is sharing before its person decides.
+// REPLAY: reads an invite and makes nothing
 shareLinksRouter.post("/share-links/preview", requireAuth, async (req, res, next) => {
   try {
     const body = AcceptBody.safeParse(req.body ?? {});
@@ -183,7 +185,7 @@ shareLinksRouter.post("/share-links/preview", requireAuth, async (req, res, next
 
 // UI-REACH: /share/join (the invite page)
 // AI-REACH: exempt — accepting an invite is the person's own act on their own Cobblr.
-shareLinksRouter.post("/share-links/accept", requireAuth, async (req, res, next) => {
+shareLinksRouter.post("/share-links/accept", requireAuth, replayAccountWrite, async (req, res, next) => {
   try {
     const body = AcceptBody.safeParse(req.body ?? {});
     if (!body.success) return bad(res, 400, "bad_body", "invite is required");
@@ -230,6 +232,7 @@ const ClaimBody = z.object({
 
 // AI-REACH: exempt — spoken by another Cobblr, never by a person or the assistant.
 // UI-REACH: spoken by another Cobblr
+// REPLAY: another Cobblr spending a one-time invite: a repeat finds it used
 shareLinksRouter.post("/share-links/claim", async (req, res, next) => {
   if (overLimit(inviteLimiter, req)) return void rateLimited(res);
   try {
@@ -247,6 +250,7 @@ shareLinksRouter.post("/share-links/claim", async (req, res, next) => {
 
 // AI-REACH: exempt — spoken by another Cobblr, signed with the share's key.
 // UI-REACH: spoken by another Cobblr
+// REPLAY: another Cobblr's signed call, with no person's session to keep an answer under
 shareLinksRouter.post("/share-links/:id/ops", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const raw = (req as unknown as { rawBody?: string }).rawBody;
@@ -265,6 +269,7 @@ shareLinksRouter.post("/share-links/:id/ops", async (req: Request, res: Response
 
 // AI-REACH: exempt — signed transport between the workspaces a person approved.
 // UI-REACH: spoken by another Cobblr
+// REPLAY: another Cobblr's signed call, with no person's session to keep an answer under
 shareLinksRouter.post("/share-links/:id/own-send", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const raw = (req as unknown as {rawBody?: string}).rawBody;
@@ -282,6 +287,7 @@ shareLinksRouter.post("/share-links/:id/own-send", async (req: Request, res: Res
 // link's key, and gets a read-only grant to look through it.
 // AI-REACH: exempt — spoken by another Cobblr, signed with the share's key.
 // UI-REACH: spoken by another Cobblr
+// REPLAY: a short-lived read-only grant for another Cobblr; a second is another grant, never a record
 shareLinksRouter.post("/share-links/:id/view", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const raw = (req as unknown as { rawBody?: string }).rawBody;
@@ -297,6 +303,7 @@ shareLinksRouter.post("/share-links/:id/view", async (req: Request, res: Respons
 
 // UI-REACH: the View as banner's Exit
 // AI-REACH: exempt — ends the read-only view a person opened; nothing for an assistant.
+// REPLAY: ends a view; a repeat finds it ended
 shareLinksRouter.post("/share-view/end", requireAuth, async (req, res, next) => {
   try {
     const view = req.session!.share_view;
@@ -310,6 +317,7 @@ shareLinksRouter.post("/share-view/end", requireAuth, async (req, res, next) => 
 
 // UI-REACH: the View as banner (renews quietly while the view is open)
 // AI-REACH: exempt — keeps a person's read-only view of their own share open; nothing for an assistant.
+// REPLAY: extends a view's lease; a repeat extends it again
 shareLinksRouter.post("/share-view/renew", requireAuth, async (req, res, next) => {
   try {
     const view = req.session!.share_view;

@@ -18,6 +18,7 @@ export const feedbackPublishRouter = Router({ mergeParams: true });
 // can resolve an item but can never post publicly or message a reporter for
 // the owner. Once: the claim below empties what is held, so a second press finds
 // nothing left to publish.
+// REPLAY: once: the claim empties what is held, so a repeat finds nothing to publish
 feedbackPublishRouter.post("/", async (req, res, next) => {
   try {
     if (callerIsAgent(req.session)) {

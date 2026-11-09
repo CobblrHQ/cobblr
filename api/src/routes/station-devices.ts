@@ -26,6 +26,7 @@ const pollLimiter = makeIpLimiter(60_000, 40);
 
 // AI-REACH: exempt, spoken by a tablet asking to become a station; a person approves it on their own screen.
 // UI-REACH: the station page's "Approve this screen" view (web/src/pages/StationPage.tsx)
+// REPLAY: a tablet asking to become a station, with no session to keep an answer under; a person approves it on their own screen
 stationPublicRouter.post("/requests", async (req, res, next) => {
   if (overLimit(askLimiter, req)) return void rateLimited(res);
   try {
@@ -57,6 +58,7 @@ stationPublicRouter.get("/requests/:id", async (req, res, next) => {
 const qrLimiter = makeIpLimiter(60_000, 10);
 // AI-REACH: exempt, spoken by a phone that opened a printed QR; the assistant has no label to hold.
 // UI-REACH: the station page opened from the kitchen QR (web/src/pages/StationPage.tsx)
+// REPLAY: a phone opening a printed label, with no session to keep an answer under
 stationPublicRouter.post("/qr/claim", async (req, res, next) => {
   if (overLimit(qrLimiter, req)) return void rateLimited(res);
   try {

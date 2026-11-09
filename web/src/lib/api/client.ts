@@ -6,10 +6,10 @@ import { getStationTokenOverride, noteStationTokenRefused } from "../station-tok
 import { sessionChanged, sessionIdentityOf } from "../session-identity";
 import { getImpersonationToken } from "../impersonation";
 import { forgetDashboardCopies } from "../../dashboard/device-copy";
-import { UploadError, beginWrite, isAWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
+import { UploadError, beginWrite, isAWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
 import { SHARE_VIEW_BLOCKED, SHARE_VIEW_READ_ONLY, shareViewPathAllowed } from "@cobblr/platform-contract/share-view";
-import { EDITED_FROM_HEADER } from "@cobblr/platform-contract/edited-from";
+import { EDITED_FROM_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { counted } from "../in-flight";
 import { AI_AVAILABILITY_WRITE } from "../ai-availability-keys";
@@ -353,6 +353,9 @@ async function sendRequest<T>(
   // lands, so a reload before its answer sends it again as the same write
   // instead of losing it without a word (#8638).
   const keeping = !!key && byAPerson && !impToken && !headers["x-cobblr-waited"] && keepWaitingWrite(method, path, bodyText, headers["Authorization"], headers[EDITED_FROM_HEADER], { key, orphan: !byAMutation, sending: true });
+  // Sent past the person's own earlier edits of this record still kept (#9365).
+  const opened = keeping && key && headers[EDITED_FROM_HEADER] ? keptEditedFrom(key) : undefined;
+  if (opened) headers[EDITED_FROM_HEADER] = encodeEditedFrom(opened);
 
   let res: Response;
   try {

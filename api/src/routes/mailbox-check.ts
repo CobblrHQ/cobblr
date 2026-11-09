@@ -46,6 +46,7 @@ const Start = z.object({
 
 // AI-REACH: exempt — it reads the person's own mailbox; an assistant never starts a read of somebody's mail.
 // UI-SCREEN: /me/connections
+// REPLAY: one running check per mailbox: a second press shows the one in progress
 mailboxCheckRouter.post("/me/mail-sources/:id/checks", requireAuth, async (req, res, next) => {
   try {
     const credentialId = await ownMailbox(req);
@@ -112,6 +113,7 @@ const Verdict = z.object({ is_order: z.boolean() });
 
 // AI-REACH: exempt — the person's own judgement of their own mail, which is what tunes the rules; an assistant's guess would teach them nothing.
 // UI-SCREEN: /me/connections
+// REPLAY: sets the person's verdict on one message; a repeat sets the same
 mailboxCheckRouter.post("/me/mail-sources/:id/checks/:check/items/:gmail/verdict", requireAuth, async (req, res, next) => {
   try {
     const checkId = await ownCheck(req);
@@ -141,6 +143,7 @@ mailboxCheckRouter.get("/me/mail-sources/:id/checks/:check/marked", requireAuth,
 
 // AI-REACH: exempt — stopping a read of the person's own mailbox is theirs.
 // UI-SCREEN: /me/connections
+// REPLAY: sets the check stopped; a repeat finds it stopped
 mailboxCheckRouter.post("/me/mail-sources/:id/checks/:check/stop", requireAuth, async (req, res, next) => {
   try {
     const checkId = await ownCheck(req);

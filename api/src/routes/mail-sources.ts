@@ -35,6 +35,7 @@ const StartBody = z.object({ org_id: z.string().uuid() });
 // AI-REACH: a consent screen the person has to click through themselves; an
 // assistant cannot grant access to somebody's mailbox.
 // UI-SCREEN: /me/connections
+// REPLAY: hands back a consent URL; nothing is made until the person consents
 mailSourcesRouter.post("/me/mail-sources/gmail/start", requireAuth, async (req, res, next) => {
   try {
     if (!googleOAuthConfigured()) {
@@ -167,6 +168,7 @@ mailSourcesRouter.get("/me/mail-sources", requireAuth, async (req, res, next) =>
 
 // AI-REACH: the person's own mailbox, read on their say-so; the sweep does
 // this on its own every five minutes and an assistant has no reason to.
+// REPLAY: reads the mailbox now, as the sweep does every five minutes
 mailSourcesRouter.post("/me/mail-sources/:id/sync", requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id ?? "";

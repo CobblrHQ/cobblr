@@ -134,7 +134,31 @@ async function blankPage(png: Uint8Array): Promise<boolean> {
 }
 /** What a read found written anywhere: a text layer, OCR'd words, or a page
  *  that is not blank. A document with nothing written on it is fully seen. */
-export interface Seen { written: boolean; layer?: boolean }
+export interface Seen { written: boolean; layer?: boolean; readerMissing?: boolean; unchecked?: string }
+
+/** Past this many pages a PDF is never OCR'd page by page (the cost), so it is
+ *  checked by code instead (#9360). */
+const LONG_PDF_PAGES = 50;
+/** A picture this many pixels or more is a page's worth: a scan, not a
+ *  pattern's step photo (a 150 dpi letter scan is about 2.1 million). */
+const LARGE_RASTER_PX = 1_000_000;
+
+/** Why a long PDF cannot be checked by code, or null when it can: every page
+ *  has a text layer and no page past the second carries a large picture. A
+ *  tiled print-at-home pattern is vectors and text; a scanned ID or statement
+ *  is a picture (the owner's rule on #9360). */
+async function longPdfUnchecked(path: string, pages: number): Promise<string | null> {
+  const list = (await run("pdfimages", ["-list", "-f", "3", "-l", String(pages), path], { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 })).stdout;
+  for (const line of list.split("\n").slice(2)) {
+    const [page, , type, width, height] = line.trim().split(/\s+/);
+    if (type === "image" && Number(page) >= 3 && Number(width) * Number(height) >= LARGE_RASTER_PX) return `page ${Number(page)} is a picture I can't check`;
+  }
+  for (let page = 1; page <= pages; page++) {
+    const own = (await run("pdftotext", ["-f", String(page), "-l", String(page), "-enc", "UTF-8", path, "-"], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 })).stdout;
+    if (!own.trim()) return `page ${page} has no text I can check`;
+  }
+  return null;
+}
 export async function personalDocumentText(input: DocumentInput, incomplete: () => void = () => {}, onPage?: (bytes: Uint8Array) => void, seen: Seen = { written: false }): Promise<string> {
   if (input.mime === "application/pdf" || Buffer.from(input.bytes.subarray(0, 5)).toString() === "%PDF-") {
     if (!input.path) {
@@ -155,7 +179,19 @@ export async function personalDocumentText(input: DocumentInput, incomplete: () 
         layer += `\n${(await run("pdfinfo", ["-meta", input.path], { timeout: 10_000, maxBuffer: 64 * 1024 })).stdout}`;
       }
       const pages = Number([...info.stdout.matchAll(/^Pages:\s+(\d+)\s*$/gm)].at(-1)?.[1]);
-      if (!pages || pages > 50) { incomplete(); return layer; }
+      if (!pages) { incomplete(); return layer; }
+      if (pages > LONG_PDF_PAGES) {
+        // The Vault is the person's own read and keeps the old stop. A read that
+        // renders its pages (an assisted read) keeps it too, but still says which
+        // page could not be checked: a shared door reads a refused file again
+        // with assistance, and that second read is the one it shows (#9360).
+        const why = input.vault ? "" : await longPdfUnchecked(input.path, pages);
+        if (why !== null || onPage) {
+          if (why) seen.unchecked = why;
+          incomplete();
+          return layer;
+        }
+      }
       const text = [layer];
       // Ordinary typed documents sample the first two pages' pictures so a
       // long illustrated pattern does not OCR every step's photo. Text and
@@ -184,7 +220,13 @@ export async function personalDocumentText(input: DocumentInput, incomplete: () 
       }
       text.push(...(await readPictures(pending, new Set())));
       return text.join("\n");
-    } catch { incomplete(); return layer; }
+    } catch (err) {
+      // No PDF reader on this server: nothing was read, which is not the
+      // same as something personal being found (#9356).
+      if ((err as { code?: unknown } | null)?.code === "ENOENT") seen.readerMissing = true;
+      incomplete();
+      return layer;
+    }
   }
   if (input.mime.startsWith("image/")) return (await ocrImageText(input.bytes, { private: true }))?.text || "";
   if (/^text\//.test(input.mime)) return new TextDecoder().decode(input.bytes);
@@ -446,10 +488,18 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
     sources, missing,
     // Still refused: a script or a text element can't be checked the way plain shapes can (decision 40397 on #5243).
     ...(raw && privacy === "personal" && !forcePersonal && !personalIn(raw) && !personalIn(text) ? { uncheckable: "This SVG holds more than plain shapes, such as text, a link or a script, so it could not be checked here. It has not been saved to shared Files. Save it as a PNG or a PDF to upload it." } : {}),
+    // Still refused: a PDF nothing could read is unchecked, not found personal.
+    // Called a personal document, a sewing pattern looked judged (#9356).
+    ...(pdf && seen.readerMissing && !input.vault && privacy === "personal" && !personalIn(text) ? { uncheckable: PDF_READER_MISSING } : {}),
+    // Still refused: a long PDF with a page code cannot check says which (#9360).
+    ...(pdf && seen.unchecked && !seen.readerMissing && !input.vault && privacy === "personal" && !personalIn(text) ? { uncheckable: `This PDF was not checked: ${seen.unchecked}. It has not been saved to shared Files.` } : {}),
     message: privacy === "normal" ? "This is an ordinary document." : missing.length
       ? `${readWhere(sentTo)} Please check ${missing.join(", ")}; they could not be read.${needsLocalConnection ? " Connect a local AI in Configuration, AI to help with the missing fields." : ""}${sentNote(sentTo)}`
       : `${readWhere(sentTo)} Check these values before using them.${sentNote(sentTo)}` };
 }
+
+/** A shared door's refusal when this server has no PDF reader (poppler). */
+export const PDF_READER_MISSING = "This PDF could not be read on this server, because its PDF reader is not installed, so it was not checked. It has not been saved to shared Files. Whoever runs this server can install poppler-utils.";
 
 /** Where a personal document was read, in the words the card shows. */
 function readWhere(sentTo: string | null): string {

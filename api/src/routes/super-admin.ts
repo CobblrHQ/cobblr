@@ -72,6 +72,7 @@ import { recentViolations } from "../platform/csp-reports.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { replayAccountWrite } from "../platform/request-replays.js";
 
 export const superAdminRouter = Router();
 
@@ -214,7 +215,7 @@ const DemoBody = z.object({
   unlock: z.array(z.string().min(1)).max(50).optional(),
   blueprint: BlueprintManifest.optional(),
 });
-superAdminRouter.post("/demos", async (req, res, next) => {
+superAdminRouter.post("/demos", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = DemoBody.safeParse(req.body);
     if (!parsed.success) {
@@ -374,6 +375,7 @@ superAdminRouter.delete("/workspaces/:id", async (req, res, next) => {
 // automatically is a separate decision from being able to move one safely.
 // Body: { org_slug, instance }.
 // UI-REACH: operator migration repair for a specifically reviewed instance, not a tenant operation; preserves the scriptable repair door.
+// REPLAY: an operator's repair that moves an instance once; a repeat finds it moved
 superAdminRouter.post("/rehome-instance", async (req, res, next) => {
   try {
     const { org_slug, instance } = (req.body ?? {}) as { org_slug?: string; instance?: string };
@@ -497,9 +499,11 @@ superAdminRouter.get("/barcode-corrections", async (req, res) => {
   await resolverReview("GET", `/proposed?limit=${limit}`, null, res);
 });
 // POST /super-admin/barcode-corrections/:id/verify|reject — approve / reject.
+// REPLAY: sets a correction's verdict; a repeat sets the same
 superAdminRouter.post("/barcode-corrections/:id/verify", async (req, res) => {
   await resolverReview("POST", "/verify", { id: String(req.params.id) }, res);
 });
+// REPLAY: sets a correction's verdict; a repeat sets the same
 superAdminRouter.post("/barcode-corrections/:id/reject", async (req, res) => {
   await resolverReview("POST", "/reject", { id: String(req.params.id) }, res);
 });
@@ -1048,6 +1052,7 @@ function inviteStatus(r: { consumed_at: Date | null; revoked_at: Date | null; ex
 
 // POST /super-admin/signup-invites — mint one. Returns the token (shown once
 // in the link; we don't display it again after).
+// REPLAY: its answer carries the invite's token, a credential a kept answer would store; a second invite is listed and can be revoked
 superAdminRouter.post("/signup-invites", async (req, res, next) => {
   try {
     const parsed = MintInvite.safeParse(req.body);
@@ -1133,6 +1138,7 @@ superAdminRouter.get("/signup-invites", async (_req, res, next) => {
 });
 
 // POST /super-admin/signup-invites/:id/revoke — kill an unused invite.
+// REPLAY: revokes an unused invite; a repeat finds it revoked
 superAdminRouter.post("/signup-invites/:id/revoke", async (req, res, next) => {
   try {
     const updated = await meta
@@ -1174,6 +1180,7 @@ const IngestWaitlist = z.object({
 // signup for an email that's already pending (or already invited) is a 200
 // no-op, so the marketing form can't create duplicates.
 // UI-REACH: the marketing site's waitlist form, server to server
+// REPLAY: a second sign-up for a pending address is a no-op
 superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
   try {
     const parsed = IngestWaitlist.safeParse(req.body);
@@ -1315,6 +1322,7 @@ const ApproveWaitlist = z.object({
 // POST /super-admin/waitlist/:id/approve — mint a signup_invite locked to the
 // signup's email (emailed automatically when a sender is registered) and mark
 // the row invited. Same invite mechanics as /signup-invites.
+// REPLAY: approves a pending row only: a repeat finds it invited
 superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
   try {
     const parsed = ApproveWaitlist.safeParse(req.body ?? {});
@@ -1407,6 +1415,7 @@ superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
 });
 
 // POST /super-admin/waitlist/:id/dismiss — decline without inviting.
+// REPLAY: dismisses a pending row only: a repeat finds it dismissed
 superAdminRouter.post("/waitlist/:id/dismiss", async (req, res, next) => {
   try {
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
@@ -1653,6 +1662,7 @@ superAdminRouter.get("/barcode-cache", async (req, res, next) => {
 // POST /super-admin/feedback/:id/announce — "Post to Discord": the card of an
 // item that has none (filed while Discord was off, or its post failed). One
 // card per item: 409 while it has one. The feedback:triage token may call it.
+// REPLAY: one card per item: a repeat is refused while it has one
 superAdminRouter.post("/feedback/:id/announce", async (req, res, next) => {
   try {
     const r = await postCardForStoredFeedback(String(req.params.id));
@@ -1826,7 +1836,7 @@ const IngestFeedback = z.object({
   }),
 });
 // UI-REACH: the support bot filing a ticket
-superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
+superAdminRouter.post("/feedback/ingest", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = IngestFeedback.safeParse(req.body);
     if (!parsed.success) {
@@ -1941,7 +1951,7 @@ const AppendFeedback = z.object({
     .default([]),
 });
 // UI-REACH: the support bot adding a reply to a ticket
-superAdminRouter.post("/feedback/append", async (req, res, next) => {
+superAdminRouter.post("/feedback/append", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = AppendFeedback.safeParse(req.body);
     if (!parsed.success) {
@@ -2031,7 +2041,7 @@ const AppendDm = z.object({
   skip_triage: z.boolean().optional().default(false),
 });
 // UI-REACH: the support bot adding a DM to a ticket
-superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
+superAdminRouter.post("/feedback/append-dm", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = AppendDm.safeParse(req.body);
     if (!parsed.success || (!parsed.data.text && parsed.data.images.length === 0)) {
@@ -2328,7 +2338,7 @@ const ComposeAnnounce = z.object({
   body: z.string().max(3500).optional(),
 });
 
-superAdminRouter.post("/announce", async (req, res, next) => {
+superAdminRouter.post("/announce", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = ComposeAnnounce.safeParse(req.body);
     if (!parsed.success) {
@@ -2377,6 +2387,7 @@ const StartImpersonation = z.object({
 // POST /super-admin/impersonations — mint a session + token (read-only).
 // The mint rules live in platform/impersonation.ts, shared with the deploy-box
 // door (scripts/view-as.sh → cli/view-as.js), so the two cannot drift.
+// REPLAY: its answer is a session token, which a kept answer would store; each start is its own audited, read-only session
 superAdminRouter.post("/impersonations", async (req, res, next) => {
   try {
     const parsed = StartImpersonation.safeParse(req.body);
@@ -2530,7 +2541,7 @@ const NoticeBody = z.object({
   link_url: optionalText(500),
 });
 
-superAdminRouter.post("/notices", async (req, res, next) => {
+superAdminRouter.post("/notices", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = NoticeBody.safeParse(req.body);
     if (!parsed.success) {
@@ -2721,7 +2732,7 @@ const ScanEvalBody = z.discriminatedUnion("surface", [
 ]);
 
 // UI-REACH: fixture-driven prompt scoring for the eval harness; no workspace write or interactive scan, which uses the scanner.
-superAdminRouter.post("/scan-eval", async (req, res, next) => {
+superAdminRouter.post("/scan-eval", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = ScanEvalBody.safeParse(req.body);
     if (!parsed.success) {
@@ -2889,7 +2900,7 @@ const AuthoringEvalBody = z.object({
 });
 
 // UI-REACH: fixture-driven compiler scoring for the eval harness; interactive authoring uses drafts and their validation gate.
-superAdminRouter.post("/authoring-eval", async (req, res, next) => {
+superAdminRouter.post("/authoring-eval", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = AuthoringEvalBody.safeParse(req.body);
     if (!parsed.success) {

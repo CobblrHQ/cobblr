@@ -9,7 +9,9 @@
 //     Home and End go to the first and the last. Tab moves the same way, so
 //     focus stays in the menu until it closes.
 //   - Closing (Escape, a choice, a press outside) puts focus back on the
-//     button that opened it, when focus was in the menu or nowhere.
+//     button that opened it, when focus was in the menu or nowhere. A button
+//     the page redrew while the menu was open is found again by its name in
+//     the same holder (#7404); focus never falls to the page for that.
 //
 // Escape itself is useEscapeToClose's: the menu passes its own close to it.
 // lint:menus-take-the-keyboard holds every role="menu" to this hook.
@@ -29,13 +31,34 @@ export function menuChoices(menu: HTMLElement): HTMLElement[] {
   return all.filter((el) => el.getAttribute("aria-disabled") !== "true" && !(el as HTMLButtonElement).disabled && !el.closest("[inert],[hidden]") && (el.checkVisibility?.() ?? true));
 }
 
+/** The button that replaced a menu's button while the menu was open: the one
+ *  of the same name in the same holder (a row re-drawn under the menu), else
+ *  that holder itself when it can take focus. Null when neither is on the
+ *  page, and focus is left where it is. */
+export function replacementOf(place: { label: string | null; holder: string | null } | null): HTMLElement | null {
+  if (!place?.holder || typeof document === "undefined") return null;
+  const holder = document.getElementById(place.holder);
+  if (!holder) return null;
+  if (place.label) {
+    const same = [...holder.querySelectorAll<HTMLElement>("[aria-label]")].find((b) => b.getAttribute("aria-label") === place.label);
+    if (same) return same;
+  }
+  return holder.tabIndex >= 0 ? holder : null;
+}
+
 /** While `open`, the menu in `menu` takes the keyboard (see above). */
 export function useMenuFocus(open: boolean, menu: RefObject<HTMLElement | null>): void {
   // Who had focus when the menu opened, read while rendering it open: by the
   // effect, focus may already be inside it.
   const opener = useRef<HTMLElement | null>(null);
+  // How to find the button again if the page replaces it while the menu is
+  // open: its name, inside the nearest holder with an id (#7404).
+  const openerPlace = useRef<{ label: string | null; holder: string | null } | null>(null);
   const wasOpen = useRef(false);
-  if (open && !wasOpen.current && typeof document !== "undefined") opener.current = document.activeElement as HTMLElement | null;
+  if (open && !wasOpen.current && typeof document !== "undefined") {
+    opener.current = document.activeElement as HTMLElement | null;
+    openerPlace.current = opener.current ? { label: opener.current.getAttribute("aria-label"), holder: opener.current.closest("[id]")?.id ?? null } : null;
+  }
   wasOpen.current = open;
 
   useEffect(() => {
@@ -71,10 +94,10 @@ export function useMenuFocus(open: boolean, menu: RefObject<HTMLElement | null>)
     return () => {
       cancelAnimationFrame(frame);
       el?.removeEventListener("keydown", onKey);
-      const back = opener.current;
+      const back = opener.current?.isConnected ? opener.current : replacementOf(openerPlace.current);
       const active = document.activeElement;
       // Back to the button, unless the person has already moved elsewhere.
-      if (back?.isConnected && (!active || active === document.body || (el && el.contains(active)) || !active.isConnected)) back.focus();
+      if (back && (!active || active === document.body || (el && el.contains(active)) || !active.isConnected)) back.focus();
     };
   }, [open, menu]);
 }

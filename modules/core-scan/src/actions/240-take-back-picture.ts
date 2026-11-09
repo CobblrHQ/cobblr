@@ -14,8 +14,8 @@ const action: ModuleActionInput = {
   invokeHandler: "core-scan.take-back-picture",
   userInvokable: true,
   argsSchema: {
-    item_id: { label: "The scan in the inbox", type: "text" },
-    file_id: { label: "The picture's file, when it has no scan yet", type: "text" },
+    item_id: { label: "The scan in the inbox", type: "text", oneOf: "which-picture" },
+    file_id: { label: "The picture's file, when it has no scan yet", type: "text", oneOf: "which-picture" },
   },
 };
 

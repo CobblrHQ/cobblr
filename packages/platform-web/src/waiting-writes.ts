@@ -152,9 +152,9 @@ export function browserOffline(): boolean {
 
 /** Keep a write the browser could not send because it is offline. `body` is
  *  the request's body as JSON text, or undefined; anything else (a file, a
- *  form) cannot be kept, and leaving the page then asks first. Two edits of
- *  one record fold into one, the later value winning, as they would have
- *  landed. Says whether it was kept. */
+ *  form) cannot be kept, and leaving the page then asks first. Two keyless
+ *  edits of one record fold into one, the later value winning, as they would
+ *  have landed; edits with keys wait one by one. Says whether it was kept. */
 export function keepWaitingWrite(method: string, path: string, body: BodyInit | null | undefined, authorization: string | null | undefined, editedFromHeader?: string | null, opts: { key?: string; orphan?: boolean; sending?: boolean } = {}): boolean {
   const m = method.toUpperCase();
   if (!WRITES.has(m) || (m === "POST" && ASKS.test(path))) return false;
@@ -167,9 +167,9 @@ export function keepWaitingWrite(method: string, path: string, body: BodyInit | 
       return false;
     }
   }
-  const editedFrom = decodeEditedFrom(editedFromHeader) ?? undefined;
   const who = writerOf(authorization);
   const list = read();
+  const editedFrom = pastOwnWrites(list, who, path, decodeEditedFrom(editedFromHeader) ?? undefined, opts.key);
   if (opts.sending) {
     // Kept as it is sent, under the request's own key, so a reload before
     // its answer sends it again as the same write (#8638). Sent again from
@@ -188,9 +188,40 @@ export function keepWaitingWrite(method: string, path: string, body: BodyInit | 
   return waitIn(list, { method: m, path, ...(parsed === undefined ? {} : { body: parsed }), ...(editedFrom ? { editedFrom } : {}), who, page: PAGE, at: new Date().toISOString(), ...(opts.key ? { key: opts.key } : {}), ...(opts.orphan ? { orphan: true } : {}) });
 }
 
-/** Put a write among those waiting: two edits of one record fold into one,
- *  the later value winning, as they would have landed; a create waits with
- *  its own key. Says whether it was kept. */
+/** What a form opened with, moved past the person's own writes of that record
+ *  still kept before it: a field an earlier one sets reads as that write's
+ *  value. Every edit from one form carries what it opened with, so once the
+ *  first edit landed (its answer lost, sent from the store after a reload) the
+ *  next met the person's own change at the server and was refused as someone
+ *  else's (#9365). Another person's change still refuses it. */
+function pastOwnWrites(list: WaitingWrite[], who: string, path: string, opened: EditedFrom | undefined, key?: string): EditedFrom | undefined {
+  if (!opened) return opened;
+  const out: EditedFrom = { ...opened };
+  for (const e of list) {
+    // The write itself, kept already (sent again, or by a later page): only what came before it counts.
+    if (key && e.key === key) break;
+    if (e.who !== who || e.path !== path || (e.method !== "PATCH" && e.method !== "PUT") || !isRecord(e.body)) continue;
+    for (const field of Object.keys(out)) {
+      if (field === "metadata") {
+        const set = e.body.metadata;
+        if (isRecord(out.metadata) && isRecord(set)) out.metadata = { ...out.metadata, ...Object.fromEntries(Object.keys(out.metadata).filter((k) => k in set).map((k) => [k, set[k]])) };
+      } else if (field in e.body) {
+        out[field] = e.body[field];
+      }
+    }
+  }
+  return out;
+}
+
+/** What a write kept as it was sent, from this page, says its form opened
+ *  with: the header it goes with, past the person's earlier kept writes. */
+export function keptEditedFrom(key: string): EditedFrom | undefined {
+  return read().find((w) => w.page === PAGE && w.key === key)?.editedFrom;
+}
+
+/** Put a write among those waiting: two edits of one record without keys fold
+ *  into one, the later value winning, as they would have landed; a write with a
+ *  key waits as it was made, under that key. Says whether it was kept. */
 function waitIn(list: WaitingWrite[], w: WaitingWrite): boolean {
   const { method: m, path, who, editedFrom } = w;
   const parsed = w.body;
@@ -201,7 +232,11 @@ function waitIn(list: WaitingWrite[], w: WaitingWrite): boolean {
   if (m === "POST") {
     // The request's own key, so the same create pressed again is one create (#8637).
     list.push({ ...w, key: w.key ?? randomId() });
-  } else if (prior && m === "PATCH" && prior.method === "PATCH" && isRecord(prior.body) && isRecord(parsed)) {
+  } else if (prior && m === "PATCH" && prior.method === "PATCH" && !prior.key && !w.key && isRecord(prior.body) && isRecord(parsed)) {
+    // Only keyless edits fold. A key may already have reached the server with
+    // the first edit's body (saved, its answer lost; or another tab sent it),
+    // and the server refuses that key with any other body: the folded write was
+    // refused and the second edit dropped. Each keyed edit is sent as it was made.
     const body = { ...prior.body, ...parsed };
     if (isRecord(prior.body.metadata) && isRecord(parsed.metadata)) {
       // Keep null deletion markers until the server applies the combined patch.
@@ -382,17 +417,18 @@ export type SendOutcome = "landed" | "refused" | "unreachable";
 
 /** Send what an earlier page left waiting, oldest first, through `send`. A
  *  refusal (the record went, a rule says no) is dropped and reported, so it
- *  never waits forever; an unreachable server stops the run, and the rest
- *  wait for the next one. */
+ *  never waits forever; an answer that is not about the change (unreachable,
+ *  busy, signed out) stops the run, the rest wait, and `stoppedFor` says how
+ *  long the server asked to wait, when it said (#9366). */
 export async function sendWaitingWrites(
   authorization: string | null | undefined,
-  send: (w: WaitingWrite) => Promise<{ outcome: SendOutcome; reason?: string }>,
-): Promise<{ landed: number; refused: Array<{ write: WaitingWrite; reason: string }> }> {
+  send: (w: WaitingWrite) => Promise<{ outcome: SendOutcome; reason?: string; retryAfterSec?: number | null }>,
+): Promise<{ landed: number; refused: Array<{ write: WaitingWrite; reason: string }>; stoppedFor?: { retryAfterSec: number | null } }> {
   const refused: Array<{ write: WaitingWrite; reason: string }> = [];
   let landed = 0;
   for (const w of waitingWritesToSend(authorization)) {
-    const { outcome, reason } = await send(w);
-    if (outcome === "unreachable") break;
+    const { outcome, reason, retryAfterSec } = await send(w);
+    if (outcome === "unreachable") return { landed, refused, stoppedFor: { retryAfterSec: retryAfterSec ?? null } };
     const list = read();
     const i = list.findIndex((x) => x.page === w.page && x.at === w.at && x.method === w.method && x.path === w.path);
     if (i >= 0) list.splice(i, 1);

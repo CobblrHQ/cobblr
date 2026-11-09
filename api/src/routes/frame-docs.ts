@@ -32,6 +32,7 @@ export const FrameDocBody = z.object({
 // looking at. There is nothing here an assistant could want that it cannot get
 // from the app or the file itself, and the ticket it would mint is spent by
 // the browser a second later.
+// REPLAY: a sixty-second render ticket the browser spends at once; a second is another ticket, never a record
 frameDocsRouter.post("/frame-docs", requireAuth, (req, res) => {
   const parsed = FrameDocBody.safeParse(req.body);
   if (!parsed.success) {

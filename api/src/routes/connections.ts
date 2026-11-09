@@ -37,6 +37,7 @@ import {
   type CredentialRoute,
 } from "../platform/user-credentials.js";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { replayAccountWrite } from "../platform/request-replays.js";
 
 export const connectionsRouter = Router();
 export const workspaceAiSharesRouter = Router({ mergeParams: true });
@@ -244,6 +245,7 @@ connectionsRouter.get("/me/connections/catalogue", requireAuth, (_req, res) => {
 // carries the provider's model list, because for an OpenAI-compatible provider
 // "is this key good" IS a model-list request, and the list is what lets the form
 // offer a dropdown instead of asking for an exact model name.
+// REPLAY: probes a key and keeps nothing
 connectionsRouter.post("/me/connections/test", requireAuth, async (req, res) => {
   const Body = z.object({
     provider_id: z.string().min(1).max(80),
@@ -266,6 +268,7 @@ connectionsRouter.post("/me/connections/test", requireAuth, async (req, res) => 
 // What a connection would be, before it is saved: a service's name, version
 // and capabilities read from its manifest, or the field its manifest gets
 // wrong. Nothing is stored. Only for a kind that prepares its connection.
+// REPLAY: nothing is stored
 connectionsRouter.post("/me/connections/preview", requireAuth, async (req, res, next) => {
   try {
     const Body = z.object({ provider_id: z.string().min(1).max(80), credentials: z.record(z.unknown()) });
@@ -309,7 +312,7 @@ connectionsRouter.get("/me/connections", requireAuth, async (req, res, next) => 
   }
 });
 
-connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) => {
+connectionsRouter.post("/me/connections", requireAuth, replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) {
@@ -460,6 +463,7 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
 // The Test button: the same probe as a save, on the stored key nobody can
 // read back, and the verdict replaces the row's verification. It always
 // probes, key or no key: a bridge has none.
+// REPLAY: probes the stored key; a repeat replaces the verdict with a fresh one
 connectionsRouter.post("/me/connections/:id/test", requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -508,6 +512,7 @@ connectionsRouter.delete("/me/connections/:id", requireAuth, async (req, res, ne
 // answer was "whichever I edited last", which changed when I touched the OTHER
 // one for an unrelated reason. `capability` narrows the order to one kind of
 // work; omit it for the workspace's general order.
+// REPLAY: sets the order; a repeat sets the same order
 connectionsRouter.post("/me/connections/order", requireAuth, async (req, res, next) => {
   try {
     const body = z

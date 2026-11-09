@@ -41,7 +41,7 @@ import { confirmServiceJob, registerServiceConfirm } from "./platform/service-co
 import { registerServiceSupervisor } from "./platform/service-supervisor.js";
 import { openServicesTestDoors } from "./platform/services-test-doors.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
-import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, KindRefRegex, isInstallHolder, countOf } from "@cobblr/platform-contract";
+import { type ActionUndoStep, setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, KindRefRegex, isInstallHolder, countOf } from "@cobblr/platform-contract";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
 import { atVersion, mergeJsonb, rowVersion } from "./platform/jsonb-merge.js";
 import { selfFetch, setSelfHandler } from "./platform/self-fetch.js";
@@ -105,7 +105,7 @@ import * as entities from "./platform/entities.js";
 import * as counters from "./platform/counters.js";
 import * as deletedRecords from "./platform/deleted-records.js";
 import * as dispositions from "./platform/dispositions.js";
-import { registerIssuedUndosSweep } from "./platform/issued-undos.js";
+import { issueUndos, registerIssuedUndosSweep } from "./platform/issued-undos.js";
 import { registerTraceSweep } from "./platform/activity-trace.js";
 import { changeWithHistory } from "./platform/activity-outbox.js";
 import { registerTenantMigrationsCatchUp } from "./platform/tenant-migrations-catch-up.js";
@@ -582,6 +582,12 @@ async function boot() {
       firstWhereApplies: actions.firstWhereApplies,
       invoke: actions.invoke,
       undoFor: actions.undoFor,
+      issueUndos: async (orgId: string, userId: string, steps: readonly ActionUndoStep[]) => {
+        // Only an action step is pressed through the door; a tool step is the client's own.
+        const pressed = steps.flatMap((s) => ("action_id" in s ? [s] : []));
+        const ids = await issueUndos(orgId, userId, pressed);
+        return steps.map((s) => ("action_id" in s ? { ...s, undo_id: ids[pressed.indexOf(s)] } : s));
+      },
       argChoices: argChoicesFor,
     },
     live: {

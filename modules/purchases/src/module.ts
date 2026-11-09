@@ -259,10 +259,10 @@ export default defineModule({
         invokeHandler: "purchases.add-line",
         argsSchema: {
           qty: { label: "How many", type: "number", required: true },
-          description: { label: "What it is", type: "text" },
-          part_id: { label: "Id of a tracked part (optional)", type: "text" },
-          for_kind: { label: "Kind of the record it bought (optional)", type: "text" },
-          for_id: { label: "Id of the record it bought (optional)", type: "text" },
+          description: { label: "What it is", type: "text", oneOf: "what-it-is" },
+          part_id: { label: "Id of a tracked part (optional)", type: "text", oneOf: "what-it-is" },
+          for_kind: { label: "Kind of the record it bought (optional)", type: "text", with: "for_id" },
+          for_id: { label: "Id of the record it bought (optional)", type: "text", oneOf: "what-it-is", with: "for_kind" },
           unit_cost: { label: "Cost each (optional)", type: "number" },
           add_to_stock: { label: "On an order that already arrived, add this line to stock (default: the order's choice, normally yes)", type: "boolean" },
         },
@@ -307,9 +307,9 @@ export default defineModule({
         invokeHandler: "purchases.edit-line",
         argsSchema: {
           line_id: { label: "Which line", type: "text", required: true },
-          description: { label: "What it is", type: "text" },
-          qty: { label: "How many", type: "number" },
-          unit_cost: { label: "Cost each", type: "number" },
+          description: { label: "What it is", type: "text", oneOf: "change" },
+          qty: { label: "How many", type: "number", oneOf: "change" },
+          unit_cost: { label: "Cost each", type: "number", oneOf: "change" },
         },
       },
       {

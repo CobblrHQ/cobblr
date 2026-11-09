@@ -35,8 +35,10 @@ const findings: string[] = [];
 
 // ── 1. the strip is not gated on the row existing ────────────────────────
 const sheet = read(SHEET);
-const STRIP = 'flex items-center gap-1.5';
-const stripAt = sheet.indexOf(STRIP);
+// The strip's row says so itself, so a change of its classes never loses it.
+const STRIP = 'data-photo-strip';
+// Where the element opens, its "<", so what stands before it is what gates it.
+const stripAt = sheet.indexOf(STRIP) < 0 ? -1 : sheet.lastIndexOf("<", sheet.indexOf(STRIP));
 if (stripAt < 0) {
   findings.push(
     `  ${SHEET}  the photo strip container was not found — this lint is keyed to it.\n` +

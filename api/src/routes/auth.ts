@@ -435,6 +435,7 @@ authRouter.get("/config", async (req, res) => {
 // /magic/consume; platform admins mint new accounts via
 // /super-admin/users.
 
+// REPLAY: no session to keep an answer under; a second sign-up for the address is refused as taken
 authRouter.post("/signup", async (req, res, next) => {
   try {
     if (overLimit(signupLimiter, req)) return rateLimited(res);
@@ -740,6 +741,7 @@ const ACCOUNT_LOCKED = {
   },
 } as const;
 
+// REPLAY: signs in and makes no record: a repeat is one more session
 authRouter.post("/login", async (req, res, next) => {
   try {
     if (overLimit(loginLimiter, req)) return rateLimited(res);
@@ -988,6 +990,7 @@ async function adoptOrProvisionIdentity(
 // hand-off (#3276).
 const IdentityDeletedBody = z.object({ identity_id: z.string().uuid(), secret: z.string().min(1) });
 // UI-REACH: the identity service telling this instance an account is gone, server to server
+// REPLAY: the identity service's own call; an account removed twice is removed once
 authRouter.post("/identity/deleted", async (req, res, next) => {
   try {
     if (!identityCallbackEnabled()) {
@@ -1095,6 +1098,7 @@ const IdentitySignupBody = z.object({
   accept_terms: z.boolean().optional(),
 });
 
+// REPLAY: no session to keep an answer under; a second sign-up for the address is refused as taken
 authRouter.post("/identity/signup", async (req, res, next) => {
   try {
     if (!signupOnPageEnabled()) {
@@ -1140,6 +1144,7 @@ authRouter.post("/identity/signup", async (req, res, next) => {
   }
 });
 
+// REPLAY: signs in and makes no record: a repeat is one more session
 authRouter.post("/identity/callback", async (req, res, next) => {
   try {
     if (!identityCallbackEnabled()) {
@@ -1168,6 +1173,7 @@ authRouter.post("/identity/callback", async (req, res, next) => {
 });
 
 // UI-REACH: token exchange for identity clients; browser sign-in uses /identity/callback.
+// REPLAY: signs in and makes no record: a repeat is one more session
 authRouter.post("/identity/exchange", async (req, res, next) => {
   try {
     if (!identityEnabled()) {
@@ -1275,6 +1281,7 @@ const MagicRequest = z.object({
   display_name: readableNameField(120).optional(),
 });
 
+// REPLAY: sends a sign-in link; asking again sends another, as asked
 authRouter.post("/magic/request", async (req, res, next) => {
   try {
     if (overLimit(magicRequestLimiter, req)) return rateLimited(res);
@@ -1378,6 +1385,7 @@ const MagicConsume = z.object({
   token: z.string().min(8).max(200),
 });
 
+// REPLAY: spends a one-time link: a repeat finds it spent
 authRouter.post("/magic/consume", async (req, res, next) => {
   try {
     if (overLimit(magicConsumeLimiter, req)) return rateLimited(res);
@@ -1562,6 +1570,7 @@ function mintToken(): { plain: string; hash: string } {
 // registered emails.
 const PasswordForgot = z.object({ email: z.string().email().max(255) });
 
+// REPLAY: sends a reset link; asking again sends another, as asked
 authRouter.post("/password/forgot", async (req, res, next) => {
   try {
     if (!(await passwordSignInOn())) return void res.status(403).json(PASSWORD_SIGN_IN_OFF);
@@ -1631,6 +1640,7 @@ const PasswordReset = z.object({
   password: z.string().min(8).max(200),
 });
 
+// REPLAY: spends a one-time token: a repeat finds it spent
 authRouter.post("/password/reset", async (req, res, next) => {
   try {
     if (overLimit(passwordResetLimiter, req)) return rateLimited(res);
@@ -1798,6 +1808,7 @@ for (const [path, act] of [
 const VerifyEmail = z.object({ token: z.string().min(8).max(200) });
 
 // UI-SCREEN: /verify/:token (the emailed verification link consumes its token)
+// REPLAY: spends a one-time token: a repeat finds it spent
 authRouter.post("/verify-email", async (req, res, next) => {
   try {
     if (overLimit(verifyEmailLimiter, req)) {
@@ -1851,6 +1862,7 @@ authRouter.post("/verify-email", async (req, res, next) => {
 const VerifyDmBody = z.object({ token: z.string().min(10).max(255) });
 
 // UI-REACH: the Discord bot confirming a test DM was received
+// REPLAY: the Discord bot marking a connection verified; marked twice is marked once
 authRouter.post("/discord/verify-dm", async (req, res, next) => {
   try {
     const parsed = VerifyDmBody.safeParse(req.body ?? {});
@@ -1948,6 +1960,7 @@ const configLimiter = makeIpLimiter(60_000, 600);
 const PairStartBody = z.object({ org_slug: z.string().min(1).max(120) });
 
 // UI-SCREEN: /scan (Scan with your phone opens PairPhoneButton)
+// REPLAY: mints a short-lived pairing code; a second press shows a second code and the first lapses unused
 authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
   try {
     const userId = req.session!.id;
@@ -1986,6 +1999,7 @@ authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
 
 // POST (not GET) so the plaintext code travels in the body, never the query
 // string — keeps a still-live code out of access logs.
+// REPLAY: reads a code's state and makes nothing
 authRouter.post("/pair/status", requireAuth, async (req, res, next) => {
   try {
     const code = typeof (req.body as { code?: unknown } | undefined)?.code === "string" ? (req.body as { code: string }).code : "";
@@ -2014,6 +2028,7 @@ authRouter.post("/pair/status", requireAuth, async (req, res, next) => {
 const PairClaimBody = z.object({ code: z.string().min(1).max(200) });
 
 // Unauthenticated — the phone has no session yet; the code IS the credential.
+// REPLAY: spends a one-time code: a repeat finds it claimed
 authRouter.post("/pair/claim", async (req, res, next) => {
   try {
     if (!pairClaimLimiter(req.ip ?? "unknown")) {

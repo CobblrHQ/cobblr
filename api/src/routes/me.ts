@@ -70,6 +70,7 @@ import { instantFromInput } from "@cobblr/platform-contract/day";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 import { REPLY_ACTION_ID, REPLY_MAX } from "@cobblr/platform-contract/notifications";
+import { replayAccountWrite } from "../platform/request-replays.js";
 
 export const meRouter = Router();
 meRouter.use(endApiTokensRouter);
@@ -210,6 +211,7 @@ meRouter.patch("/me/default-workspace", requireAuth, async (req, res, next) => {
 // POST /me/verify-email/resend — re-send the email-verification link to the
 // signed-in user's address. No-op-ish if already verified. Returns the dev
 // link in non-prod when no auth-email sender is configured.
+// REPLAY: sends the link again, as asked
 meRouter.post("/me/verify-email/resend", requireAuth, async (req, res, next) => {
   try {
     const userId = req.session!.id;
@@ -366,7 +368,9 @@ function recordTip(field: "shown" | "dismissed") {
     }
   };
 }
+// REPLAY: marks a tip shown; a repeat marks it again
 meRouter.post("/me/tips/:id/shown", requireAuth, recordTip("shown"));
+// REPLAY: marks a tip dismissed; a repeat marks it again
 meRouter.post("/me/tips/:id/dismissed", requireAuth, recordTip("dismissed"));
 
 // POST /me/password — verifies current password then updates.
@@ -374,6 +378,7 @@ const PasswordChange = z.object({
   current_password: z.string().min(1),
   new_password: z.string().min(8).max(200),
 });
+// REPLAY: sets the password; a repeat is refused, the current password having changed
 meRouter.post("/me/password", requireAuth, async (req, res, next) => {
   try {
     const parsed = PasswordChange.safeParse(req.body);
@@ -458,6 +463,7 @@ meRouter.get("/me/email", requireAuth, async (req, res, next) => {
 // current_password: required unless the account has none (a magic-link
 // account proves itself by a recent sign-in instead; email-change.ts).
 const EmailChangeBody = z.object({ new_email: z.string().email().max(254), current_password: z.string().min(1).optional() });
+// REPLAY: sends a confirmation to the new address; only a confirmed one changes it
 meRouter.post("/me/email", requireAuth, async (req, res, next) => {
   try {
     const parsed = EmailChangeBody.safeParse(req.body);
@@ -487,6 +493,7 @@ meRouter.post("/me/email", requireAuth, async (req, res, next) => {
 // AI-REACH: exempt — self-only session revocation. An agent has no business
 // signing a person out of their own devices; this is reachable only by the
 // authenticated user acting on themselves.
+// REPLAY: moves when this account's tokens stop working to now; a repeat moves it again
 meRouter.post("/me/sign-out-everywhere", requireAuth, async (req, res, next) => {
   try {
     const at = new Date();
@@ -528,6 +535,7 @@ meRouter.post("/me/sign-out-everywhere", requireAuth, async (req, res, next) => 
 // ── Download my data (#4185) ──────────────────────────────────────────────
 // A person's own copy of what Cobblr holds about them: personal-export.ts.
 // AI-REACH: exempt (a person taking their own data; never on behalf of a workspace, never by an agent)
+// REPLAY: one copy a day: a second ask the same day is refused and shown the first
 meRouter.post("/me/export", requireAuth, async (req, res, next) => {
   try {
     const r = await requestPersonalExport(req.session!.id, { origin: linkOrigin(req) });
@@ -943,6 +951,7 @@ meRouter.put("/me/delivery-windows", requireAuth, async (req, res, next) => {
 // AI-REACH: exempt — an operator/self diagnostic that delivers mail already
 // queued; an agent has no reason to trigger someone's digest early.
 // UI-REACH: an operator's diagnostic that delivers mail already queued
+// REPLAY: delivers what is already queued; a repeat finds it delivered
 meRouter.post("/me/delivery-windows/flush", requireAuth, async (req, res, next) => {
   try {
     const out = await deliveryTick(new Date(), req.session!.id);
@@ -990,6 +999,7 @@ meRouter.get("/me/notifications/unread-count", requireAuth, async (req, res, nex
   }
 });
 
+// REPLAY: marks a notice read; a repeat finds it read
 meRouter.post("/me/notifications/:id/read", requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -1016,7 +1026,7 @@ const NotificationReplyBody = z.object({ body: z.string().trim().min(1).max(REPL
 // which the Discord door calls too - two doors, one rule about who may do what.
 //
 // AI-REACH: exempt — pressing a button a notification offered YOU, as yourself; the assistant invokes the same underlying actions through invoke_action.
-meRouter.post("/me/notifications/:id/actions/:actionId", requireAuth, async (req, res, next) => {
+meRouter.post("/me/notifications/:id/actions/:actionId", requireAuth, replayAccountWrite, async (req, res, next) => {
   try {
     const id = req.params.id;
     const actionId = req.params.actionId;
@@ -1069,6 +1079,7 @@ const STREAM_AUD = "notifications";
 
 /** A ticket for the notification stream (an EventSource cannot send the
  *  Authorization header). */
+// REPLAY: a short-lived stream ticket; makes no record
 meRouter.post("/me/notifications/stream-ticket", requireAuth, async (req, res, next) => {
   try {
     res.json({ ticket: await signStreamTicket(STREAM_AUD, req.session!.id) });
@@ -1119,6 +1130,7 @@ meRouter.get("/me/notification-kinds", requireAuth, async (req, res, next) => {
   }
 });
 
+// REPLAY: marks a notice unread; a repeat finds it unread
 meRouter.post("/me/notifications/:id/unread", requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -1152,6 +1164,7 @@ meRouter.delete("/me/notifications/:id", requireAuth, async (req, res, next) => 
 });
 
 /** Clear read: every notification this person has read, in every workspace. */
+// REPLAY: removes read notices; a repeat finds none
 meRouter.post("/me/notifications/clear-read", requireAuth, async (req, res, next) => {
   try {
     const count = await notifications.removeRead(req.session!.id);
@@ -1161,6 +1174,7 @@ meRouter.post("/me/notifications/clear-read", requireAuth, async (req, res, next
   }
 });
 
+// REPLAY: marks every notice read; a repeat finds them read
 meRouter.post("/me/notifications/read-all", requireAuth, async (req, res, next) => {
   try {
     const count = await notifications.markAllReadAcrossOrgs(req.session!.id);
@@ -1368,6 +1382,7 @@ function redactConfig(config: unknown): unknown {
 meRouter.post(
   "/me/notification-channels",
   requireAuth,
+  replayAccountWrite,
   async (req, res, next) => {
     try {
       const parsed = ChannelBindingBody.safeParse(req.body);
@@ -1512,6 +1527,7 @@ const SelfTestBody = z.object({
   event_type: z.string().min(1).max(120).default("platform.self-test"),
 });
 
+// REPLAY: a test notice; a second press is a second test
 meRouter.post("/me/notifications/self-test", requireAuth, async (req, res, next) => {
   try {
     const parsed = SelfTestBody.safeParse(req.body);
@@ -1547,6 +1563,7 @@ meRouter.post("/me/notifications/self-test", requireAuth, async (req, res, next)
   }
 });
 
+// REPLAY: a test send; a second press is a second test
 meRouter.post(
   "/me/notification-channels/:id/test",
   requireAuth,
@@ -1592,6 +1609,7 @@ meRouter.post(
 // 'order.shipped') wouldn't see ANY binding fire on a synthetic
 // 'test.notification' event. Iterate bindings + call the per-binding
 // path directly so the button does what its label promises.
+// REPLAY: a test send; a second press is a second test
 meRouter.post(
   "/me/notification-channels/test",
   requireAuth,
@@ -1708,6 +1726,7 @@ meRouter.get("/me/api-tokens", requireAuth, async (req, res, next) => {
   }
 });
 
+// REPLAY: its answer is the token's one-time secret, which a kept answer would store; a second token shows in the list and can be revoked
 meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
   try {
     const parsed = TokenCreate.safeParse(req.body);
@@ -1871,7 +1890,7 @@ async function userOwns(userId: string, orgId: string): Promise<boolean> {
   return r?.role === "owner";
 }
 
-meRouter.post("/me/links", requireAuth, async (req, res, next) => {
+meRouter.post("/me/links", requireAuth, replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = LinkCreate.safeParse(req.body);
     if (!parsed.success) {
@@ -2133,6 +2152,7 @@ meRouter.patch("/me/links/:id", requireAuth, async (req, res, next) => {
   }
 });
 
+// REPLAY: accepts a pending link; a repeat finds it accepted
 meRouter.post("/me/links/:id/accept", requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -2213,6 +2233,7 @@ meRouter.post("/me/links/:id/accept", requireAuth, async (req, res, next) => {
   }
 });
 
+// REPLAY: revokes a link; a repeat finds it revoked
 meRouter.post("/me/links/:id/revoke", requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -2294,6 +2315,7 @@ async function ownsAnyWorkspace(userId: string): Promise<boolean> {
   return !!r;
 }
 
+// REPLAY: its answer carries the invite's link, a credential a kept answer would store; a second invite shows in the list and can be revoked
 meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
   try {
     // Off by default in prod — keeps the alpha from growing uncontrollably.
@@ -2409,6 +2431,7 @@ meRouter.get("/me/signup-invites", requireAuth, async (req, res, next) => {
   }
 });
 
+// REPLAY: revokes an invite; a repeat finds it revoked
 meRouter.post("/me/signup-invites/:id/revoke", requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -2538,6 +2561,7 @@ meRouter.get("/me/discord", requireAuth, async (req, res, next) => {
 const DISCORD_DIGEST_DEFAULT_MINUTE = 480;
 
 // POST /me/discord/oauth-start — returns the Discord authorize URL.
+// REPLAY: hands back an authorize URL; nothing is made until the person consents
 meRouter.post("/me/discord/oauth-start", requireAuth, async (req, res, next) => {
   try {
     if (!discordConnectConfigured()) {
@@ -2638,6 +2662,7 @@ meRouter.get("/me/discord/oauth-callback", async (req, res, next) => {
 
 // POST /me/discord/retry-test — re-send the verification DM (after the user
 // adjusts privacy settings / joins the server).
+// REPLAY: sends the test message again, as asked
 meRouter.post("/me/discord/retry-test", requireAuth, async (req, res, next) => {
   try {
     const row = await meta
@@ -2658,6 +2683,7 @@ meRouter.post("/me/discord/retry-test", requireAuth, async (req, res, next) => {
 
 // POST /me/discord/confirm — website fallback "Yes, I received it" (the user
 // self-attests; safe because it only verifies their OWN connection).
+// REPLAY: marks the connection verified; a repeat finds it so
 meRouter.post("/me/discord/confirm", requireAuth, async (req, res, next) => {
   try {
     const updated = await meta

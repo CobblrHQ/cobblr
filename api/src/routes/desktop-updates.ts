@@ -103,6 +103,7 @@ const PublishBody = z.object({
   manifest: z.record(z.object({ version: z.string(), url: z.string().url(), signature: z.string(), notes: z.string().optional(), pub_date: z.string().optional() })).optional(),
 });
 // UI-REACH: the desktop helper's release pipeline publishing a build
+// REPLAY: sets a platform's manifest entry; publishing it again sets the same entry
 desktopUpdatesRouter.post("/publish", requireAuth, requirePlatformAdmin, async (req, res, next) => {
   try {
     const parsed = PublishBody.safeParse(req.body);

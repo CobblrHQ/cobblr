@@ -1022,6 +1022,7 @@ export const backupGoogleCallbackRouter = Router();
 // + a shared secret. We wrap the client's opaque state in OUR broker-signed
 // state and hand back a consent URL pointing at OUR callback.
 // UI-REACH: the backup broker, called by another instance with the shared secret
+// REPLAY: another instance's call on a shared secret; it hands back a consent URL and keeps nothing
 backupGoogleCallbackRouter.post("/backup/google/broker/start", async (req, res, next) => {
   try {
     if (!brokerServerEnabled() || !env.GOOGLE_OAUTH_REDIRECT_URL) {
@@ -1103,6 +1104,7 @@ backupGoogleCallbackRouter.get("/backup/google/callback", async (req, res, next)
 // BROKER SERVER: the client redeems a link code for the refresh token,
 // server-to-server, authenticated by the shared secret. Single-use.
 // UI-REACH: the backup broker, called by another instance with the shared secret
+// REPLAY: another instance's call; the link code is single-use, so a repeat finds it spent
 backupGoogleCallbackRouter.post("/backup/google/broker/redeem", async (req, res, next) => {
   try {
     if (!brokerServerEnabled()) {

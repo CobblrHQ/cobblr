@@ -2,6 +2,17 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-09
+
+### Fixes
+- Undo after changing a count at a bin no longer takes away a change someone else made since: it puts the count back only if nothing changed, and otherwise says what did.
+- Undo after typing a new shop into a purchase takes it off that purchase again, keeping the shop's name, and no longer takes it off another purchase saved with it meanwhile: then the shop is kept, and the toast says how many purchases use it. A member can now undo a new shop they just made.
+- Sending feedback, adding a connection or a notification channel, linking workspaces or accepting a share, pressed again after the answer was lost on a weak connection, now does it once instead of twice.
+- Pressing Create again after making a new workspace on a weak connection no longer makes a second workspace.
+- Two changes to one record made offline both arrive, even when the first had already reached the server before the signal went.
+- A second change made offline is no longer refused because of your own first change to the same record. Only someone else's change made meanwhile stops it.
+- A change made offline is no longer thrown away when Cobblr answers that it is busy, that your sign-in ended, or that it hit a problem: it keeps waiting and is sent again by itself.
+
 ## 2026-11-08
 
 ### Fixes

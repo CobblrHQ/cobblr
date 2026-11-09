@@ -20,6 +20,7 @@ import { notifyOperators } from "../platform/operator-alert.js";
 import { verifyReplyToken } from "../platform/feedback-reply.js";
 import { inboundSecretOk } from "../platform/inbound-secret.js";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { replayAccountWrite } from "../platform/request-replays.js";
 
 export const feedbackRouter = Router();
 feedbackRouter.use(requireAuth);
@@ -77,6 +78,7 @@ export async function appendFeedbackReply(input: {
 // Email Worker parses the reply+<token> address + the stripped body and posts
 // here. We verify the shared secret, then hand off to appendFeedbackReply.
 // UI-REACH: the email worker relaying a reply to a feedback email
+// REPLAY: the email worker's relay on a shared secret, with no person's session to keep an answer under
 feedbackInboundRouter.post("/feedback/append-email", async (req, res, next) => {
   try {
     if (!inboundSecretOk(req.headers["x-inbound-secret"])) {
@@ -123,7 +125,7 @@ const SubmitFeedback = z.object({
 
 // POST /feedback — submit. user_id comes from the session (never the body);
 // org_id is a best-effort lookup from the workspace slug.
-feedbackRouter.post("/", async (req, res, next) => {
+feedbackRouter.post("/", replayAccountWrite, async (req, res, next) => {
   try {
     const parsed = SubmitFeedback.safeParse(req.body);
     if (!parsed.success) {
@@ -295,7 +297,7 @@ feedbackOrgRouter.get("/:slug/feedback/mine", requireAuth, withTenant, listMyFee
 // reopens a resolved item, and re-triages — mirroring the Discord #support
 // follow-up path so both surfaces share one conversation model.
 const ReplyBody = z.object({ text: z.string().trim().min(1).max(5000) });
-feedbackRouter.post("/:id/reply", async (req, res, next) => {
+feedbackRouter.post("/:id/reply", replayAccountWrite, async (req, res, next) => {
   try {
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
     const parsed = ReplyBody.safeParse(req.body);
@@ -306,7 +308,7 @@ feedbackRouter.post("/:id/reply", async (req, res, next) => {
     const fb = await meta
       .selectFrom("feedback")
       .select([...FOLLOW_UP_COLUMNS, "user_id"])
-      .where("id", "=", req.params.id)
+      .where("id", "=", String(req.params.id))
       .executeTakeFirst();
     if (!fb || fb.user_id !== userId) {
       res.status(404).json({ error: { code: "not_found", message: "Feedback not found." } });
