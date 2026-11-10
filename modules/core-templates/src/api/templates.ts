@@ -12,6 +12,7 @@ import { bearer, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { refusalOf } from "@cobblr/platform-contract/self-call-refusal";
 
 export const templatesRouter = Router({ mergeParams: true });
 
@@ -305,12 +306,12 @@ templatesRouter.post(
       body: JSON.stringify(createBody),
     });
     if (!createRes.ok) {
-      const errText = await createRes.text();
-      res.status(createRes.status).json({
+      // The record's own refusal, in its words (#9413).
+      const refused = await refusalOf(createRes, "The record could not be made from this template. Try again.");
+      res.status(refused.status).json({
         error: {
           code: "create_failed",
-          message: `Target create endpoint returned ${createRes.status}`,
-          details: errText,
+          message: refused.message,
         },
       });
       return;

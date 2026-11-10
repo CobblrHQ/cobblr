@@ -106,6 +106,7 @@ export function useScanCountSave(itemId: string, match: TrackedMatch, onDone?: (
         toast.action(`${said}${now}`, {
           actionLabel: "Undo",
           duration: 10_000,
+          // UNDO: the unconfirm route refuses once the count or record changed since (#9420); a lot or date key it wrote goes back blind (#9419 audit part 1)
           onAction: async () => {
             try {
               const restored = await api.unconfirmScanItem(activeSlug, itemId);

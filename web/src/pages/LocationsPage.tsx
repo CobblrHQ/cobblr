@@ -198,6 +198,7 @@ export function LocationsPage() {
     if (deleted.length > 0) {
       toast.action(`Deleted ${countOf(deleted.length, "place")}${failed ? `. ${countOf(failed, "place")} could not be deleted` : ""}.`, {
         actionLabel: "Undo",
+        // UNDO: restores the places this run deleted; a deleted place cannot be edited since
         onAction: async () => {
           try {
             const back = await restorePlaces(activeSlug, deleted);

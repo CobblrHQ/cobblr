@@ -6,7 +6,7 @@
 // `?next=` (a label scan's item, #3801) is where a join lands; a new person
 // without a password may instead ask for an emailed link that joins them.
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, api, setToken } from "../lib/api";
@@ -28,6 +28,17 @@ export function InviteAcceptPage() {
   const [link, setLink] = useState<{ sent: boolean; devToken?: string } | null>(null);
   // The item a label scan sent them from: where joining lands.
   const [next] = useState(() => landingPath(new URLSearchParams(window.location.search).get("next")));
+  // One way out of this page, and only the first call goes (#9393). Joining
+  // put the workspace in the session, so the "already in" effect left for it,
+  // and the form left again once the workspace list answered: the browser
+  // cancelled the first load for the second, and the page sat on "Taking you
+  // there…" while they fought.
+  const left = useRef(false);
+  const leave = useCallback((to: string) => {
+    if (left.current) return;
+    left.current = true;
+    window.location.assign(to);
+  }, []);
 
   const preview = useQuery({
     queryKey: ["invite-preview", token],
@@ -47,10 +58,10 @@ export function InviteAcceptPage() {
       // This page renders OUTSIDE ActiveOrgProvider, so land in the new
       // workspace with a HARD navigation — it re-mounts the app with the new
       // membership and the provider initialized to that workspace.
-      if (next) return window.location.assign(next);
+      if (next) return leave(next);
       const list = await api.listOrgs();
       const org = list.items.find((o) => o.slug === r.org.slug);
-      window.location.assign(org ? `/w/${urlHandleFor(org, list.items)}` : "/");
+      leave(org ? `/w/${urlHandleFor(org, list.items)}` : "/");
     },
     onError: (e: unknown) => {
       toast.error(e instanceof ApiError ? e.message : "Couldn't accept invite.");
@@ -62,8 +73,8 @@ export function InviteAcceptPage() {
   const mine = preview.data ? orgs.find((o) => o.slug === preview.data!.org_slug) : undefined;
   const alreadyIn = !!user && !!mine && preview.data?.status !== "revoked";
   useEffect(() => {
-    if (alreadyIn && mine) window.location.assign(next ?? `/w/${urlHandleFor(mine, orgs)}`);
-  }, [alreadyIn, mine, orgs, next]);
+    if (alreadyIn && mine) leave(next ?? `/w/${urlHandleFor(mine, orgs)}`);
+  }, [alreadyIn, mine, orgs, next, leave]);
 
   if (!token) return null;
 
@@ -148,7 +159,7 @@ export function InviteAcceptPage() {
       try {
         const r = await api.magicConsume({ token: link.devToken });
         setToken(r.token);
-        window.location.href = landingPath(r.next) ?? "/";
+        leave(landingPath(r.next) ?? "/");
       } catch (err) {
         setSuErr(err instanceof ApiError ? err.message : "Couldn't open the link.");
       }
@@ -164,10 +175,10 @@ export function InviteAcceptPage() {
           display_name: su.displayName.trim(),
         });
         toast.success(`Welcome to ${p.org_name}.`);
-        if (next) return window.location.assign(next);
+        if (next) return leave(next);
         const list = await api.listOrgs();
         const org = list.items.find((o) => o.slug === p.org_slug);
-        window.location.assign(org ? `/w/${urlHandleFor(org, list.items)}` : "/");
+        leave(org ? `/w/${urlHandleFor(org, list.items)}` : "/");
       } catch (err) {
         setSuErr(err instanceof ApiError ? err.message : "Couldn't join.");
       } finally {
@@ -240,7 +251,7 @@ export function InviteAcceptPage() {
             // The sign-in page sends them back here (LandingRedirect reads
             // ?next=), where the session offers Join or, for a member, goes in.
             const here = `/invite/${token}${next ? `?next=${encodeURIComponent(next)}` : ""}`;
-            window.location.assign(`/?next=${encodeURIComponent(here)}`);
+            leave(`/?next=${encodeURIComponent(here)}`);
           }}
           className="mt-3 text-xs text-accent hover:underline"
           data-testid="invite-sign-in"

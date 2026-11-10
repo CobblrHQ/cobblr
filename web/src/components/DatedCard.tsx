@@ -13,7 +13,7 @@ import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ArrowRight, CheckCircle2, ChevronDown } from "lucide-react";
-import { useConfirm, useRunAction, useToast, type ActionRun } from "@cobblr/platform-web";
+import { undoStepsOf, useConfirm, useRunAction, useRunIssuedUndo, useToast, type ActionRun } from "@cobblr/platform-web";
 import { api, type AttentionFeedItem } from "../lib/api";
 import { datedCounts, type DatedCardModel, type DatedGroup } from "../lib/attention-cards";
 import { useDetailRoute } from "../lib/useDetailRoute";
@@ -46,6 +46,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
   // PRESS-ARGS: the finishing verbs (used up, tossed, still good) require nothing; the card adds its timezone.
   const runAction = useRunAction();
   const toast = useToast();
+  const pressUndo = useRunIssuedUndo();
   const confirm = useConfirm();
   const routeFor = useDetailRoute(slug);
   const clearExpired = useClearExpired(slug, card.collection.key, card.collection.clear?.action_id);
@@ -112,13 +113,17 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
     if (!task) return;
     setBusy(`${e.id}:task`);
     try {
-      await api.request("PATCH", `/orgs/${slug}/modules/projects/tasks/${task}`, { status: "done" });
+      const done = await api.request<{ undo?: unknown }>("PATCH", `/orgs/${slug}/modules/projects/tasks/${task}`, { status: "done" });
       hide(e.id, true);
+      if (!undoStepsOf(done?.undo).length) return void toast.success(`Done: ${e.record?.name ?? e.title}`);
       toast.action(`Done: ${e.record?.name ?? e.title}`, {
         actionLabel: "Undo",
         duration: 8000,
+        // The way back the server issued: the status the task had, refused
+        // over a teammate's status since (#9424).
         onAction: async () => {
-          await api.request("PATCH", `/orgs/${slug}/modules/projects/tasks/${task}`, { status: "todo" });
+          const refused = await pressUndo(done.undo);
+          if (refused) return void toast.error(refused);
           hide(e.id, false);
         },
       });

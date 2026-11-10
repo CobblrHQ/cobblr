@@ -26,7 +26,9 @@ import { orderHappened } from "./history.js";
 import { planFulfilment, shortageSentence, type FulfilLine } from "./fulfilment.js";
 
 export type HoldResult =
-  | { ok: true; held: number; until: string | null }
+  // held_at: this hold's own stamp, and previous: the hold the order had
+  // before it (null for none). Its Undo hands both back (#9421).
+  | { ok: true; held: number; until: string | null; held_at: string; previous: { until: string | null } | null }
   | { ok: false; code: "not_found" | "not_a_draft" | "nothing_to_hold" | "not_a_day" | "too_few"; message: string };
 
 export type ReleaseResult = { ok: true; released: number } | { ok: false; code: "not_found"; message: string };
@@ -92,6 +94,7 @@ export async function holdUnderLock(db: Kysely<SalesDB>, orgId: string, userId: 
     const lines: FulfilLine[] = rows.map((r) => ({ id: r.id, part_id: r.part_id, description: r.description, qty: Number(r.qty) || 0, qty_fulfilled: Number(r.qty_fulfilled) || 0 }));
     const stocked = lines.filter((l) => l.part_id && l.qty - l.qty_fulfilled > 0);
     if (!stocked.length) return { ok: false, code: "nothing_to_hold", message: "This order has no stocked line to hold. Add a part from your stock first." };
+    const was = await db.selectFrom("sales_orders").select(["held_at", "hold_until"]).where("id", "=", orderId).executeTakeFirst();
     const others = await heldByOthers(db, stocked.map((l) => l.part_id!), orderId);
     const { shortages } = await planFulfilment(orgId, lines, others);
     if (shortages.length) return { ok: false, code: "too_few", message: shortageSentence(shortages) };
@@ -102,10 +105,40 @@ export async function holdUnderLock(db: Kysely<SalesDB>, orgId: string, userId: 
       await db.insertInto("sales_holds").values({ order_id: orderId, line_id: l.id, part_id: l.part_id!, qty }).execute();
       await inventory("reserve-for-line", orgId, userId, { part_id: l.part_id, qty, for_kind: TARGET_KIND, for_id: orderId, for_line: l.id, reason: `Held for ${who}` });
     }
-    await db.updateTable("sales_orders").set({ held_at: new Date(), hold_until: until }).where("id", "=", orderId).execute();
+    const heldAt = new Date();
+    await db.updateTable("sales_orders").set({ held_at: heldAt, hold_until: until }).where("id", "=", orderId).execute();
     await orderHappened(db, orgId, orderId, { kind: "hold", detail: { held: stocked.length, until }, by_user: userId });
-    return { ok: true, held: stocked.length, until };
+    return { ok: true, held: stocked.length, until, held_at: heldAt.toISOString(), previous: was?.held_at ? { until: dayOf(was.hold_until) } : null };
   }
+}
+
+/** A hold's day as the person wrote it (a date column reads back as a Date). */
+function dayOf(v: unknown): string | null {
+  if (v == null) return null;
+  return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10);
+}
+
+export type HoldUndoResult = { ok: true; released: number } | { ok: true; until: string | null } | { ok: false; code: "not_found" | "changed"; message: string };
+
+/** The Undo of one hold (#9421): it takes back only that hold, while the
+ *  order still has it. Held again since (a teammate's new day, a line
+ *  change that held it anew) or let go, it refuses and leaves the order as
+ *  it is now. A hold that replaced an earlier one puts that one back. */
+export async function undoHold(db: Kysely<SalesDB>, orgId: string, userId: string | null, orderId: string, p: { held_at: string; previous: { until: string | null } | null }): Promise<HoldUndoResult | HoldResult> {
+  return withOrderLock(db, orgId, userId, orderId, async () => {
+    const order = await db.selectFrom("sales_orders").select(["held_at"]).where("id", "=", orderId).executeTakeFirst();
+    if (!order) return { ok: false, code: "not_found", message: "That order is not here any more." };
+    const now = order.held_at ? new Date(order.held_at as unknown as string).getTime() : null;
+    if (now === null || now !== new Date(p.held_at).getTime()) {
+      return { ok: false, code: "changed", message: "Kept: this order's hold changed after yours (it was held again, its day moved, or it was let go), so Undo leaves it as it is now." };
+    }
+    if (!p.previous) {
+      const released = await letGo(db, orgId, userId, orderId);
+      await orderHappened(db, orgId, orderId, { kind: "hold", detail: { released: true, why: "its hold was undone" }, by_user: userId });
+      return { ok: true, released };
+    }
+    return holdUnderLock(db, orgId, userId, orderId, { until: p.previous.until });
+  });
 }
 
 /** Let an order's hold go, for a reason a person reads in its history. */

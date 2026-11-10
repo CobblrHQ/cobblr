@@ -76,6 +76,7 @@ export function EditTagModal({
       const n = r.moved_assignments;
       toast.action(`Merged ${tag.name} into ${r.merged_into.name}: ${n} ${n === 1 ? "record" : "records"} moved.`, {
         actionLabel: "Undo",
+        // UNDO: blind, narrow: the merge's assignments go back to this tag whatever their tag is by then (#9419 audit part 1)
         onAction: async () => {
           try {
             const back = await api.restoreTag(slug, tag.id);

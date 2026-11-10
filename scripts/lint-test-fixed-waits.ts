@@ -27,6 +27,15 @@
 // where the duration is the subject) says why on the line or the line above:
 //   // fixed-wait: <reason>
 //
+// AN E2E HARNESS IS A TEST TOO. e2e/*.mjs judges a real page, and its
+// fixed waits fail the same way: mobile-overflow.mjs slept 1.5 s for Build and
+// 500 ms for the phone's bar to slide, and both checks went red on main twice
+// in one run on a loaded runner, while every unloaded rig passed (#9410).
+// `page.waitForTimeout(<literal>)` counts there; wait with seen() or
+// waitSettled(), or poll the condition with a deadline. Their counts live in
+// e2e/fixed-waits-baseline.json, beside the harnesses: e2e/ is not exported,
+// and the public tree must not list harness names it never ships.
+//
 // THE RATCHET. 166 such waits existed in 120 files when this was written (168
 // in 122 once shell sleeps counted).
 // scripts/test-fixed-waits-baseline.json holds each file's count; a file may
@@ -41,12 +50,15 @@ import { repoFiles } from "./lib/repo-files.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = join(ROOT, "scripts", "test-fixed-waits-baseline.json");
+const E2E_BASELINE = join(ROOT, "e2e", "fixed-waits-baseline.json");
+const isE2e = (f: string) => f.startsWith("e2e/");
 
 const PATTERNS: Array<[RegExp, string]> = [
   [/new Promise\(\s*\(?\s*(\w+)\s*\)?\s*=>\s*setTimeout\(\s*\1\s*,\s*([\d_]+)\s*\)/, "a Promise around setTimeout with a fixed duration"],
   [/\b(?:sleep|delay|wait|pause)\(\s*([\d_]+)\s*\)/, "a sleep helper with a fixed duration"],
   [/\bsetTimeout\(\s*([\d_]+)\s*\)/, "timers/promises setTimeout with a fixed duration"],
   [/["'`][^"'`]*\bsleep\s+([\d.]+)(?![\w.])/, "a shell sleep in a command the test runs"],
+  [/\.waitForTimeout\(\s*([\d_]+)\s*\)/, "a page waitForTimeout with a fixed duration"],
 ];
 
 /** The fixed waits on one line, or none. A zero duration is a yield, not a wait. */
@@ -63,7 +75,7 @@ function fixedWaits(line: string, above: string): string[] {
 }
 
 function testFiles(): string[] {
-  return repoFiles(["*.test.ts", "*.test.tsx", "*.test.mjs", "*.test.js"], ROOT).filter((f) => !f.includes("node_modules/"));
+  return repoFiles(["*.test.ts", "*.test.tsx", "*.test.mjs", "*.test.js", "e2e/*.mjs"], ROOT).filter((f) => !f.includes("node_modules/"));
 }
 
 const counts = new Map<string, number>();
@@ -75,7 +87,7 @@ for (const f of testFiles()) {
   } catch {
     continue;
   }
-  if (!/setTimeout|sleep|delay|wait\(|pause\(/.test(src)) continue;
+  if (!/setTimeout|sleep|delay|wait\(|pause\(|waitForTimeout/.test(src)) continue;
   const lines = src.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const hits = fixedWaits(lines[i] ?? "", lines[i - 1] ?? "");
@@ -86,13 +98,17 @@ for (const f of testFiles()) {
 }
 
 if (process.argv.includes("--update")) {
-  const next = Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
-  writeFileSync(BASELINE, JSON.stringify(next, null, 2) + "\n");
+  const sorted = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
+  writeFileSync(BASELINE, JSON.stringify(Object.fromEntries(sorted.filter(([f]) => !isE2e(f))), null, 2) + "\n");
+  writeFileSync(E2E_BASELINE, JSON.stringify(Object.fromEntries(sorted.filter(([f]) => isE2e(f))), null, 2) + "\n");
   console.log(`lint:test-fixed-waits: baseline written, ${counts.size} file(s), ${[...counts.values()].reduce((a, b) => a + b, 0)} wait(s)`);
   process.exit(0);
 }
 
-const baseline = JSON.parse(readFileSync(BASELINE, "utf8")) as Record<string, number>;
+const baseline = {
+  ...(JSON.parse(readFileSync(BASELINE, "utf8")) as Record<string, number>),
+  ...(JSON.parse(readFileSync(E2E_BASELINE, "utf8")) as Record<string, number>),
+};
 const over: string[] = [];
 for (const [f, n] of counts) {
   const allowed = baseline[f] ?? 0;

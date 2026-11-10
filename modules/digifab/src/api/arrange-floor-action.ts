@@ -19,6 +19,7 @@ export function registerArrangeFloorAction(): void {
     const summary = placed ? `Arranged ${placed} machine${placed === 1 ? "" : "s"} on the floor.` : "The floor is back to its own order.";
     return { ok: true, summary, data: { before } };
   });
+  // UNDO: workspace setup, blind: the old floor order goes back over a later arrangement (#9419 audit part 2)
   platform().actions.registerUndo("digifab.arrange-floor", (result) => {
     const d = (result as { ok?: unknown; data?: { before?: unknown[] } } | null);
     if (d?.ok !== true || !Array.isArray(d.data?.before)) return null;

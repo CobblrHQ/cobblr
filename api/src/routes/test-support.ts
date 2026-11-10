@@ -201,7 +201,8 @@ testSupportRouter.post("/test-support/run-sweep", async (req, res, next) => {
 // "refuse" (the server's database refuses its lines until cleared) | "die"
 // (the next change through a record's writer loses its line as a process
 // dying right after the change would, once) | null (clear), action?,
-// entity_id? (the one line a die is for) }.
+// entity_id? (the one line a die is for) }. Answers die_left: whether a die
+// set earlier was still waiting, untaken.
 testSupportRouter.post("/test-support/activity-trace-fault", async (req, res, next) => {
   try {
     const { slug, fault, action, entity_id } = (req.body ?? {}) as { slug?: string; fault?: string | null; action?: string; entity_id?: string };
@@ -214,8 +215,8 @@ testSupportRouter.post("/test-support/activity-trace-fault", async (req, res, ne
       res.status(404).json({ error: { code: "not_found", message: "no such workspace" } });
       return;
     }
-    setTraceFaultForTests(o.id, fault, { ...(action ? { action } : {}), ...(entity_id ? { entityId: entity_id } : {}) });
-    res.json({ ok: true });
+    const { dieLeft } = setTraceFaultForTests(o.id, fault, { ...(action ? { action } : {}), ...(entity_id ? { entityId: entity_id } : {}) });
+    res.json({ ok: true, die_left: dieLeft });
   } catch (err) {
     next(err);
   }

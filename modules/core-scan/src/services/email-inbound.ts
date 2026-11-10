@@ -175,6 +175,7 @@ async function photoCapture(slug: string, token: string, fileId: string): Promis
       headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ source_kind: "photo", image_file_id: fileId, origin: "email" }),
     });
+    // REFUSAL: an emailed photo filed with nobody on a page; the inbound mail's own log says what was not captured
     return r.ok;
   } catch {
     return false;
@@ -188,6 +189,7 @@ async function noteCapture(slug: string, token: string, text: string): Promise<s
       headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ text }),
     });
+    // REFUSAL: an emailed note filed with nobody on a page; the inbound mail's own log says what was not captured
     if (!r.ok) return null;
     const item = (await r.json()) as { id?: string };
     return item.id ?? null;

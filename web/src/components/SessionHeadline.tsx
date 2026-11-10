@@ -72,6 +72,7 @@ export function SessionHeadline({
   date,
   dateTitle,
   count,
+  onDateGone,
 }: {
   /** A name that shortens with an ellipsis: a merchant, a place. */
   name?: string | null;
@@ -85,6 +86,9 @@ export function SessionHeadline({
   date?: string | null;
   dateTitle?: string;
   count?: number | null;
+  /** Told whether the date gave way, once the line has settled, so the date
+   *  can be said somewhere a finger reaches (the session's menu). */
+  onDateGone?: (gone: boolean) => void;
 }) {
   const ref = orderRef ? `${SEP}#${orderRef}` : null;
   const items = count == null ? null : `${count} item${count === 1 ? "" : "s"}`;
@@ -96,9 +100,20 @@ export function SessionHeadline({
   const box = useRef<HTMLSpanElement>(null);
   const key = [name, nameFits?.join("\u0000"), orderRef, date, count].join("\u0001");
   useLayoutEffect(() => setGiven(0), [key]);
+  const told = useRef<boolean | null>(null);
   useLayoutEffect(() => {
     const el = box.current;
-    if (el && given < steps.length && el.scrollWidth > el.clientWidth + 0.5) setGiven(given + 1);
+    if (el && given < steps.length && el.scrollWidth > el.clientWidth + 0.5) {
+      setGiven(given + 1);
+      return;
+    }
+    // Settled: only now is "the date gave way" true or false. A step on the
+    // way (a width change starts again from nothing) is never told.
+    const dateGone = !!date && steps.slice(0, given).includes("dateGone");
+    if (onDateGone && told.current !== dateGone) {
+      told.current = dateGone;
+      onDateGone(dateGone);
+    }
   });
   useLayoutEffect(() => {
     const line = box.current?.parentElement;

@@ -180,6 +180,7 @@ export function moveSentence(m: { from: { name: string }; to: { name: string }; 
 }
 
 function registerUndos(): void {
+  // UNDO: put-back-everything moves back only what is still where the move left it
   platform().actions.registerUndo("core-locations.move-everything", (result) => {
     const move = readMoveResult((result as { result?: unknown } | null)?.result);
     if (!move || (!move.things.length && !move.places.length && !move.deleted)) return null;

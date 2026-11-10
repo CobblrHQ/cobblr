@@ -106,6 +106,7 @@ export function FilesPage() {
     onSuccess: (_r, f) => {
       toast.action(`${f.filename} moved to Recently deleted.`, {
         actionLabel: "Undo",
+        // UNDO: restores the file this run deleted; a deleted file cannot be edited since
         onAction: () => restoreFile.mutate(f),
       });
       refresh();

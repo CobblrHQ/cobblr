@@ -26,9 +26,9 @@
 // And an Undo the action hands back always reaches the person: the hook
 // offers it unless the surface draws it itself (offerUndo, #5812).
 
-import { useCallback } from "react";
+import { useCallback, useContext } from "react";
 import { useQueryClient, type Query, type QueryClient } from "@tanstack/react-query";
-import { usePlatformWeb } from "./context";
+import { PlatformWebContext, usePlatformWeb } from "./context";
 import { useToast } from "./ToastContext";
 import type { PlatformWebApi } from "./types";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
@@ -154,6 +154,9 @@ export async function runUndoSteps(runBack: (body: ActionBody) => Promise<Action
   });
 }
 
+/** What an Undo says when it was refused without words. */
+export const UNDO_REFUSED = "Couldn't undo that.";
+
 /** Offer an outcome's Undo: a toast saying what was done, whose Undo runs the
  *  action's own way back through the door. Nothing to undo, nothing offered.
  *  Returns whether it offered one. */
@@ -203,6 +206,44 @@ export function useRunAction(): (body: ActionBody, opts?: RunOptions) => Promise
     },
     [api, qc, orgSlug, toast],
   );
+}
+
+/** Press an Undo a module's own route issued (`undo` in its answer): its
+ *  refusal's sentence, or null when it went through. A surface that drew the
+ *  Undo itself says the refusal; it never writes the old value back instead,
+ *  which took away whatever changed since (#9377). The door raises a refusal
+ *  as a plain Error carrying the server's sentence; a surface that read only
+ *  its own ApiError said "Couldn't undo that." over "Kept: another order
+ *  names this vendor now" (#9383 on staging). */
+export function useRunIssuedUndo(): (undo: unknown) => Promise<string | null> {
+  // Read, not required: a surface that draws its own Undo renders in places
+  // with no workspace around it (a test, a preview); only a press needs one.
+  const host = useContext(PlatformWebContext);
+  const qc = useQueryClient();
+  return useCallback(
+    (undo: unknown) =>
+      host
+        ? // PRESS-ARGS: it only presses an Undo the server issued, with every argument that step was issued with.
+          pressIssuedUndo((body) => runAction(host.api, qc, host.orgSlug, body), undo)
+        : Promise.resolve(UNDO_REFUSED),
+    [host, qc],
+  );
+}
+
+/** useRunIssuedUndo's press, given the door: the refusal's sentence, whether
+ *  the door raised it or answered it as `ok: false`, or null. */
+export async function pressIssuedUndo(runBack: (body: ActionBody) => Promise<ActionRun>, undo: unknown): Promise<string | null> {
+  try {
+    await runUndoSteps(async (body) => {
+      const outcome = await runBack(body);
+      const said = outcome?.result as { ok?: unknown; error?: unknown } | null | undefined;
+      if (said?.ok === false) throw new Error(typeof said.error === "string" ? said.error : "");
+      return outcome;
+    }, undoStepsOf(undo));
+    return null;
+  } catch (e) {
+    return e instanceof Error && e.message.trim() ? e.message : UNDO_REFUSED;
+  }
 }
 
 /** The door with a sentence for what was done: Undo when the action hands

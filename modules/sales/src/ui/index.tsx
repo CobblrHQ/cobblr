@@ -422,6 +422,7 @@ export function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: Sale
       const back = r.restocked.reduce((n, x) => n + x.qty, 0);
       toast.success(back > 0 ? `Order cancelled: ${back} put back in stock` : "Order cancelled", {
         actionLabel: "Undo",
+        // UNDO: reinstating the order refuses once it changed after the cancel (#9419 audit part 1)
         onAction: async () => {
           await api.reinstateOrder(orderId, r);
           invalidate();

@@ -10,7 +10,7 @@ import { imagePathField } from "@cobblr/platform-contract/image-reference";
 import { platform } from "@cobblr/platform-contract";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
-import { derivedQueryFor, enrichEntityImage, setEntityImagePath, setMainPhoto, storePickedImage } from "../services/entity-image.js";
+import { derivedQueryFor, enrichEntityImage, setMainPhoto, storePickedImage, writeImagePath } from "../services/entity-image.js";
 import { fileIdOfImagePath, rememberAiPick, rememberSearch, rememberUsed, rememberedSearch, urlInUse } from "../services/record-photo-searches.js";
 import { deriveImageQuery } from "../services/ddg-images.js";
 import { pictureOptions } from "../services/picture-options.js";
@@ -22,6 +22,24 @@ import { IMAGE_BUDGET } from "../services/auto-rank.js";
 import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 export const entityImageRouter = Router({ mergeParams: true });
+
+/** A main photo's way back, issued to whoever changed it: it puts the old
+ *  photo back only while the record still shows this one, so a photo a
+ *  teammate chose since is never replaced (#9377's class). */
+async function photoUndo(
+  req: Parameters<typeof sessionUser>[0],
+  target: { orgId: string; entityKind: string; entityId: string; instance: string | null },
+  set: { image_path: string; previous_image_path: string | null },
+) {
+  const who = sessionUser(req)?.id;
+  if (!who || set.image_path === set.previous_image_path) return undefined;
+  return platform().actions.issueUndos(target.orgId, who, [
+    {
+      action_id: "core-scan:put-back-main-photo",
+      args: { entity_kind: target.entityKind, entity_id: target.entityId, made: set.image_path, ...(set.previous_image_path ? { previous: set.previous_image_path } : {}), ...(target.instance ? { instance: target.instance } : {}) },
+    },
+  ]);
+}
 
 const Body = z.object({
   entity_kind: z.string().min(1).max(64),
@@ -147,7 +165,9 @@ entityImageRouter.post(
     // replaces stays in the record's photos (setMainPhoto).
     if (parsed.data.file_id) {
       const set = await setMainPhoto({ ...target, fileId: parsed.data.file_id });
-      res.json(set ? { ...set, file_id: parsed.data.file_id } : { image_path: null, reason: "The record could not be changed. Try again." });
+      if ("refused" in set) return void res.json({ image_path: null, reason: set.refused.message });
+      const undo = await photoUndo(req, target, set);
+      res.json({ ...set, file_id: parsed.data.file_id, ...(undo ? { undo } : {}) });
       return;
     }
     // A picture the person (or AI Pick) picked from the results: keep what
@@ -164,9 +184,10 @@ entityImageRouter.post(
       });
       if (kept.fileId === null) return void res.json({ image_path: null, reason: `${kept.why} Try another picture.` });
       const set = await setMainPhoto({ ...target, fileId: kept.fileId });
-      if (!set) return void res.json({ image_path: null, reason: "The picture was saved, but the record could not be changed. Try again." });
+      if ("refused" in set) return void res.json({ image_path: null, reason: `The picture was saved, but the record was not changed: ${set.refused.message}` });
       await rememberUsed(tenantDb(req), target.entityKind, target.entityId, url, kept.fileId);
-      res.json({ ...set, file_id: kept.fileId });
+      const undo = await photoUndo(req, target, set);
+      res.json({ ...set, file_id: kept.fileId, ...(undo ? { undo } : {}) });
       return;
     }
     // No explicit query (and no picked url to skip the search)? Derive the
@@ -244,11 +265,14 @@ entityImageRouter.post(
     const fileId = parsed.data.file_id ?? fileIdOfImagePath(parsed.data.image_path);
     if (fileId) {
       const set = await setMainPhoto({ ...target, fileId });
-      if (!set) return void res.status(409).json({ error: { code: "not_changed", message: "The record's photo could not be changed. Try again." } });
-      return void res.json(set);
+      if ("refused" in set) return void res.status(set.refused.status).json({ error: { code: "not_changed", message: set.refused.message } });
+      // A photo given by its address is the old Undo of a client older than
+      // this one: it is a way back itself, and is offered none.
+      const undo = parsed.data.file_id ? await photoUndo(req, target, set) : undefined;
+      return void res.json({ ...set, ...(undo ? { undo } : {}) });
     }
-    const ok = await setEntityImagePath(target, parsed.data.image_path ?? null);
-    if (!ok) return void res.status(409).json({ error: { code: "not_changed", message: "The record's photo could not be changed. Try again." } });
+    const wrote = await writeImagePath(target, parsed.data.image_path ?? null);
+    if (!wrote.ok) return void res.status(wrote.refused.status).json({ error: { code: "not_changed", message: wrote.refused.message } });
     res.json({ image_path: parsed.data.image_path ?? null, previous_image_path: null });
   }),
 );

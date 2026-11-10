@@ -175,6 +175,7 @@ shipmentEventRouter.post(
             description: ev.description ?? null,
           }),
         });
+        // REFUSAL: a carrier's tracking event, with no person waiting; the log line says what the order answered
         if (r.ok) parcel = (await r.json()) as ParcelOutcome;
         else console.warn(`[core-scan] the parcel did not reach the order: HTTP ${r.status}`);
       } catch (err) {
@@ -408,6 +409,7 @@ shipmentEventRouter.post(
           // jsonb-replace-ok: an HTTP request body, not a jsonb column.
           body: JSON.stringify({ stage: ev.stage, item: ev.item ?? null, refund_amount: ev.refund_amount ?? null, description: ev.description ?? null, source: "email" }),
         });
+        // REFUSAL: a carrier's return event, with no person waiting; the log line says what the order answered
         if (r.ok) {
           res.status(200).json({ applied: true, order_id: orderId, stage: ev.stage, recorded: "order" });
           return;

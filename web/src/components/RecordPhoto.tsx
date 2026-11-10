@@ -16,7 +16,7 @@
 import { lazy, Suspense, useEffect, useState, type CSSProperties } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Image as ImageIcon } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { undoStepsOf, useRunIssuedUndo, useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ImageOption } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { markShownBeside, PICTURE_STATE_TEXT, usePhotoSuggestionFor } from "../lib/photoSuggestions";
@@ -50,6 +50,7 @@ export function usePictureFromWeb(opts: { kind: string; id: string; instance?: s
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
+  const runIssuedUndo = useRunIssuedUndo();
   const refresh = () => {
     opts.onSaved();
     void qc.invalidateQueries({ queryKey: ["image-options", activeSlug, opts.kind, opts.id] });
@@ -77,18 +78,19 @@ export function usePictureFromWeb(opts: { kind: string; id: string; instance?: s
     onSuccess: ({ r, pick }) => {
       if (!r.image_path) return void toast.error(r.reason ?? KEEP_FAILED);
       refresh();
-      const previous = r.previous_image_path ?? null;
       const said = "ai" in pick && pick.ai ? `Photo set to tile ${pick.ai.tile}.` : "Photo set.";
-      toast.action(previous ? `${said} The one it replaces is kept in its photos.` : said, {
+      const message = r.previous_image_path ? `${said} The one it replaces is kept in its photos.` : said;
+      // The Undo the server issued: it puts the old photo back only while
+      // this one is still main. Writing the old address back replaced a
+      // photo a teammate chose since.
+      if (!undoStepsOf(r.undo).length) return void toast.success(message);
+      toast.action(message, {
         actionLabel: "Undo",
         duration: 10_000,
         onAction: async () => {
-          try {
-            await api.setMainPhoto(activeSlug!, { entity_kind: opts.kind, entity_id: opts.id, instance: opts.instance ?? null, image_path: previous });
-            refresh();
-          } catch (e) {
-            toast.error(e instanceof ApiError ? e.message : "Couldn't put the old photo back. Try again.");
-          }
+          const refused = await runIssuedUndo(r.undo);
+          refresh();
+          if (refused) toast.error(refused);
         },
       });
     },

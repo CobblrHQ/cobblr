@@ -11,6 +11,7 @@ import { scannerQueue } from "../../services/scanner-queue.js";
 import { inboxCounts, type CountRow } from "../../services/inbox-counts.js";
 import { auditSplitSeries, healSplitSeriesWorkspace } from "../../services/split-series-heal.js";
 import { auditReroute, rerouteWorkspace } from "../../services/reroute-keyword-rows.js";
+import { undoReroutes } from "../../services/reroute-undo.js";
 import { fieldProvenanceOf, scanSourceConflict, type SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import { TRIAGE_SCAN_CAP, asTheCardReadsIt, destinationTablesFor, liveTablesFor, scanViewerFor } from "./shared.js";
 
@@ -96,6 +97,28 @@ queueRouter.post(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     res.json(await rerouteWorkspace(tenantContext(req).org.id, 1000));
+  }),
+);
+
+// ─────────────────── POST /inbox/reroute-undo ──────────────────────
+// The way back from the re-route pass (reroute-undo.ts, #9380): the rows it
+// moved go back on the list each had, all of them or those named in `ids`.
+// A row somebody changed since is skipped and listed with why.
+
+const RerouteUndoBody = z.object({ ids: z.array(z.string().min(1).max(120)).max(1000).optional() }).strict();
+
+// AI-REACH: exempt — an operator's undo of the re-route pass's moves; a person moves one row through its list picker
+// UI-REACH: an operator's one-off undo of a heal, run by hand
+queueRouter.post(
+  "/inbox/reroute-undo",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const body = RerouteUndoBody.safeParse(req.body ?? {});
+    if (!body.success) {
+      res.status(400).json({ error: { code: "bad_body", message: "body is { ids?: string[] }" } });
+      return;
+    }
+    res.json(await undoReroutes(tenantContext(req).org.id, { ids: body.data.ids }));
   }),
 );
 

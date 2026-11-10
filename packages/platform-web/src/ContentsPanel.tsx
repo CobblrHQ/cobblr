@@ -25,6 +25,7 @@ import { useViewerRole } from "./context";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type { PlatformResolvedEntity } from "./types";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { takeOutUndoBody } from "./take-out-undo";
 
 type GetToken = () => string | null;
 
@@ -298,8 +299,9 @@ export function ContentsPanel({
       const placed = r?.placed ?? { kind: addKind, id: addId };
       toast.action(counted ? `Added ${Math.min(addQty, pickedQty)} × ${picked?.title ?? "it"} to ${heading}` : `Added ${picked?.title ?? "it"} to ${heading}`, {
         actionLabel: "Undo",
+        // UNDO: sent home only while it is still in this build; a teammate's later move is kept (#9422)
         onAction: async () => {
-          await papi(slug, getToken, "POST", `/modules/core-placement/return-home`, { containee: placed });
+          await papi(slug, getToken, "POST", `/modules/core-placement/return-home`, { containee: placed, expected: { container } });
           refresh();
         },
         duration: 8000,
@@ -315,19 +317,20 @@ export function ContentsPanel({
       const containee = { kind: it.kind, id: it.id };
       if (to) {
         const r = await papi<{ placed?: { kind: string; id: string } }>(slug, getToken, "POST", `/modules/core-placement/place`, { containee, container: to });
-        return { it, placed: r?.placed ?? containee, where: null as string | null };
+        return { it, placed: r?.placed ?? containee, where: null as string | null, to };
       }
-      const r = await papi<{ to: { title?: string } | null; placed?: { kind: string; id: string } }>(slug, getToken, "POST", `/modules/core-placement/return-home`, { containee });
-      return { it, placed: r?.placed ?? containee, where: r?.to?.title ?? null };
+      const r = await papi<{ to: { kind?: string; id?: string; title?: string } | null; placed?: { kind: string; id: string } }>(slug, getToken, "POST", `/modules/core-placement/return-home`, { containee });
+      return { it, placed: r?.placed ?? containee, where: r?.to?.title ?? null, to: r?.to?.kind && r.to.id ? { kind: r.to.kind, id: r.to.id } : null };
     },
-    onSuccess: ({ it, placed, where }) => {
+    onSuccess: ({ it, placed, where, to }) => {
       setTakingOut(null);
       refresh();
       const n = partOf.get(`${it.kind}:${it.id}`)?.qty ?? null;
       toast.action(where ? `Took ${it.title} out of ${heading}: it is back in ${where}` : `Took ${it.title} out of ${heading}`, {
         actionLabel: "Undo",
+        // UNDO: the whole record back into this build only while it is still where the take-out left it; a part that joined spares is a split the door cannot guard (take-out-undo.ts)
         onAction: async () => {
-          await papi(slug, getToken, "POST", `/modules/core-placement/place`, { containee: placed, container, ...(n ? { qty: n } : {}) });
+          await papi(slug, getToken, "POST", `/modules/core-placement/place`, takeOutUndoBody({ took: { kind: it.kind, id: it.id }, placed, container, to, qty: n }));
           refresh();
         },
         duration: 8000,

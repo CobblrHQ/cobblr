@@ -19,11 +19,11 @@ export async function comparePlacementWrite(db: QueryExecutorProvider, thing: En
     : await sql`insert into core_placement_placements (containee_kind, containee_id, container_kind, container_id, slot, metadata, placed_by)
         values (${thing.kind}, ${thing.id}, ${to.container.kind}, ${to.container.id}, ${to.slot}, ${metadata}::jsonb, ${to.userId})
         on conflict (containee_kind, containee_id) do nothing returning containee_id`.execute(db);
-  if (!result.rows.length) throw new Error("placement: this thing moved after the scan. Its later move was kept.");
+  if (!result.rows.length) throw new Error("placement: this thing moved since. Its later move was kept, so nothing was moved back.");
 }
 
 export async function comparePlacementRemove(db: QueryExecutorProvider, thing: EntityRef, expected: PlacementExpectation): Promise<void> {
   if (!expected.container) return;
   const result = await sql`delete from core_placement_placements where ${matches(thing, expected)} returning containee_id`.execute(db);
-  if (!result.rows.length) throw new Error("placement: this thing moved after the scan. Its later move was kept.");
+  if (!result.rows.length) throw new Error("placement: this thing moved since. Its later move was kept, so nothing was moved back.");
 }

@@ -11,7 +11,7 @@ import { useKindLabels } from "../lib/useKindLabels";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ExternalLink, PackagePlus } from "lucide-react";
-import { Modal, useImageSrc, useToast, EntityPhoto, runUndoSteps, undoStepsOf, useRunAction } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useToast, EntityPhoto, undoStepsOf, useRunIssuedUndo } from "@cobblr/platform-web";
 import { api, ApiError, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -38,8 +38,7 @@ export function BinAdjustModal({
   // carries the module's ("part"), which is wrong for a book (2026-09-12).
   const labels = useKindLabels(activeSlug);
   const toast = useToast();
-  // PRESS-ARGS: it only presses an Undo the server issued, with every argument that step was issued with.
-  const run = useRunAction();
+  const runIssuedUndo = useRunIssuedUndo();
   const navigate = useNavigate();
   const [qty, setQty] = useState(item.qty ?? 0);
   // Session anchor (the author): the count this card OPENED at. Always visible once
@@ -84,25 +83,14 @@ export function BinAdjustModal({
       // The record's own Undo, never a recount to the old number: that took
       // away a teammate's take made since (#9377). It is refused, with what
       // changed, once the count is not as this left it.
-      const steps = undoStepsOf(r.undo);
-      if (!steps.length) return void toast.success(said);
+      if (!undoStepsOf(r.undo).length) return void toast.success(said);
       toast.action(said, {
         actionLabel: "Undo",
         duration: 7000,
         onAction: async () => {
-          try {
-            let refused: string | null = null;
-            await runUndoSteps(async (b) => {
-              const outcome = await run(b, { undo: "is-undo" });
-              const said = outcome.result as { ok?: boolean; error?: string } | null;
-              if (said?.ok === false) refused ??= said.error ?? "Couldn't undo that.";
-              return outcome;
-            }, steps);
-            if (refused) return void toast.error(refused);
-            setQty(r.old_qty);
-          } catch (e) {
-            toast.error(e instanceof ApiError ? e.message : "Couldn't undo that.");
-          }
+          const refused = await runIssuedUndo(r.undo);
+          if (refused) return void toast.error(refused);
+          setQty(r.old_qty);
         },
       });
     },

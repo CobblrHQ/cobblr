@@ -21,6 +21,7 @@ import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { sessionUser, tenantContext, type CoreLocationsDB } from "../db.js";
 import { deletePlace } from "./place-delete.js";
+import { sameJson } from "./same-json.js";
 import { asyncHandler, requireRole } from "./util.js";
 
 type Db = Kysely<CoreLocationsDB>;
@@ -38,7 +39,8 @@ export interface ImportResult {
   steps: ImportStep[];
   warnings: string[];
   created: string[];
-  updated: Array<{ id: string; before: unknown }>;
+  // after: what the import left (#9423); a result from before it has none.
+  updated: Array<{ id: string; before: unknown; after?: unknown }>;
   root: { id: string; name: string } | null;
   note: string;
 }
@@ -128,7 +130,7 @@ export async function importFloorplan(orgId: string, plan: FloorplanFileT, opts:
         const changed = Object.keys(want).some((k) => !same(cur[k], want[k]));
         steps.push({ path, kind, action: changed ? "update" : "unchanged" });
         if (changed && !opts.dryRun) {
-          updated.push({ id: row.id, before: (row.metadata as { floorplan?: unknown } | null)?.floorplan ?? null });
+          updated.push({ id: row.id, before: (row.metadata as { floorplan?: unknown } | null)?.floorplan ?? null, after: { ...cur, ...want } });
           await trx
             .updateTable("core_locations_locations")
             .set({ metadata: platform().db.mergeJsonb("metadata", { floorplan: { ...cur, ...want } }) as never, updated_at: new Date() } as never)
@@ -264,7 +266,17 @@ export async function importFloorplan(orgId: string, plan: FloorplanFileT, opts:
 export async function undoImport(orgId: string, result: Pick<ImportResult, "created" | "updated">, userId: string | null): Promise<{ restored: number; deleted: number; kept: number; note: string }> {
   const db = (await platform().tenants.getDb(orgId)) as unknown as Db;
   let restored = 0;
+  let kept = 0;
   for (const u of result.updated) {
+    // Only while its layout is still what the import left: a teammate's
+    // redraw since is kept (#9423).
+    if (u.after !== undefined) {
+      const cur = await db.selectFrom("core_locations_locations").select("metadata").where("id", "=", u.id).executeTakeFirst();
+      if (!cur || !sameJson((cur.metadata as { floorplan?: unknown } | null)?.floorplan ?? null, u.after)) {
+        kept++;
+        continue;
+      }
+    }
     await db
       .updateTable("core_locations_locations")
       .set({ metadata: platform().db.mergeJsonb("metadata", { floorplan: (u.before as Fp | null) ?? null }) as never, updated_at: new Date() } as never)
@@ -273,15 +285,14 @@ export async function undoImport(orgId: string, result: Pick<ImportResult, "crea
     restored++;
   }
   let deleted = 0;
-  let kept = 0;
   for (const id of [...result.created].reverse()) {
     const still = await db.selectFrom("core_locations_locations").select("id").where("id", "=", id).executeTakeFirst();
     if (!still) continue;
-    const gone = await deletePlace(orgId, id, userId, undefined, true);
-    if (gone === "places_inside") kept++;
+    const gone = await deletePlace(orgId, id, userId, undefined, true, true);
+    if (gone === "places_inside" || gone === "things_inside") kept++;
     else if (gone) deleted++;
   }
-  const keptNote = kept ? ` Kept ${kept} with places inside that the import did not make.` : "";
+  const keptNote = kept ? ` Kept ${kept} changed or filled since, as they are now.` : "";
   return { restored, deleted, kept, note: `Took back the import: ${deleted} made, ${restored} put back as they were.${keptNote}` };
 }
 
@@ -430,7 +441,7 @@ export function readImportResult(raw: unknown): Pick<ImportResult, "created" | "
   const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v);
   if (!Array.isArray(o.created) || !Array.isArray(o.updated)) return null;
   if (!o.created.every(uuid)) return null;
-  const updated = (o.updated as Array<{ id?: unknown; before?: unknown }>).filter((u) => uuid(u?.id)).map((u) => ({ id: u.id as string, before: u.before ?? null }));
+  const updated = (o.updated as Array<{ id?: unknown; before?: unknown; after?: unknown }>).filter((u) => uuid(u?.id)).map((u) => ({ id: u.id as string, before: u.before ?? null, ...(u.after !== undefined ? { after: u.after } : {}) }));
   return { created: o.created as string[], updated };
 }
 

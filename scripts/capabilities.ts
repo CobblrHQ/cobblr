@@ -2021,6 +2021,7 @@ export const CAPABILITIES: Capability[] = [
       "(modules/core-scan/src/services/tracked-stamp.ts); read a row's match through scanRebuy in the contract",
     except: {
       "modules/core-scan/src/services/file-through-confirm.test.ts": "a fixture: the stamp as the matcher writes it, to test a door that reads it",
+      "modules/core-scan/src/services/reroute-keyword-rows.test.ts": "a fixture: the stamp as the matcher writes it, to test that the re-route pass keeps a row on its record's list",
     },
   },
   {

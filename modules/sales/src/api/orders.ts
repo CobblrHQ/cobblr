@@ -9,7 +9,7 @@ import { fieldCurrency } from "@cobblr/platform-contract/money";
 import { orderTotal } from "../invoice.js";
 import { moneyOfOrders, orderMoney, recordReturn, undoReturn } from "../returns.js";
 import { recordPayment, syncPaid, undoPayment } from "../payments.js";
-import { heldByOthers, holdOrder, releaseHold } from "../holds.js";
+import { heldByOthers, holdOrder, releaseHold, undoHold } from "../holds.js";
 import { accountingCsv, MoneyFileRefused, summarise } from "../summary.js";
 import { paidAsRead, readsPaid } from "../reads-paid.js";
 import { arrivedEverywhere } from "@cobblr/platform-contract/day";
@@ -637,6 +637,29 @@ ordersRouter.delete(
       return;
     }
     res.json({ ok: true, released: r.released });
+  }),
+);
+
+// The Undo of one hold (#9421): it sends the stamp and the previous hold the
+// hold answered, and takes back only that hold while the order still has it.
+const HoldUndo = z.object({ held_at: z.string().min(1), previous: z.object({ until: z.string().nullable() }).nullable() });
+// AI-REACH: exempt — the hold toast's Undo, sent with the stamp its hold answered; the assistant's own hold has its issued Undo (sales:release-hold)
+ordersRouter.post(
+  "/:id/hold/undo",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "sales:hold-order"))) return;
+    const body = HoldUndo.safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    if (!(await orderHere(req))) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
+    const r = await undoHold(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, body.data);
+    if (!r.ok) {
+      res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.json(r);
   }),
 );
 

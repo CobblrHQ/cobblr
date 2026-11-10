@@ -875,6 +875,7 @@ export function InboxCard({
       toast.action(`${label}: arrived damaged, not added to stock`, {
         actionLabel: "Undo",
         duration: 7000,
+        // UNDO: the unconfirm route refuses once the record it filed changed since (#9420)
         onAction: async () => {
           try {
             await api.unconfirmScanItem(activeSlug, item.id);
@@ -901,6 +902,7 @@ export function InboxCard({
       toast.action(`Removed ${label}`, {
         actionLabel: "Undo",
         duration: 7000,
+        // UNDO: restores the scan this run removed; a removed scan cannot be edited since
         onAction: async () => {
           try {
             await api.restoreScanItem(activeSlug, item.id);
@@ -1199,6 +1201,7 @@ export function InboxCard({
       // its newest History entry holds what it replaced: the toast can undo it.
       const undo = latestRevision(fresh);
       const said = (msg: string) =>
+        // UNDO: blind, narrow: the revision's columns go back while the scan is still pending (#9419 audit part 1)
         undo ? toast.action(msg, { actionLabel: "Undo", onAction: () => putBack.mutate(undo) }) : toast.success(msg);
       if (vars?.barcode) {
         said(

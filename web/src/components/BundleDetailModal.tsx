@@ -280,6 +280,7 @@ export function BundleDetailModal(props: Props) {
         const added = [...(r.applied.instances_created ?? []), ...(r.applied.auto_enabled_modules ?? []).map((m) => moduleNames[m] ?? m)];
         toast.action(`Installed ${r.bundle.name}${added.length ? `: added ${added.join(", ")}` : ""}.`, {
           actionLabel: "Undo",
+          // UNDO: blind, narrow: uninstalls the bundle whatever version is installed by then; its records and lists stay (#9419 audit part 1)
           onAction: async () => {
             try {
               await changeWorkspaceShape(qc, slug, () => api.uninstallBundle(slug, r.bundle.id));

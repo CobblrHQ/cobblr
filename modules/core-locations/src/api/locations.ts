@@ -449,7 +449,7 @@ locationsRouter.delete(
       if (!(await requireCapability(req, res, "core-locations:delete-with-places-inside"))) return;
       gone = await deletePlace(ctx.org.id, id, sessionUser(req).id);
     }
-    if (gone === "places_inside") return;
+    if (gone === "places_inside" || gone === "things_inside") return;
     if (!gone) {
       res.status(404).json({ error: { code: "not_found", message: "location not found" } });
       return;

@@ -26,7 +26,7 @@ import { brokenMarkOf, markBroken, unmarkBroken } from "../../services/mark-brok
 import { markArrivedDamaged } from "../../services/arrived-damaged.js";
 import { ARRIVED_DAMAGED_KEY, scanArrivedDamaged } from "@cobblr/platform-contract/scan-arrived-damaged";
 import { mergeMeta } from "../../services/metadata.js";
-import { SENDING_BACK_EXPIRES_MS, SENDING_BACK_KEY, SENT_BACK_KEY, actOf, sentBackRefusal } from "../../services/who-did-it.js";
+import { FILED_SEEN_KEY, SENDING_BACK_EXPIRES_MS, SENDING_BACK_KEY, SENT_BACK_KEY, actOf, sentBackRefusal } from "../../services/who-did-it.js";
 import { FILED_BY_KEY, scanFilingRefusal } from "@cobblr/platform-contract/scan-recovery";
 import { newPlaceAt } from "../../services/tracked-stamp.js";
 import { matchQuery, scanPlaceOf, trackedMatchFor, type TrackedMatchStamp } from "../../services/tracked-stamp.js";
@@ -305,6 +305,21 @@ attachRouter.post(
   }),
 );
 
+/** The record this filing made, which its Undo would delete: a bin the scan
+ *  made, or the new record it filed as. Null for a filing that made nothing
+ *  (an attach to something already there, a mark, a place added), whose Undo
+ *  only takes its own effect back. The same branches sendBack takes. */
+function madeByFiling(
+  row: { target_entity_id: string | null; target_module: string | null; target_kind: string | null; target_location_id: string | null },
+  meta: Record<string, unknown>,
+): string | null {
+  if (scanArrivedDamaged(meta) || brokenMarkOf(meta)) return null;
+  const attached = meta.attached_to as { id?: string; mode?: string } | undefined;
+  if (attached?.id) return attached.mode === NEW_BIN ? attached.id : null;
+  if (row.target_entity_id && row.target_module && row.target_kind && row.target_entity_id !== row.target_location_id) return row.target_entity_id;
+  return null;
+}
+
 // ─────────────────────── POST /inbox/:id/unconfirm ─────────────────────
 // REVERT a commit: bring a resolved scan back to the pending inbox so a wrong
 // confirm can be redone (the mirror of restore-from-discarded, for the other
@@ -369,6 +384,25 @@ attachRouter.post(
         },
       });
       return;
+    }
+
+    // A record or bin this filing MADE goes away with its Undo, for good. Not
+    // over someone else's work since: a teammate's edit, a thing placed in
+    // it, a link to it, or their own filing of this row after it was sent
+    // back. It was new, so every entry on it by anyone else came after; the
+    // same rule an issued Undo is judged by (#9420, #9419).
+    const filedMeta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    const madeHere = madeByFiling(row, filedMeta);
+    if (madeHere) {
+      // Filed with its newest entry kept: any later entry, the filer's own
+      // too (a photo, a note), since the Undo deletes it with them. Filed
+      // before that was kept: anyone else's entry.
+      const seen = typeof filedMeta[FILED_SEEN_KEY] === "number" ? (filedMeta[FILED_SEEN_KEY] as number) : null;
+      const since = await platform().activity.changeSince(ctx.org.id, seen != null ? { ids: [madeHere], after: seen, userId: null } : { ids: [madeHere], after: 0, userId: sessionUser(req)?.id ?? null });
+      if (since) {
+        res.status(409).json({ error: { code: "undo_stale", message: since } });
+        return;
+      }
     }
 
     // Claimed before anything is reversed: of two presses at once, one

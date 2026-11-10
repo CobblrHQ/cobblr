@@ -34,6 +34,7 @@ import { looksLikeSameThing, mergePlan } from "../services/merge-records.js";
 import { identifierFieldsByKind } from "../services/entity-match.js";
 import { identifierCanonical } from "../services/identifier-equals.js";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
+import { refusalOf } from "@cobblr/platform-contract/self-call-refusal";
 
 export const duplicatesRouter = Router({ mergeParams: true });
 
@@ -300,10 +301,12 @@ duplicatesRouter.post(
         body: JSON.stringify(plan.patch),
       });
       if (!up.ok) {
-        res.status(502).json({
+        // The survivor's own refusal, in its words (#9413).
+        const refused = await refusalOf(up, `couldn't update ${keep.title}`);
+        res.status(refused.status < 500 ? refused.status : 502).json({
           error: {
             code: "merge_failed",
-            message: `couldn't update ${keep.title} (${up.status}) - nothing was changed`,
+            message: `${refused.status < 500 ? `Couldn't update ${keep.title}: ${refused.message}` : refused.message} Nothing was changed.`,
           },
         });
         return;
@@ -312,6 +315,8 @@ duplicatesRouter.post(
 
     const del = await apiFetch(dropPath, { method: "DELETE", headers: authHeaders });
     if (!del.ok) {
+      // The duplicate's own refusal, read before the put-back (#9413).
+      const refused = await refusalOf(del, `couldn't remove ${drop.title}`);
       // The survivor now carries both quantities and the duplicate still
       // exists, which double-counts. Put the survivor back before reporting,
       // so a failed merge leaves the workspace as it found it.
@@ -324,10 +329,11 @@ duplicatesRouter.post(
           body: JSON.stringify(undo),
         }).catch(() => undefined);
       }
-      res.status(409).json({
+      // A member who may not delete it hears 403 and why, never a bare status code.
+      res.status(refused.status < 500 ? refused.status : 409).json({
         error: {
           code: "merge_failed",
-          message: `couldn't remove ${drop.title} (${del.status}) - nothing was changed`,
+          message: `${refused.status < 500 ? `Couldn't remove ${drop.title}: ${refused.message}` : refused.message} Nothing was changed.`,
         },
       });
       return;

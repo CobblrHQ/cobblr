@@ -16,6 +16,7 @@ import { candidatesWithUserFields } from "../../services/user-fields.js";
 import { buildCadenceEvents } from "../../cadence-events.js";
 import { resolveRequirement, storageRequirementFor } from "../../services/storage-requirement.js";
 import { FILING_OWED_KEY, filingOwedOf, owedAfterRefusal, resumesOn } from "../../services/filing-owed.js";
+import { FILED_SEEN_KEY } from "../../services/who-did-it.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount } from "../../services/scan-target.js";
 import { RAN_OUT_KEY, ranOut, type RanOutOutcome } from "../../services/ran-out.js";
 import { applyAxisValue, clearAxisValue, readAxisValue, type AxisTarget } from "@cobblr/platform-contract/category-axis";
@@ -1597,6 +1598,14 @@ confirmRouter.post(
     // was made (below the body parse), bound now the record has an id.
     if (created?.id && pickedEntry) {
       await bindToCatalogEntry({ orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null, kind: effectiveKindId, id: created.id, entryId: pickedEntry });
+    }
+
+    // The record's newest entry as filed: its Undo refuses over any entry
+    // after this one, the filer's own photo or note included, since the
+    // Undo deletes the record for good (#9420).
+    if (created?.id) {
+      const seen = await platform().activity.newestChangeOn?.(ctx.org.id, [created.id]).catch(() => null);
+      if (seen != null) await db.updateTable("core_scan_inbox_items").set({ suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ [FILED_SEEN_KEY]: seen })}::jsonb` as never }).where("id", "=", id).execute().catch(() => undefined);
     }
 
     res.json({

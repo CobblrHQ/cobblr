@@ -2,6 +2,19 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-10
+
+### Features
+- Undoing a new printer pool no longer removes it once a teammate has put printers, a production run or jobs in it: the Undo says what went in and leaves the pool as it is. Every Undo in Cobblr is now checked to either refuse over a later change or say why it cannot overwrite one.
+
+### Improvements
+- A scan the inbox re-sorted after a matching rule changed can be put back on the list it had, all at once or one by one, and a row you changed since is left as you left it
+
+### Fixes
+- Changing a record's photo when your role may not change that record now says so, instead of "could not be changed. Try again.", and leaves no picture attached to it.
+- Undo after changing a record's main photo no longer replaces a photo someone else chose since: it puts the old photo back only if the record still shows the one you set, and otherwise says why.
+- A refused Undo on a new vendor now says why (another order uses that shop), instead of "Couldn't undo that."
+
 ## 2026-11-09
 
 ### Fixes

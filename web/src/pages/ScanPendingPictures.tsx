@@ -45,6 +45,7 @@ export function ScanPendingPictures({ slug, rowIds }: { slug: string; rowIds: Re
       toast.action(`Removed ${p.name}.`, {
         actionLabel: "Undo",
         duration: 10000,
+        // UNDO: restores the scan this run removed; a removed scan cannot be edited since
         onAction: () => {
           if (r.item_id) void api.restoreScanItem(slug, r.item_id).then(refresh).catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
           else door?.again();

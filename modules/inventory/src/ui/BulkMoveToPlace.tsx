@@ -89,6 +89,7 @@ function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () =
     toast.action(said, {
       actionLabel: "Undo",
       duration: 10_000,
+      // UNDO: putPart says where the move left each thing and skips one that moved again since
       onAction: async () => {
         let back = 0;
         for (const m of moved) {
@@ -125,6 +126,7 @@ function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () =
             toast.action(`Moved ${countOf(n, itemNoun)} to ${where}.`, {
               actionLabel: "Undo",
               duration: 10_000,
+              // UNDO: the mover's way back puts back only what is still where it moved it (#9419 audit part 1)
               onAction: async () => {
                 await undo();
                 void qc.invalidateQueries();

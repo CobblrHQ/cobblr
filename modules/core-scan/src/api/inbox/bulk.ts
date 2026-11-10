@@ -20,6 +20,7 @@ import { restampTrackedMatch } from "../../services/tracked-stamp.js";
 import { filingDestination } from "../../services/destination.js";
 import { withPersonName } from "../../services/user-name.js";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
+import { refusalOf } from "@cobblr/platform-contract/self-call-refusal";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { INTERNAL_API, destinationTablesFor, liveTablesFor, topCandidateCategory } from "./shared.js";
 
@@ -226,7 +227,8 @@ bulkRouter.post(
               }),
             },
           );
-          if (!r.ok) throw new Error(`attach ${r.status}`);
+          // The record's own refusal, in its words (#9413).
+          if (!r.ok) throw new Error((await refusalOf(r, "It could not be attached.")).message);
           attached++;
         } else if (plan.action === "create") {
           const row = rows.find((x) => x.id === plan.itemId);

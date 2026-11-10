@@ -70,6 +70,7 @@ export function registerCategoryHandlers(): void {
     if (!row) return { ok: false, error: `no category with id ${id}` };
     return { ok: true, summary: `Removed the ${row.name} category.`, result: { id: row.id, name: row.name } };
   });
+  // UNDO: adds the category back by name; records that held it kept their value
   platform().actions.registerUndo("inventory.remove-category", (result) => {
     const r = (result as { result?: { name?: unknown } } | null)?.result;
     if (typeof r?.name !== "string") return null;

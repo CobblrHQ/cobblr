@@ -124,6 +124,7 @@ function registerUndos(): void {
     await platform().events.emit("core-views.view.deleted", { orgId: ctx.orgId, viewId: view.id });
     return { ok: true, summary: `Removed the ${view.name} view.`, removed: view.id, data: { view } };
   });
+  // UNDO: restores the view this run deleted; a deleted view cannot be edited since
   platform().actions.registerUndo("core-views.delete-view", (result) => {
     const d = (result as { ok?: unknown; skipped?: unknown; data?: { view?: { id?: string } } } | null);
     if (d?.ok !== true || d.skipped || !d.data?.view?.id) return null;

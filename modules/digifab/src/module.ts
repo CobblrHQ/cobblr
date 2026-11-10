@@ -560,6 +560,7 @@ export default defineModule({
         userInvokable: true,
         argsSchema: {
           pool: { label: "Which pool (its name)", type: "text", required: true },
+          only_if_empty: { label: "Remove it only while it has no printers, production runs or jobs (the Undo of making it)", type: "boolean" },
         },
       },
       {

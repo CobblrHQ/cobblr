@@ -31,6 +31,9 @@ export interface PlaceHolder {
   holds: number;
 }
 
+/** Where a thing is expected to be: its container (null: in none), slot and spot. */
+export type PlacementExpected = { container: { kind: string; id: string } | null; slot?: string | null; position?: { x_mm: number; y_mm: number } | null };
+
 export const placementApi = {
   placementContents: (slug: string, containerKind: string, containerId: string) =>
     request<{ items: PlacedThing[] }>(
@@ -80,8 +83,10 @@ export const placementApi = {
       position?: { x_mm: number; y_mm: number } | null;
       /** Where the move was made, for the activity ("floor plan"). */
       via?: string;
+      /** Where the thing is expected to be now: an Undo moves it only while it is still there, else 409 moved_since (#9422). */
+      expected?: PlacementExpected;
     },
   ) => request<void>("POST", `/orgs/${slug}/modules/core-placement/place`, body),
-  placementRemove: (slug: string, containee: { kind: string; id: string }) =>
-    request<void>("POST", `/orgs/${slug}/modules/core-placement/remove`, { containee }),
+  placementRemove: (slug: string, containee: { kind: string; id: string }, expected?: PlacementExpected) =>
+    request<void>("POST", `/orgs/${slug}/modules/core-placement/remove`, { containee, ...(expected ? { expected } : {}) }),
 };

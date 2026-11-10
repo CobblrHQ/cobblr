@@ -85,7 +85,10 @@ export async function deletePlace(
    *  an old label for it then says so (#8884). */
   mergedInto?: MergedInto,
   onlyWithoutPlacesInside = false,
-): Promise<{ name: string; places: number; things: number } | null | "places_inside"> {
+  /** An Undo's delete of a place it made: one a person has since put things
+   *  in is kept, never emptied (#9423). */
+  keepIfThingsInside = false,
+): Promise<{ name: string; places: number; things: number } | null | "places_inside" | "things_inside"> {
   const db = await dbOf(orgId);
   const done = await db.transaction().execute(async (trx) => {
     await lockTree(trx);
@@ -98,13 +101,14 @@ export async function deletePlace(
     if (onlyWithoutPlacesInside && ids.length > 1) return "places_inside" as const;
     const placements = await placementsIn(orgId, ids);
     const things = placements.filter((p) => p.containee.kind !== LOCATION);
+    if (keepIfThingsInside && things.length) return "things_inside" as const;
     const details = { name: root.name, rows, placements, merged_into: mergedInto ?? null };
     await platform().deletedRecords.keep(orgId, LOCATION, rootId, root, details, deletedBy);
     for (const t of things) await platform().placement.remove({ orgId, containee: t.containee });
     await trx.deleteFrom(TABLE).where("id", "=", rootId).execute();
     return { root, ids, details, things: things.length };
   });
-  if (!done || done === "places_inside") return done;
+  if (!done || done === "places_inside" || done === "things_inside") return done;
 
   // Filed in after the read above: taken out now the places are gone, and kept
   // for the undo with the rest.

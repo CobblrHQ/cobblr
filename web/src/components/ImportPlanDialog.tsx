@@ -87,6 +87,7 @@ export function ImportPlanDialog({ slug, onClose }: { slug: string; onClose: () 
       onClose();
       toast.action(r.note, {
         actionLabel: "Undo",
+        // UNDO: the import's Undo refuses a place a teammate changed since and keeps one with things in it (#9423)
         onAction: async () => {
           const back = await api.floorplanImportUndo(slug, { created: r.created, updated: r.updated });
           refresh();

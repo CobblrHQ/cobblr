@@ -325,7 +325,20 @@ tasksRouter.patch(
       await makeNextOccurrence(ctx.org.id, db, updated.id);
     }
 
-    res.json(updated);
+    // A status change hands back its way back, issued to whoever made it: the
+    // status the task had, judged against History when pressed, so a status a
+    // teammate set since is never written over, whatever the caller sends
+    // (#9424). The dated card's Undo presses this.
+    const undo =
+      before && before.status !== updated.status && session?.id
+        ? await platform().actions.issueUndos(ctx.org.id, session.id, [
+            {
+              action_id: "projects:reopen-task",
+              args: { task_id: updated.id, status: before.status, completed_at: before.completed_at ? new Date(before.completed_at as unknown as string).toISOString() : null },
+            },
+          ])
+        : null;
+    res.json(undo?.length ? { ...updated, undo } : updated);
   }),
 );
 

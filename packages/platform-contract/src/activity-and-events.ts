@@ -141,6 +141,10 @@ export interface PlatformActivity {
    *  issued Undo is judged by (#7924): the platform's own changes and the
    *  person's own later changes do not count. */
   changeSince(orgId: string, p: { ids: readonly string[]; after: number; userId: string | null }): Promise<string | null>;
+  /** The newest entry on these records, or null for none: what an Undo
+   *  remembers when its change lands, so a later entry (anyone's, with
+   *  changeSince's userId null) is known as a change since (#9420). */
+  newestChangeOn(orgId: string, ids: readonly string[]): Promise<number | null>;
 }
 
 export type EventHandler = (payload: unknown) => void | Promise<void>;

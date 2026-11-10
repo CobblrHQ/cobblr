@@ -25,7 +25,7 @@ import { planDecodeFill, platform, traitAxisValue, type DecodeFillTarget } from 
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { displayed as displayedNote, cardNote, withoutRoutingSentences } from "../../services/routing-note.js";
 import { pictureAfterMatchAllowed } from "../../services/line-is-food.js";
-import { SCAN_REVIEW_CONFIDENCE, needsScanReview, scanHeldForReview, scanRowState, scanReviewReason, scanWaitingDays, type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, type FiledInto, filedIntoOf, scanFitItem } from "@cobblr/platform-contract/scan-triage";
+import { SCAN_REVIEW_CONFIDENCE, needsScanReview, scanHeldForReview, scanRowState, scanReviewReason, scanWaitingDays, type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, type FiledInto, scanFitItem } from "@cobblr/platform-contract/scan-triage";
 import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../../services/resolve-offers.js";
@@ -37,6 +37,7 @@ import { mergeMeta } from "../../services/metadata.js";
 import { type CatalogSource, type CatalogStep, pushStep, seedHistory } from "../../services/catalog-history.js";
 import { matchQuery, scanPlaceOf, trackedMatchStampAt } from "../../services/tracked-stamp.js";
 import { candidateTableOf, destinationTables, filingDestination, type DestinationRow } from "../../services/destination.js";
+import { twinTablesOf } from "../../services/twin-tables.js";
 import { colouredTitleFor } from "../../services/auto-rank.js";
 import { assembleScanMenu, assembleMergedMenu, withProposedCategories, categoriesFromCandidateRows, runMatchmaker, heuristicMatch, reconcileSeriesSecondaries, type MatchCandidate, type ScanMenuEntry, perceiveRow } from "../../services/matchmaker.js";
 import { sharedRead } from "../../services/shared-menu-read.js";
@@ -148,7 +149,7 @@ export async function agentFieldsFor(orgId: string, kind: string, fallback: read
 
 /** The tables other inbox rows with the same name are headed to or were
  *  filed into: a person's choice first, then where one was filed, then its
- *  route. Newest first, a handful, never this row. */
+ *  route (services/twin-tables.ts). Newest first, a handful, never this row. */
 export async function twinTables(db: ReturnType<typeof tenantDb>, itemId: string, name: string | null | undefined, tables: ScanResolverTable[]): Promise<KeptTable[]> {
   const said = (name ?? "").trim();
   if (said.length < 3) return [];
@@ -161,19 +162,7 @@ export async function twinTables(db: ReturnType<typeof tenantDb>, itemId: string
     .orderBy("created_at", "desc")
     .limit(12)
     .execute();
-  const out: KeptTable[] = [];
-  for (const r of rows) {
-    // Where it went, when it was filed; else where it is going, by the same
-    // one destination the card shows (a person's choice first).
-    const filed = filedIntoOf(r.suggested_metadata);
-    if (filed) {
-      out.push({ module: filed.module, instance: filed.instance, kind: filed.kind });
-      continue;
-    }
-    const d = filingDestination(r as never, tables);
-    if (d?.module) out.push({ module: d.module, instance: d.instance ?? null, kind: typeof d.kind === "string" ? d.kind : null });
-  }
-  return out;
+  return twinTablesOf(rows as never, tables);
 }
 
 // ── Paperwork put on a record (#4523) ───────────────────────────────────

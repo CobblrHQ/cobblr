@@ -160,6 +160,7 @@ export async function seedSandboxRecords(
         headers: auth,
         body: JSON.stringify(resolveLocations(resolveDates(r.body ?? {}, now), locationIds)),
       });
+      // REFUSAL: seeding a sandbox's sample records; a record it could not make is counted as failed, nobody asked for it by hand
       if (!res.ok) {
         failed++;
         return;
@@ -213,6 +214,7 @@ export async function seedSandboxRecords(
           signal: ctl.signal,
         });
         clearTimeout(timer);
+        // REFUSAL: a sandbox's sample records again, counted; no person's action
         if (res.ok) got++;
       } catch {
         /* a book without a cover is still a book */
@@ -279,6 +281,7 @@ export async function emptySandboxRecords(
         if (!row.id) continue;
         try {
           const res = await apiFetch(`${items}/${encodeURIComponent(row.id)}`, { method: "DELETE", headers: auth });
+          // REFUSAL: clearing a sandbox's sample records; a record it could not remove is counted as failed and tried on the next pass
           if (res.ok) { deleted++; progressed = true; } else failed++;
         } catch {
           failed++;

@@ -127,6 +127,8 @@ async function primaryTable(tdb: TenantQ, tables: string[]): Promise<string | nu
 export interface PromoteResult {
   instance: ModuleInstance;
   moved: number;
+  /** The records it moved: what its Undo may move back, and nothing else. */
+  movedIds: string[];
 }
 
 /**
@@ -141,6 +143,9 @@ export async function promoteCategory(args: {
   category: string;
   instanceName: string;
   displayName: string;
+  /** An Undo of a fold: only these records, while they are still in the
+   *  parent under the category (#9426). */
+  onlyIds?: string[];
 }): Promise<PromoteResult> {
   const parent = await getInstance(args.orgId, args.parentInstance);
   if (!parent) throw Object.assign(new Error("parent instance not found"), { code: "instance_not_found" });
@@ -181,14 +186,18 @@ export async function promoteCategory(args: {
       insertOnly: true,
     });
 
-    const moved = await moveRows(args.orgId, prefix, {
+    const movedIds = await moveRows(args.orgId, prefix, {
       from: args.parentInstance,
       to: args.instanceName,
       category: args.category,
+      onlyIds: args.onlyIds,
     });
+    if (args.onlyIds && movedIds.length === 0) {
+      throw Object.assign(new Error(`Every record the fold moved has changed since, so they stay in the list they are in. Nothing was moved.`), { code: "changed_since" });
+    }
 
     await logInstanceCreated(args.orgId, instance, { source: "promoted", category: args.category });
-    return { instance, moved };
+    return { instance, moved: movedIds.length, movedIds };
   } catch (err) {
     await tearDownInstance(args.orgId, args.instanceName).catch(() => {});
     await deleteInstanceFieldDefs(args.orgId, `${args.instanceName}:item`).catch(() => {});
@@ -219,7 +228,10 @@ export async function demoteInstance(args: {
   instanceName: string;
   parentInstance: string;
   category: string;
-}): Promise<{ moved: number }> {
+  /** An Undo of a promote: the records it moved. Anything else in the list
+   *  (added since) refuses the fold, so nothing is moved or torn down (#9426). */
+  onlyIds?: string[];
+}): Promise<{ moved: number; movedIds: string[] }> {
   const inst = await getInstance(args.orgId, args.instanceName);
   if (!inst) throw Object.assign(new Error("instance not found"), { code: "instance_not_found" });
   if (inst.is_default) throw Object.assign(new Error("cannot demote the default instance"), { code: "is_default" });
@@ -231,11 +243,12 @@ export async function demoteInstance(args: {
   const prefix = entry?.manifest.schema?.tablePrefix;
   if (!prefix) throw Object.assign(new Error("module has no schema"), { code: "no_schema" });
 
-  const moved = await moveRows(args.orgId, prefix, {
+  const movedIds = await moveRows(args.orgId, prefix, {
     from: args.instanceName,
     to: args.parentInstance,
     // No predicate: EVERYTHING in this instance goes back.
     stampCategory: args.category,
+    refuseOthers: args.onlyIds,
   });
 
   // The value must exist in the parent's vocabulary, or the demoted items carry a
@@ -246,7 +259,7 @@ export async function demoteInstance(args: {
   // membership). tearDownInstance also deletes tenant rows — which is safe
   // precisely BECAUSE we already moved them out.
   await tearDownInstance(args.orgId, args.instanceName);
-  return { moved };
+  return { moved: movedIds.length, movedIds };
 }
 
 /** The entity-kind a module instance's field defs are keyed under.
@@ -270,32 +283,49 @@ function kindOf(inst: ModuleInstance): string {
  * it — it held that identity implicitly by living in the table, and must hold it
  * explicitly once it's back among its siblings.
  *
+ * `onlyIds` narrows the move to those records; `refuseOthers` names the only
+ * records that may be in the instance, and any other refuses the whole move.
+ *
  * Children follow their parent via Postgres's own foreign keys.
  */
 async function moveRows(
   orgId: string,
   prefix: string,
-  opts: { from: string; to: string; category?: string; stampCategory?: string },
-): Promise<number> {
+  opts: { from: string; to: string; category?: string; stampCategory?: string; onlyIds?: string[]; refuseOthers?: string[] },
+): Promise<string[]> {
   const tdb = (await getTenantDb(orgId)) as unknown as TenantQ & {
-    transaction: () => { execute: (cb: (trx: TenantQ) => Promise<number>) => Promise<number> };
+    transaction: () => { execute: (cb: (trx: TenantQ) => Promise<string[]>) => Promise<string[]> };
   };
   const tables = await instanceScopedTables(tdb, prefix);
   const primary = await primaryTable(tdb, tables);
-  if (!primary) return 0;
+  if (!primary) return [];
   const children = (await childrenOf(tdb, primary)).filter((c) => tables.includes(c.table));
 
   return tdb.transaction().execute(async (trx) => {
     // 1. WHICH rows move. On a promote it's the matching category; on a demote
     //    it's everything in the instance.
+    const only = opts.onlyIds ? sql` and id = any(${opts.onlyIds})` : sql``;
     const pred = opts.category
-      ? sql`instance = ${opts.from} and metadata->>${CATEGORY_KEY} = ${opts.category}`
-      : sql`instance = ${opts.from}`;
+      ? sql`instance = ${opts.from} and metadata->>${CATEGORY_KEY} = ${opts.category}${only}`
+      : sql`instance = ${opts.from}${only}`;
     const { rows: ids } = await trx.executeQuery(
-      sql`select id from ${sql.ref(primary)} where ${pred}`.compile(trx as never),
+      sql`select id, metadata->>${CATEGORY_KEY} as category from ${sql.ref(primary)} where ${pred}`.compile(trx as never),
     );
     const moveIds = ids.map((r) => String(r.id));
-    if (moveIds.length === 0) return 0;
+    if (opts.refuseOthers) {
+      const allowed = new Set(opts.refuseOthers);
+      const others = moveIds.filter((id) => !allowed.has(id)).length;
+      if (others > 0) {
+        throw Object.assign(new Error(`${others === 1 ? "1 record was" : `${others} records were`} added to this list since, so it stays its own list. Nothing was moved.`), { code: "changed_since" });
+      }
+      // A record given another category since keeps it: stamping the fold's
+      // category over it would undo a teammate's change (#9426).
+      const recategorised = ids.filter((r) => r.category != null && r.category !== opts.stampCategory).length;
+      if (recategorised > 0) {
+        throw Object.assign(new Error(`${recategorised === 1 ? "1 record was" : `${recategorised} records were`} given another category since, so this stays its own list. Nothing was moved.`), { code: "changed_since" });
+      }
+    }
+    if (moveIds.length === 0) return [];
 
     // 2. The parent rows. On a demote, stamp the category as we go so the identity
     //    the table used to carry implicitly survives the move.
@@ -320,7 +350,7 @@ async function moveRows(
             where ${sql.ref(c.fk)} = any(${moveIds})`.compile(trx as never),
       );
     }
-    return moveIds.length;
+    return moveIds;
   });
 }
 

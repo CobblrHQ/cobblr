@@ -19,6 +19,7 @@ import { filedQuantityOf, isOwnCopy } from "./filed-quantity.js";
 import type { ScanResolverTable } from "@cobblr/platform-contract/scan-triage";
 import { filingDestination, type DestinationRow } from "./destination.js";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
+import { refusalOf } from "@cobblr/platform-contract/self-call-refusal";
 
 export interface FilingCandidate {
   module?: string;
@@ -89,7 +90,8 @@ export class BundleInstaller {
           const e = (await r.json().catch(() => ({}))) as { error?: { code?: string; message?: string } };
           if (e.error?.code === "bundle_removed") throw new Removed(e.error.message ?? `${label} was removed from this workspace`);
         }
-        if (!r.ok) throw new Error(`install ${r.status}`);
+        // The install's own refusal, in its words (#9413).
+        if (!r.ok) throw new Error((await refusalOf(r, `it answered ${r.status}`)).message);
         const body = (await r.json()) as { instance?: string | null; installed?: unknown };
         if (body.installed) this.installed.push({ bundle_external_id: bundleId, label });
         out = { ok: true, instance: body.instance ?? null };
@@ -122,7 +124,8 @@ export class BundleInstaller {
     if (!this.door.canInstall) return { ok: false, reason: `goes to ${label}, which an owner or admin can turn on` };
     try {
       const r = await apiFetch(`${this.door.baseUrl}/api/v1/orgs/${this.door.slug}/modules/${module}/enable`, { method: "POST", headers: this.door.authHeaders, body: "{}" });
-      if (!r.ok) throw new Error(`enable ${r.status}`);
+      // The module's own refusal, in its words (#9413).
+      if (!r.ok) throw new Error((await refusalOf(r, `it answered ${r.status}`)).message);
       this.modules = null;
       this.enabled.push({ module, label });
       return { ok: true };

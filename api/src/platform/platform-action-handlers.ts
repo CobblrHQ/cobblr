@@ -276,6 +276,11 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+/** Record ids an issued Undo carries, or undefined when the caller named none. */
+function idList(v: unknown): string[] | undefined {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : undefined;
+}
+
 /** The workspace's kinds of record, for a refusal both readers can act on:
  *  the plural a person knows them by, the id beside it for a model that will
  *  call again ("parts (inventory:part), machines (machines:machine)"). A
@@ -399,6 +404,7 @@ export function registerPlatformActionHandlers(): void {
       return { ok: true, summary: `Arranged the panels on ${kind.display_name_plural ?? kind.display_name}.`, data: { kind: kind.id, before: result.before, revision: result.revision } };
     } catch (err) { return { ok: false, error: (err as Error).message }; }
   });
+  // UNDO: expected_revision refuses it once anyone saved the panels since
   registerUndo("platform.arrange-record-panels", (result) => {
     const parsed = z.object({ kind: z.string(), before: RecordPanelLayout, revision: z.number() }).safeParse((result as { data?: unknown } | null)?.data);
     return parsed.success ? { action_id: "platform:arrange-record-panels", args: { kind: parsed.data.kind, layout: parsed.data.before, expected_revision: parsed.data.revision } } : null;
@@ -441,6 +447,7 @@ export function registerPlatformActionHandlers(): void {
       return { ok: true, summary: `Updated record actions on ${kind.display_name_plural ?? kind.display_name}.`, data: { kind: kind.id, before: result.before, revision: result.revision } };
     } catch (err) { return { ok: false, error: (err as Error).message }; }
   });
+  // UNDO: expected_revision refuses it once anyone saved the record actions since
   registerUndo("platform.edit-record-actions", (result) => {
     const parsed = z.object({ kind: z.string(), before: RecordActionLayout, revision: z.number() }).safeParse((result as { data?: unknown } | null)?.data);
     return parsed.success ? { action_id: "platform:edit-record-actions", args: { kind: parsed.data.kind, layout: parsed.data.before, expected_revision: parsed.data.revision } } : null;
@@ -521,6 +528,7 @@ export function registerPlatformActionHandlers(): void {
       return { ok: true, data: { field: ctx.args.field, ...data }, summary: `${countOf(data.done.length, "record")} changed.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
     } catch (e) { return { ok: false, error: (e as Error).message }; }
   });
+  // UNDO: restore-batch-field writes a record back only while it still holds the batch's value; a newer value is kept
   registerUndo("platform.set-field-on-records", (result) => {
     const data = (result as { data?: BulkFieldResult & { field: string } } | null)?.data;
     if (!data?.done.length) return null;
@@ -990,6 +998,7 @@ export function registerPlatformActionHandlers(): void {
 
   // An edit is undone by the same action, given what each changed part said
   // before. Only the parts that changed go back; the rest is not touched.
+  // UNDO: workspace setup, blind: puts back only the parts this edit changed, over a later edit of the same part (#9419 audit part 2)
   registerUndo("platform.edit-field", (result) => {
     const d = (result as { data?: Record<string, unknown> } | null)?.data;
     const before = d?.before as Record<string, unknown> | undefined;
@@ -1124,6 +1133,7 @@ export function registerPlatformActionHandlers(): void {
       data: { name: result.def.name, field: snapshotOf(result.def) },
     };
   });
+  // UNDO: restores the field definition this run removed; a removed field cannot be edited since
   registerUndo("platform.remove-field", (result) => {
     const field = (result as { data?: { field?: unknown } } | null)?.data?.field;
     return field ? { action_id: "platform:restore-definition", args: { field } } : null;
@@ -1235,6 +1245,7 @@ export function registerPlatformActionHandlers(): void {
 
   // A renamed heading gets its name back; grouped fields go back to wherever
   // each one was, one step per heading.
+  // UNDO: workspace setup, blind: fields go back to their old headings over a later regrouping (#9419 audit part 2)
   registerUndo("platform.group-fields", (result) => {
     const d = (result as { data?: Record<string, unknown> } | null)?.data;
     const kind = typeof d?.entity_kind === "string" ? d.entity_kind : "";
@@ -1328,6 +1339,7 @@ export function registerPlatformActionHandlers(): void {
       ],
     };
   });
+  // UNDO: remove-list refuses while the list holds records, so nothing added since is taken
   registerUndo("platform.create-instance", (result) => {
     const d = (result as { data?: { instance?: unknown } } | null)?.data;
     return typeof d?.instance === "string" ? { action_id: "platform:remove-list", args: { list: d.instance } } : null;
@@ -1369,6 +1381,7 @@ export function registerPlatformActionHandlers(): void {
       data: { instance: found.name, module: found.module, display_name: found.display },
     };
   });
+  // UNDO: makes the empty list again; it was empty when removed and a removed list cannot change
   registerUndo("platform.remove-list", (result) => {
     const d = (result as { data?: { instance?: unknown; module?: unknown; display_name?: unknown } } | null)?.data;
     if (typeof d?.instance !== "string" || typeof d.module !== "string") return null;
@@ -1419,6 +1432,7 @@ export function registerPlatformActionHandlers(): void {
 
   // Turning it off again. A feature that was already on was left as it was,
   // so there is nothing to put back.
+  // UNDO: turns off only a feature this run turned on; switching off hides its records, never deletes them
   registerUndo("platform.enable-module", (result) => {
     const d = (result as { data?: { module?: unknown; already_enabled?: unknown } } | null)?.data;
     if (typeof d?.module !== "string" || d.already_enabled) return null;
@@ -1561,6 +1575,7 @@ export function registerPlatformActionHandlers(): void {
 
   // Undo puts back what the job had before, by id, through this same
   // action; a job that had nothing is cleared.
+  // UNDO: the person's own setting, so no teammate can have changed it since
   registerUndo("platform.set-my-default-ai", (result) => {
     const d = (result as { data?: { job?: unknown; previous?: unknown } } | null)?.data;
     if (typeof d?.job !== "string" || !Array.isArray(d.previous)) return null;
@@ -1906,6 +1921,7 @@ export function registerPlatformActionHandlers(): void {
     if (!lines.length) return { error: "say which sections to turn on, off or clear" };
     return { title: `Sections for ${called}`, lines };
   });
+  // UNDO: workspace setup, blind: the sections go back over a later change to the same ones (#9419 audit part 2)
   registerUndo("platform.set-faces", (result) => {
     const d = (result as { data?: { entity_kind?: unknown; changed?: unknown; before?: Record<string, unknown> } } | null)?.data;
     if (typeof d?.entity_kind !== "string" || !Array.isArray(d.changed)) return null;
@@ -1951,6 +1967,7 @@ export function registerPlatformActionHandlers(): void {
     if (!r.ok) return { ok: false, error: r.message };
     return { ok: true, summary: `"${value}" is now a choice for ${def.display_label}`, data: { ...data, learned: true } };
   });
+  // UNDO: forgets only the choice this run learned; values records hold are kept
   registerUndo("platform.learn-choice", (result) => {
     const d = (result as { data?: { learned?: unknown; entity_kind?: unknown; field?: unknown; value?: unknown } } | null)?.data;
     if (!d?.learned || typeof d.entity_kind !== "string" || typeof d.field !== "string" || typeof d.value !== "string") return null;
@@ -1971,6 +1988,7 @@ export function registerPlatformActionHandlers(): void {
     return { ok: true, summary: `"${value}" is no longer a choice for ${def.display_label}`, data: { forgot: true } };
   });
 
+  // UNDO: workspace setup, blind: the old word goes back over a later rename (#9419 audit part 2)
   registerUndo("platform.rename-contents", (result) => {
     const d = (result as { data?: { target?: unknown; before?: unknown } } | null)?.data;
     if (typeof d?.target !== "string") return null;
@@ -1979,6 +1997,7 @@ export function registerPlatformActionHandlers(): void {
 
   // Called what it was called. The thing is named by its NEW name, which is
   // what the workspace calls it by the time the undo runs.
+  // UNDO: finds the thing by the name this rename gave it, so after a later rename it is not found and nothing changes
   registerUndo("platform.rename-thing", (result) => {
     const d = (result as { data?: { name?: unknown; before?: { name?: unknown; plural?: unknown } } } | null)?.data;
     if (typeof d?.name !== "string" || typeof d.before?.name !== "string" || typeof d.before?.plural !== "string") return null;
@@ -2089,6 +2108,7 @@ export function registerPlatformActionHandlers(): void {
       data: { bundle: found.name, turned_on: f.turned_on, turned_off: f.turned_off },
     };
   });
+  // UNDO: workspace setup, blind: flips back the features this run flipped, over a later flip (#9419 audit part 2)
   registerUndo("platform.set-bundle-features", (result) => {
     const d = (result as { data?: { bundle?: string; turned_on?: string[]; turned_off?: string[] } } | null)?.data;
     if (!d?.bundle || (!d.turned_on?.length && !d.turned_off?.length)) return null;
@@ -2130,6 +2150,7 @@ export function registerPlatformActionHandlers(): void {
     await setScanFallback(ctx.orgId, found.name);
     return { ok: true, summary: `Scans that fit no list now land in ${found.label}.`, data: { list: found.name, before: before?.instance_name ?? null } };
   });
+  // UNDO: workspace setup, blind: the old fallback list goes back over a later choice (#9419 audit part 2)
   registerUndo("platform.set-scan-fallback", (result) => {
     const before = (result as { data?: { before?: string | null } } | null)?.data?.before;
     return before ? { action_id: "platform:set-scan-fallback", args: { list: before } } : null;
@@ -2203,6 +2224,7 @@ export function registerPlatformActionHandlers(): void {
     await saveDashboardLayout(ctx.orgId, ctx.userId, parsed);
     return { ok: true, summary: `On the dashboard: ${changed.join("; ")}.`, data: { before } };
   });
+  // UNDO: workspace setup, blind: the old arrangement goes back over a later one (#9419 audit part 2)
   registerUndo("platform.arrange-dashboard", (result) => {
     const before = (result as { data?: { before?: unknown } } | null)?.data?.before;
     return before ? { action_id: "platform:arrange-dashboard", args: { restore: JSON.stringify(before) } } : null;
@@ -2261,6 +2283,7 @@ export function registerPlatformActionHandlers(): void {
     const category = str(args.category);
     const said = str(args.from);
     if (!said || !category) return { ok: false, error: "from (the list it is in) and category are required" };
+    const onlyIds = idList(args.ids);
     const parent = await findInstance(ctx.orgId, said);
     if ("error" in parent) return { ok: false, error: parent.error };
     const displayName = str(args.display_name) || category;
@@ -2275,16 +2298,19 @@ export function registerPlatformActionHandlers(): void {
         category,
         instanceName,
         displayName,
+        onlyIds,
       });
+      const stayed = onlyIds ? onlyIds.length - result.moved : 0;
       return {
         ok: true,
-        summary: `${displayName} is its own list now, with ${result.moved} moved out of ${parent.label}`,
+        summary: `${displayName} is its own list now, with ${result.moved} moved out of ${parent.label}${stayed > 0 ? `. ${stayed} that changed since stayed in ${parent.label}` : ""}`,
         data: {
           instance: result.instance.instance_name,
           moved: result.moved,
           kind: `${result.instance.instance_name}:item`,
           from: parent.name,
           category,
+          ids: result.movedIds,
         },
       };
     } catch (err) {
@@ -2294,10 +2320,11 @@ export function registerPlatformActionHandlers(): void {
 
   // Folded back into the list it came out of, stamped with the same category:
   // the pair this action was designed with.
+  // UNDO: folds back only the records the promote moved; anything added to the list since refuses it (#9426)
   registerUndo("platform.promote-category", (result) => {
-    const d = (result as { data?: { instance?: unknown; from?: unknown; category?: unknown } } | null)?.data;
-    if (typeof d?.instance !== "string" || typeof d.from !== "string" || typeof d.category !== "string") return null;
-    return { action_id: "platform:demote-category", args: { list: d.instance, into: d.from, category: d.category } };
+    const d = (result as { data?: { instance?: unknown; from?: unknown; category?: unknown; ids?: unknown } } | null)?.data;
+    if (typeof d?.instance !== "string" || typeof d.from !== "string" || typeof d.category !== "string" || !Array.isArray(d.ids)) return null;
+    return { action_id: "platform:demote-category", args: { list: d.instance, into: d.from, category: d.category, ids: d.ids } };
   });
 
   // Moving records between lists.
@@ -3118,11 +3145,12 @@ export function registerPlatformActionHandlers(): void {
         instanceName: inst.name,
         parentInstance: into.name,
         category,
+        onlyIds: idList(args.ids),
       });
       return {
         ok: true,
         summary: `${inst.label} folded back into ${into.label} as "${category}", with ${result.moved} moved`,
-        data: { moved: result.moved, category, list: inst.name, display_name: inst.label, into: into.name },
+        data: { moved: result.moved, category, list: inst.name, display_name: inst.label, into: into.name, ids: result.movedIds },
       };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "couldn't fold that list back" };
@@ -3131,14 +3159,15 @@ export function registerPlatformActionHandlers(): void {
 
   // Given its own list again, with the same short name and label, from the
   // category it was folded in under.
+  // UNDO: moves out only the records the fold moved, still in the parent under its category (#9426)
   registerUndo("platform.demote-category", (result) => {
-    const d = (result as { data?: { category?: unknown; list?: unknown; display_name?: unknown; into?: unknown } } | null)?.data;
-    if (typeof d?.category !== "string" || typeof d.list !== "string" || typeof d.display_name !== "string" || typeof d.into !== "string") {
+    const d = (result as { data?: { category?: unknown; list?: unknown; display_name?: unknown; into?: unknown; ids?: unknown } } | null)?.data;
+    if (typeof d?.category !== "string" || typeof d.list !== "string" || typeof d.display_name !== "string" || typeof d.into !== "string" || !Array.isArray(d.ids)) {
       return null;
     }
     return {
       action_id: "platform:promote-category",
-      args: { from: d.into, category: d.category, display_name: d.display_name, instance_name: d.list },
+      args: { from: d.into, category: d.category, display_name: d.display_name, instance_name: d.list, ids: d.ids },
     };
   });
 
@@ -3167,6 +3196,7 @@ export function registerPlatformActionHandlers(): void {
     return { ok: true, summary: `this workspace is called "${name}" now`, data: { name, before: before?.name ?? null } };
   });
 
+  // UNDO: workspace setup, blind: the old name goes back over a later rename (#9419 audit part 2)
   registerUndo("platform.rename-workspace", (result) => {
     const d = (result as { data?: { name?: unknown; before?: unknown } } | null)?.data;
     if (typeof d?.before !== "string" || !d.before.trim() || d.before === d.name) return null;
@@ -3197,6 +3227,7 @@ export function registerPlatformActionHandlers(): void {
   });
 
   // Set back the way it was. Setting it to what it already was left nothing to undo.
+  // UNDO: workspace setup, blind: a switch set back over a later flip (#9419 audit part 2)
   registerUndo("platform.set-simple-mode", (result) => {
     const d = (result as { data?: { focused?: unknown; before?: unknown } } | null)?.data;
     if (typeof d?.focused !== "boolean" || typeof d.before !== "boolean" || d.before === d.focused) return null;
@@ -3226,6 +3257,7 @@ export function registerPlatformActionHandlers(): void {
     };
   });
 
+  // UNDO: workspace setup, blind: a switch set back over a later flip (#9419 audit part 2)
   registerUndo("platform.set-members-may-lend", (result) => {
     const d = (result as { data?: { members_may_lend?: unknown; before?: unknown } } | null)?.data;
     if (typeof d?.members_may_lend !== "boolean" || typeof d.before !== "boolean" || d.before === d.members_may_lend) return null;
@@ -3278,6 +3310,7 @@ export function registerPlatformActionHandlers(): void {
 
   // The switch the other way. A set that was already on (nothing added) or
   // already off (nothing taken away) was not changed, so nothing goes back.
+  // UNDO: workspace setup, blind: the preset switched back over a later switch (#9419 audit part 2)
   registerUndo("platform.set-field-preset", (result) => {
     const d = (result as { data?: { preset?: unknown; on?: unknown; created?: unknown; removed?: unknown } } | null)?.data;
     if (typeof d?.preset !== "string" || typeof d.on !== "boolean") return null;

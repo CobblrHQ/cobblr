@@ -18,6 +18,7 @@ export function registerSetDisplayModeAction(): void {
     await writeDisplayMode(db, mode);
     return { ok: true, summary: `Units now show as ${SHOWS[mode]}.`, data: { display_mode: mode, before } };
   });
+  // UNDO: workspace setup, blind: the old display mode over a later one (#9419 audit part 2)
   platform().actions.registerUndo("core-units.set-display-mode", (result) => {
     const d = (result as { ok?: unknown; data?: { display_mode?: string; before?: string } } | null);
     if (d?.ok !== true || !d.data?.before || d.data.before === d.data.display_mode) return null;

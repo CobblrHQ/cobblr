@@ -26,6 +26,7 @@ export function registerArchiveSyncConnectionAction(): void {
   });
   // Bringing it back leaves syncing off, so the undo turns back on each section
   // that was syncing when it was archived.
+  // UNDO: brings back the connection this run archived, with only the sections that were syncing then
   platform().actions.registerUndo("core-integrations.archive-sync-connection", (result) => {
     const d = (result as { ok?: unknown; skipped?: unknown; data?: { connection?: string; sections?: Array<{ section: string; enabled: boolean; cadence_min: number }> } } | null);
     if (d?.ok !== true || d.skipped || !d.data?.connection) return null;

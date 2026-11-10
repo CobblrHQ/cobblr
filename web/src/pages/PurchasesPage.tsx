@@ -1,5 +1,5 @@
 import { lineFigures, lineAmount } from "./purchase-line-figures";
-import { useRecordAsOpened, SelectBox, OnceQuiet, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout, useRecordEdits, editOf } from "@cobblr/platform-web";
+import { useRecordAsOpened, SelectBox, OnceQuiet, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout, useRecordEdits, editOf, undoStepsOf, useRunIssuedUndo } from "@cobblr/platform-web";
 import { formatUnitPrice } from "@cobblr/platform-contract/money";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
@@ -828,7 +828,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
                     need: fieldNeed("vendor", { control: "picker", label: fp.label("vendor", "Vendor") }),
                     node: (
                       <LabeledField as="div" label={fp.label("vendor", "Vendor")}>
-                        <VendorPicker slug={activeSlug} vendorId={o.vendor_id} vendorName={o.vendor ?? ""} onChange={(id, name) => update.mutate({ vendor_id: id, vendor: name || null })} />
+                        <VendorPicker slug={activeSlug} orderId={o.id} vendorId={o.vendor_id} vendorName={o.vendor ?? ""} onChange={(id, name) => update.mutate({ vendor_id: id, vendor: name || null })} />
                       </LabeledField>
                     ),
                   }
@@ -1206,17 +1206,21 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
 // `vendor` text).
 function VendorPicker({
   slug,
+  orderId,
   vendorId,
   vendorName,
   onChange,
 }: {
   slug: string;
+  /** The saved order whose field this is: a vendor made here is its, and its Undo takes it off again. */
+  orderId?: string;
   vendorId: string | null;
   vendorName: string;
   onChange: (vendorId: string | null, vendorName: string) => void;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const runIssuedUndo = useRunIssuedUndo();
   const vendors = useQuery({ queryKey: ["vendors", slug], queryFn: () => api.listVendors(slug), enabled: !!slug });
   const options = (vendors.data?.items ?? []).map((v) => ({ value: v.name, uses: v.order_count }));
   const byName = (name: string) => (vendors.data?.items ?? []).find((v) => v.name.trim().toLowerCase() === name.trim().toLowerCase());
@@ -1226,13 +1230,16 @@ function VendorPicker({
     const known = byName(name);
     if (known) return onChange(known.id, known.name);
     try {
-      const v = await api.createVendor(slug, { name });
+      const v = await api.createVendor(slug, { name }, orderId ? { forOrder: orderId } : {});
       void qc.invalidateQueries({ queryKey: ["vendors", slug] });
       onChange(v.id, v.name);
+      if (!undoStepsOf(v.undo).length) return void toast.success(`"${v.name}" is now a vendor`);
       toast.action(`"${v.name}" is now a vendor`, {
         actionLabel: "Undo",
         onAction: async () => {
-          await api.deleteVendor(slug, v.id);
+          // The Undo the server issued: it is refused while an order names the vendor (#9383).
+          const said = await runIssuedUndo(v.undo);
+          if (said) return void toast.error(said);
           void qc.invalidateQueries({ queryKey: ["vendors", slug] });
           onChange(null, v.name);
         },

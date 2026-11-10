@@ -12,6 +12,7 @@
 
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { NAMES_A_RECORD } from "@cobblr/platform-contract/undo-watch";
 import { meta } from "../db/meta.js";
 import { changeSince, newestChangeOn } from "./activity.js";
 
@@ -29,7 +30,6 @@ export interface IssuedStep {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const NAMES_A_RECORD = /^(id|ids|.+_ids?|.+Ids?)$/;
 
 /** The records a step would put back: the record it names, every record
  *  it was handed by id (`id`, `partId`, `build_id`, `ids`), whatever its

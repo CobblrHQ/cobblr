@@ -79,6 +79,7 @@ function PaymentForm({ api, order, currency, onClose, onDone }: { api: SalesApi;
     onSuccess: (r) => {
       onDone();
       onClose();
+      // UNDO: takes back only the payment this run recorded, by its id
       toast.action("Recorded.", { actionLabel: "Undo", duration: 8000, onAction: async () => { try { await api.undoPayment(order.id, r.payment_id); toast.success("Payment taken back."); } catch (e) { toast.error((e as Error).message); } onDone(); } });
     },
     onError: (e) => setError((e as Error).message),

@@ -37,8 +37,10 @@ import { registerMarkBrokenAction } from "./mark-broken-action.js";
 import { registerUnmarkBrokenAction } from "./unmark-broken-action.js";
 import { registerMarkArrivedDamagedAction } from "./mark-arrived-damaged-action.js";
 import { registerTakeBackPictureAction } from "./take-back-picture-action.js";
+import { registerPutBackMainPhotoAction } from "./put-back-main-photo-action.js";
 
 registerTakeBackPictureAction();
+registerPutBackMainPhotoAction();
 
 registerMarkArrivedDamagedAction();
 

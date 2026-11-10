@@ -133,6 +133,7 @@ function registerUndos(): void {
   });
   // A unit that already existed was updated in place, which this cannot put
   // back exactly, so it hands back nothing; one this run made is removed.
+  // UNDO: removes only a unit this run made; one that existed is left alone
   platform().actions.registerUndo("core-units.add-unit", (result) => {
     const d = (result as { ok?: unknown; data?: { code?: unknown; existed?: unknown } } | null);
     if (d?.ok !== true || typeof d.data?.code !== "string" || d.data.existed) return null;

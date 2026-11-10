@@ -87,6 +87,7 @@ export function useSidebarPin(): (slug: string, app: { label: string; names: rea
     toast.action(inSidebar ? `${app.label} is in your ${word} now.` : `${app.label} is out of your ${word}.`, {
       actionLabel: "Undo",
       duration: 7000,
+      // UNDO: this browser's own sidebar (local storage): no teammate can change it
       onAction: () => restoreSidebar(slug, before),
     });
   };

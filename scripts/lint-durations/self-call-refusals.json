@@ -1,0 +1,10 @@
+{
+  "lint": "lint:self-call-refusals",
+  "run": "node scripts/lint-self-call-refusals.ts",
+  "rows": [
+    "api-route"
+  ],
+  "ms": 574,
+  "recorded": "2026-11-10",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

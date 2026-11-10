@@ -13,7 +13,7 @@ import { Eye, Plus, Star, Tag as TagIcon, Trash2, Upload, X } from "lucide-react
 import { ApiError, api, type PaperworkConflict, type TagRecord } from "../lib/api";
 import { PaperworkConflicts, paperworkNoun, useAnnouncePaperwork } from "./PaperworkConflicts";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, EntityPhoto, usePasteImage, SelectableTile, PhotoSourceBadge } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, EntityPhoto, usePasteImage, SelectableTile, PhotoSourceBadge, undoStepsOf, useRunIssuedUndo } from "@cobblr/platform-web";
 import type { PhotoSource } from "@cobblr/platform-contract/photo-source";
 import { isImageAttachment, recordPhotos } from "@cobblr/platform-contract/record-photos";
 import { FilePreview, DocThumb, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
@@ -336,6 +336,7 @@ export function FilesSection({
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
+  const runIssuedUndo = useRunIssuedUndo();
   const confirm = useConfirm();
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -522,17 +523,16 @@ export function FilesSection({
     mutationFn: (fileId: string) => api.setMainPhoto(activeSlug, { entity_kind: `${sourceModule}:${sourceType}`, entity_id: sourceId, file_id: fileId }),
     onSuccess: (r) => {
       refreshRecord();
-      const previous = r.previous_image_path;
+      // The Undo the server issued: it puts the old photo back only while
+      // this one is still main, never over a photo a teammate chose since.
+      if (!undoStepsOf(r.undo).length) return void toast.success("Main photo changed.");
       toast.action("Main photo changed.", {
         actionLabel: "Undo",
         duration: 10_000,
         onAction: async () => {
-          try {
-            await api.setMainPhoto(activeSlug, { entity_kind: `${sourceModule}:${sourceType}`, entity_id: sourceId, image_path: previous });
-            refreshRecord();
-          } catch (e) {
-            toast.error(`Couldn't put it back: ${(e as Error).message}`);
-          }
+          const refused = await runIssuedUndo(r.undo);
+          refreshRecord();
+          if (refused) toast.error(refused);
         },
       });
     },

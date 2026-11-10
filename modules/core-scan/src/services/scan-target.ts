@@ -18,6 +18,7 @@
 // answer from one place.
 import { isActionRefusal, platform, type ActionUndoStep, type ScannableInfo, type ScannableKind } from "@cobblr/platform-contract";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
+import { refusalOf } from "@cobblr/platform-contract/self-call-refusal";
 
 export interface ScanTarget {
   scannable: ScannableInfo;
@@ -190,7 +191,8 @@ export async function moveQuantity(
   const applied = delta < 0 ? -Math.min(-delta, Math.max(0, have)) : delta;
   if (delta < 0 && applied === 0) return { ok: false, delta: 0, newQty: have, refused: "Nothing on hand to use" };
   const r = await apiFetch(path, { method: "PATCH", headers: opts.door.headers, body: JSON.stringify({ [field]: have + applied }) });
-  if (!r.ok) return { ok: false, delta: 0, newQty: null, refused: `the record's own route answered ${r.status}` };
+  // The record's own refusal, in its words (#9413).
+  if (!r.ok) return { ok: false, delta: 0, newQty: null, refused: (await refusalOf(r, `the record's own route answered ${r.status}`)).message };
   return { ok: true, delta: applied, newQty: have + applied, ...(applied !== delta ? { note: `Only ${have} on hand; took ${have}, now 0` } : {}) };
 }
 

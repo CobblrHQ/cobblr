@@ -123,6 +123,7 @@ export function TagsPage() {
       refresh();
       toast.action(`Deleted the tag ${gone.name}.`, {
         actionLabel: "Undo",
+        // UNDO: restores the tag this run deleted, on the records it was on; a deleted tag cannot be edited since
         onAction: async () => {
           try {
             const back = await api.restoreTag(activeSlug, id);

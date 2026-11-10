@@ -13,6 +13,7 @@ import { sql, type Kysely } from "kysely";
 import type { CoreScanDB } from "../db.js";
 import { mergeMeta } from "./metadata.js";
 import { addOrderLine, deleteOrderLine, orderLines, tryCreateReceiptOrder, type ReceiptOrderInput } from "./receipt-order.js";
+import type { SelfCallRefusal } from "@cobblr/platform-contract/self-call-refusal";
 
 export interface PendingPurchaseLine {
   description: string;
@@ -42,7 +43,7 @@ export interface PurchaseHttp {
 
 export type RecordOutcome =
   | { recorded: true; orderId: string }
-  | { recorded: false; purchasesOff: boolean };
+  | { recorded: false; purchasesOff: boolean; refused?: SelfCallRefusal };
 
 /** Record the receipt's order, its lines, and each row's claim on its line.
  *  When Purchases is off the plan is kept on the session instead, so it can
@@ -63,7 +64,7 @@ export async function recordReceiptPurchase(
         .where("id", "=", batchId)
         .execute();
     }
-    return { recorded: false, purchasesOff: made.purchasesOff };
+    return { recorded: false, purchasesOff: made.purchasesOff, ...(made.refused ? { refused: made.refused } : {}) };
   }
   const orderId = made.id;
   await db

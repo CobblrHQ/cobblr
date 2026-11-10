@@ -66,6 +66,7 @@ export function FileDetailPage() {
     onSuccess: () => {
       toast.action("File moved to Recently deleted.", {
         actionLabel: "Undo",
+        // UNDO: restores the file this run deleted; a deleted file cannot be edited since
         onAction: async () => {
           try {
             await api.restoreFile(activeSlug, id);

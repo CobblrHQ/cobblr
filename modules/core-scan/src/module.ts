@@ -30,7 +30,7 @@ const actions: ModuleActionInput[] = await Promise.all(
 
 export default defineModule({
   name: "core-scan",
-  version: "0.78.13",
+  version: "0.78.18",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -130,6 +130,10 @@ export default defineModule({
       // waiting rows (heal-model-facts.ts, PERMANENT RECONCILE, #6013).
       const { registerModelFactsHeal } = await import("./heal-model-facts.js");
       registerModelFactsHeal();
+      // A row the fit rule lifted to a list it no longer chooses goes back to
+      // the route beneath (heal-identity-lifts.ts, one-shot, #9380).
+      const { registerIdentityLiftsHeal } = await import("./heal-identity-lifts.js");
+      registerIdentityLiftsHeal();
       // A read the AI could not do for a passing reason (busy, a limit) is
       // asked again when it answers (hint-without-ai.ts).
       const { registerAiRerunSweep } = await import("./services/hint-without-ai.js");

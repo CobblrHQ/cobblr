@@ -26,6 +26,7 @@ export function useAlreadyGone(slug: string) {
       toast.action(`${countOf(done.length, "item")} marked already gone. Nothing was added to stock.`, {
         actionLabel: "Undo",
         duration: 10000,
+        // UNDO: the unconfirm route refuses once the record it filed changed since (#9420)
         onAction: async () => {
           for (const id of done) await api.unconfirmScanItem(slug, id).catch(() => undefined);
           refresh();

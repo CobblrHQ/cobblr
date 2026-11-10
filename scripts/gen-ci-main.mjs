@@ -61,7 +61,7 @@ export const DEPLOY_JOB = [
   "  # test-only box. deploy-when-ready.mjs reads the test's verdict and the images' state; whichever side is last deploys.",
   "  deploy:",
   "    runs-on: light-main",
-  "    needs: [test]",
+  "    needs: [proven, test]",
   "    if: always() && (github.event_name == 'push' || github.event.inputs.set_tip == 'true') && github.ref_name == 'main'",
   "    timeout-minutes: 10",
   "    steps:",
@@ -74,7 +74,7 @@ export const DEPLOY_JOB = [
   "          SHA: ${{ github.sha }}",
   "          REPO: ${{ github.repository }}",
   "          SERVER: ${{ github.server_url }}",
-  "          TEST_RESULT: ${{ needs.test.result }}",
+  "          TEST_RESULT: ${{ needs.proven.outputs.proven == '1' && 'success' || needs.test.result }}",
   "          GATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
   "          CLOUD_DISPATCH_TOKEN: ${{ secrets.CLOUD_DISPATCH_TOKEN }}",
   "          WATCHTOWER_TOKEN: ${{ secrets.WATCHTOWER_TOKEN }}",
@@ -101,6 +101,51 @@ export const DEPLOY_JOB = [
   "            && echo \"shipped log to sink\" || echo \"(sink POST failed, non-fatal)\"",
 ];
 
+// A TREE A SET ALREADY PROVED NEEDS NO TEST RUNNER (2026-11-10, #9407). A set lands as a merge with the tree it tested
+// (lib/merge-set.mjs), and the test job's dedup saw that pass only once a [ci-main] runner took the job: overnight none
+// is free before 12Z, so set 469's land 3bcde7b78 sat built and undeployed from 10:12Z while staging-behind and
+// deploy-lag fired. This job asks the same question (lib/already-tested.mjs: the commit's own copied pass, or its
+// same-tree parent's) on light-main, where the deploy runs; the test job stands aside on its yes, and the deploy reads
+// the yes as the test's pass. Any other answer, or none, runs the suite as before.
+export const PROVEN_JOB = [
+  "  # A push to main whose exact tree already passed the suite (a set's land, a fast-forward) needs no [ci-main]",
+  "  # runner to deploy (gen-ci-main.mjs PROVEN_JOB): the test job stands aside on this job's yes.",
+  "  proven:",
+  "    runs-on: light-main",
+  "    if: github.event_name == 'push' && github.ref_name == 'main'",
+  "    timeout-minutes: 5",
+  "    outputs:",
+  "      proven: ${{ steps.ask.outputs.proven }}",
+  "    steps:",
+  "      - uses: https://github.com/actions/checkout@v4",
+  "        with:",
+  "          fetch-depth: 1",
+  "      - name: Did this exact tree already pass the suite?",
+  "        id: ask",
+  "        env:",
+  "          GATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+  "        run: |",
+  "          p=$(node scripts/lib/already-tested.mjs \"$GITHUB_SHA\" test) || p=0",
+  "          if [ \"$p\" = 1 ]; then echo \"${GITHUB_SHA:0:9}'s tree already passed the suite (its own copied run, or its same-tree parent's): no test runner needed\"",
+  "          else p=0; echo \"${GITHUB_SHA:0:9}'s tree has no pass yet: the test job runs the suite\"; fi",
+  "          echo \"proven=$p\" >> \"$GITHUB_OUTPUT\"",
+];
+const TEST_WAITS_ON_PROVEN = ["    needs: [proven]", "    if: always() && needs.proven.outputs.proven != '1'"];
+/** PURE. The test job, after its runs-on line, waits on `proven` and stands aside only on its yes. */
+function testWaitsOnProven(body) {
+  const at = body.findIndex((l, i) => l === "    runs-on: ci-main" && body[i - 1] === "  test:");
+  if (at < 0) throw new Error("ci-main has no `test:` job on ci-main for `proven` to gate");
+  return [...body.slice(0, at + 1), ...TEST_WAITS_ON_PROVEN, ...body.slice(at + 1)];
+}
+/** PURE. `proven` goes in just before the test job, with its own blank line. */
+function withProvenJob(body) {
+  const at = body.indexOf("  test:");
+  if (at < 0) throw new Error("ci-main has no `test:` job");
+  let c = at;
+  while (c > 0 && /^ {2}#/.test(body[c - 1])) c--;
+  return [...body.slice(0, c), ...PROVEN_JOB, "", ...body.slice(c)];
+}
+
 const MAIN = {
   lane: LANE,
   branches: "[main, 'bisect/**']",
@@ -119,7 +164,7 @@ const MAIN = {
   // fenced DRAM fault never ships an image or a deploy), so the deploy that was a step of the test job is a job of its
   // own on light-main, after it. ci.yml keeps the step: on a pull request it never runs, and a job there would be
   // scheduled on a runner for every pull request just to skip.
-  transform: (body) => [...withoutTrailingComment(trimEnd(dropSteps(body, [DEPLOY_STEP]))), "", ...DEPLOY_JOB],
+  transform: (body) => [...withoutTrailingComment(trimEnd(withProvenJob(testWaitsOnProven(dropSteps(body, [DEPLOY_STEP]))))), "", ...DEPLOY_JOB],
   // THE SET'S TIP (lib/set-tip.mjs): how many pull requests the queue is about to land (a push to main stands
   // down while more are coming), and whether this run is the set's tip run the queue dispatched once they had.
   env: ["env:", "  QUEUE_LANDING: ${{ vars.COBBLR_QUEUE_LANDING }}", "  CI_SET_TIP: ${{ github.event.inputs.set_tip }}"],
@@ -282,7 +327,7 @@ export function dropSteps(job, names) {
 // fix's fast-lane jobs waited. `nightly` is served by no runner with a fast lane (lint:ci-runner-labels).
 export const IMPACT = {
   lane: { "pr-check": "nightly", "ci-test": "nightly" },
-  on: ["  workflow_dispatch:", "  schedule:", "    # Nightly, clear of the 09:41 heartbeat and the 08:00 bake.", "    # SINGLE SLOT OK: a lost night leaves yesterday's map, and selection judges a change against", "    # the map's own commit, so an older map is still a correct one.", "    - cron: '23 6 * * *'"],
+  on: ["  workflow_dispatch:", "  schedule:", "    # Daily, after the A6 night lane (03Z-12Z, a6-admission NIGHT_ROOM_HOURS): at 06:23Z test-1 never", "    # fit there and paged every morning (#6226, 2026-11-10). Clear of the 13:13Z tracker.", "    # SINGLE SLOT OK: a lost night leaves yesterday's map, and selection judges a change against", "    # the map's own commit, so an older map is still a correct one.", "    - cron: '30 12 * * *'"],
   group: "ci-impact-${{ github.run_id }}",
   header: [
     "# ci.yml's test job, recording which source lines each api test runs (the test",

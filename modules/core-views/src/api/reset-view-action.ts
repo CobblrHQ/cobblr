@@ -17,6 +17,7 @@ export function registerResetViewAction(): void {
     await platform().events.emit("core-views.view.updated", { orgId: ctx.orgId, viewId: out.row.id });
     return { ok: true, summary: `The "${out.row.name}" view is back as its bundle made it.`, data: { id: out.row.id, name: out.row.name, before: out.before } };
   });
+  // UNDO: a view's settings, blind: the old settings go back over a later edit (#9419 audit part 2)
   platform().actions.registerUndo("core-views.reset-view", (result) => {
     const d = result as { ok?: unknown; data?: { id?: string; before?: ViewBefore } } | null;
     if (d?.ok !== true || !d.data?.id || !d.data.before) return null;

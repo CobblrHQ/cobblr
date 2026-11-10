@@ -21,6 +21,7 @@
 import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { fileReceiptAs, type KnownShipment } from "./receipt-arrival.js";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
+import { refusalFromBody, type SelfCallRefusal } from "@cobblr/platform-contract/self-call-refusal";
 
 export interface ReceiptOrderInput {
   baseUrl: string;
@@ -61,6 +62,7 @@ export async function linkVendor(
     const hit = items.find((v) => v.name.trim().toLowerCase() === vendor.trim().toLowerCase());
     if (hit) return hit.id;
     const cRes = await apiFetch(base, { method: "POST", headers: input.headers, body: JSON.stringify({ name: vendor }) });
+    // REFUSAL: linking the receipt's shop is a nicety: without it the order keeps the shop's name as text, and the order's own create says any refusal
     return cRes.ok ? ((await cRes.json()) as { id: string }).id : null;
   } catch (err) {
     console.warn("[core-scan] receipt vendor link threw:", (err as Error).message);
@@ -77,7 +79,7 @@ export async function createReceiptOrder(input: ReceiptOrderInput): Promise<stri
 /** The same, saying WHY there is no order when Purchases is off: that one is
  *  not a failure to swallow but a choice the person can reverse, and the
  *  receipt offers it (#3869). */
-export async function tryCreateReceiptOrder(input: ReceiptOrderInput): Promise<{ id: string | null; purchasesOff: boolean }> {
+export async function tryCreateReceiptOrder(input: ReceiptOrderInput): Promise<{ id: string | null; purchasesOff: boolean; refused?: SelfCallRefusal }> {
   const vendorId = await linkVendor(input);
   try {
     const res = await apiFetch(`${input.baseUrl}/api/v1/orgs/${input.slug}/modules/purchases/orders`, {
@@ -114,7 +116,9 @@ export async function tryCreateReceiptOrder(input: ReceiptOrderInput): Promise<{
     const body = await res.text().catch(() => "");
     const purchasesOff = res.status === 409 && /module_not_enabled/.test(body);
     console.warn(`[core-scan] receipt PO create skipped (${res.status})${purchasesOff ? ": Purchases is off" : ""}`);
-    return { id: null, purchasesOff };
+    // The order route's own answer, kept: a person who may not make orders is
+    // told so, never "try again" (#9413).
+    return { id: null, purchasesOff, refused: refusalFromBody(res.status, body, "The purchase could not be recorded. Try again.") };
   } catch (err) {
     console.warn("[core-scan] receipt PO create threw:", (err as Error).message);
     return { id: null, purchasesOff: false };
@@ -186,6 +190,7 @@ export async function addOrderLine(args: {
         }),
       },
     );
+    // REFUSAL: the receipt's own bookkeeping on its order, best effort with nobody waiting; the warning logs the order's answer
     if (!res.ok) {
       console.warn(`[core-scan] receipt order line skipped (${res.status})`);
       return null;
@@ -226,6 +231,7 @@ export async function claimOrderLine(args: {
         body: JSON.stringify(args.partId && args.subjectKind ? { subject_kind: args.subjectKind, subject_id: args.partId } : { part_id: args.partId }),
       },
     );
+    // REFUSAL: the receipt's own bookkeeping on its order, best effort with nobody waiting; the warning logs the order's answer
     if (!res.ok) console.warn(`[core-scan] receipt order line ${args.partId ? "claim" : "release"} skipped (${res.status})`);
     return res.ok;
   } catch (err) {
@@ -269,6 +275,7 @@ export async function deleteReceiptOrder(args: {
       method: "DELETE",
       headers: args.headers,
     });
+    // REFUSAL: the receipt's own bookkeeping on its order, best effort with nobody waiting; the warning logs the order's answer
     if (!res.ok) console.warn(`[core-scan] receipt order delete skipped (${res.status})`);
     return res.ok;
   } catch (err) {
@@ -285,6 +292,7 @@ export async function deleteOrderLine(args: { baseUrl: string; slug: string; hea
       method: "DELETE",
       headers: args.headers,
     });
+    // REFUSAL: the receipt's own bookkeeping on its order, best effort with nobody waiting; the warning logs the order's answer
     if (!res.ok) console.warn(`[core-scan] receipt order line delete skipped (${res.status})`);
     return res.ok;
   } catch (err) {
@@ -301,6 +309,7 @@ export async function reportReceived(args: { baseUrl: string; slug: string; head
       headers: args.headers,
       body: JSON.stringify({ received: args.received }),
     });
+    // REFUSAL: the receipt's own bookkeeping on its order, best effort with nobody waiting; the warning logs the order's answer
     if (!res.ok) console.warn(`[core-scan] received count skipped (${res.status})`);
     return res.ok;
   } catch (err) {

@@ -114,6 +114,7 @@ export async function routeScanToDrive(opts: {
         ...(opts.scanBatchId ? { scan_batch_id: opts.scanBatchId } : {}),
       }),
     });
+    // REFUSAL: best-effort intake from a scanner; the tab is driven to the inbox either way and nobody is waiting on this write's words
     if (res.ok) itemId = ((await res.json()) as { id?: string }).id;
   } catch {
     /* intake is best-effort — a tab still gets driven to the inbox */

@@ -346,8 +346,9 @@ export const purchasesApi = {
     request<{ items: VendorSummary[] }>("GET", `/orgs/${slug}/modules/purchases/vendors`),
   getVendor: (slug: string, id: string) =>
     request<VendorDetail>("GET", `/orgs/${slug}/modules/purchases/vendors/${id}`),
-  createVendor: (slug: string, body: Partial<Vendor>) =>
-    request<Vendor>("POST", `/orgs/${slug}/modules/purchases/vendors`, body),
+  /** The new vendor, with the Undo issued to whoever made it (#9383). */
+  createVendor: (slug: string, body: Partial<Vendor>, opts: { forOrder?: string } = {}) =>
+    request<Vendor & { undo?: unknown }>("POST", `/orgs/${slug}/modules/purchases/vendors${opts.forOrder ? `?for_order=${encodeURIComponent(opts.forOrder)}` : ""}`, body),
   /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
   updateVendor: (slug: string, id: string, edit: Edit<Vendor>) =>
     request<Vendor>("PATCH", `/orgs/${slug}/modules/purchases/vendors/${id}`, edit.body, edit.headers),

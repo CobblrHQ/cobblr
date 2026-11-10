@@ -124,7 +124,15 @@ vendorsRouter.post(
       return inserted;
     });
     platform().events.emit("purchases.vendor.created", { orgId: ctx.org.id, vendorId: inserted.id });
-    res.status(201).json(inserted);
+    // Its Undo, issued to the person who made it (purchases:take-back-vendor,
+    // #9383). Made from an order's own Vendor field (`for_order`), the order
+    // takes it at once, so the Undo takes it off that order again and removes
+    // it; it refuses only while ANOTHER order names the vendor.
+    const forOrder = typeof req.query.for_order === "string" && /^[0-9a-f-]{36}$/i.test(req.query.for_order) ? req.query.for_order : null;
+    const undo = await platform().actions.issueUndos(ctx.org.id, session.id, [
+      { action_id: "purchases:take-back-vendor", args: { vendor_id: inserted.id, ...(forOrder ? { order_id: forOrder } : {}) }, entity_kind: "purchases:vendor", entity_id: inserted.id },
+    ]);
+    res.status(201).json({ ...inserted, undo });
   }),
 );
 

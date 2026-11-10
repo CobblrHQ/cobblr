@@ -53,6 +53,7 @@ export function RemoveBundleDialog({
         toast.action(said, {
           actionLabel: "Undo",
           duration: 10000,
+          // UNDO: blind, narrow: reinstates the removed bundle's snapshot over whatever is installed by then (#9419 audit part 1)
           onAction: () => {
             void changeWorkspaceShape(qc, slug, () => api.bundleRevert(slug, undoId))
               .then(() => toast.success(`${bundle!.name} is back, with its records.`))

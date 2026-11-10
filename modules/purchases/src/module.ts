@@ -230,6 +230,24 @@ export default defineModule({
       {
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "buy",
+        id: "purchases:take-back-vendor", // ACTION-TEMPLATE: undo-only, run from the Undo issued to whoever made the vendor; nobody asks for it in a sentence, so it has no example
+        changes: "records",
+        runBy: "member",
+        internal: true,
+        label: "Take back a new vendor",
+        description: "Internal, the inverse of making a vendor by typing a new shop: removes it again while no order names it. Runs from the Undo issued to the person who made it; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "purchases.take-back-vendor",
+        argsSchema: {
+          vendor_id: { label: "The vendor's id", type: "text" },
+          order_id: { label: "The order it was made for, which it is taken off again", type: "text" },
+        },
+      },
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        group: "buy",
         id: "purchases:remove-line",
         changes: "records",
         runBy: "member",

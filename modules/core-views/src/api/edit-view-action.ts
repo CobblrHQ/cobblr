@@ -51,6 +51,7 @@ export function registerEditViewAction(): void {
     ];
     return { ok: true, summary: `The "${view.name}" view: ${said.join(", ")}.`, data: { id: row.id, name: row.name, before } };
   });
+  // UNDO: a view's settings, blind: the old settings go back over a later edit (#9419 audit part 2)
   platform().actions.registerUndo("core-views.edit-view", (result) => {
     const d = (result as { ok?: unknown; data?: { id?: string; before?: { name: string; view_type: string; config: unknown; pinned: boolean } } } | null);
     if (d?.ok !== true || !d.data?.id || !d.data.before) return null;

@@ -36,6 +36,7 @@ export function useAnnouncePaperwork(slug: string, record: { kind: string; id: s
       ...(fills.length
         ? {
             actionLabel: "Undo",
+            // UNDO: takes back only fields that still hold what the paperwork filled; a field changed since is kept
             onAction: async () => {
               try {
                 const u = await api.undoPaperwork(slug, { ...record, fills });

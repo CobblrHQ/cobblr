@@ -112,7 +112,10 @@ batchesRouter.post(
     }
     const outcome = await recordReceiptPurchase(db, batch.id, plan, { baseUrl, slug: ctx.org.slug, headers });
     if (!outcome.recorded) {
-      res.status(502).json({ error: { code: "record_failed", message: "Purchases is on, but the purchase could not be recorded. Try again." } });
+      // The order route's refusal as it said it (a member who may not make
+      // orders: 403 and why); only a fault or no words is a "try again" (#9413).
+      const refused = outcome.refused && outcome.refused.status < 500 ? outcome.refused : null;
+      res.status(refused?.status ?? 502).json({ error: { code: "record_failed", message: refused?.message ?? "Purchases is on, but the purchase could not be recorded. Try again." } });
       return;
     }
     res.json({ order_id: outcome.orderId });

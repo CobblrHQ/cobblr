@@ -647,7 +647,6 @@ async function noteHandedOverFiled(p: { orgId?: unknown; itemId?: unknown; targe
   const from = row.peer_name ?? "someone you share with";
   const kind = p.targetKind.includes(":") ? p.targetKind : `${p.targetModule}:${p.targetKind}`;
   const [module, entityType] = kind.split(":", 2);
-  await platform().activity.log({ orgId, userId: null, action: "record_handed_over", ref: { module: module ?? null, entityType: entityType ?? kind, entityId }, via: { kind: "share", label: from } });
   const roles = new Map((await resolveFieldDefsForKind(orgId, kind).catch(() => [])).map((d) => [d.field_role, d.name] as const));
   const rec = await lookup(orgId, kind, entityId).catch(() => null);
   const have = ((rec?.fields as Record<string, unknown> | undefined)?.metadata ?? {}) as Record<string, unknown>;
@@ -657,6 +656,10 @@ async function noteHandedOverFiled(p: { orgId?: unknown; itemId?: unknown; targe
   if (fromField && !have[fromField]) fill[fromField] = from;
   if (onField && !have[onField] && row.taken_at) fill[onField] = await platform().accounts.dayFor(null, { now: row.taken_at });
   if (Object.keys(fill).length) await platform().entities.mergeMetadata(orgId, kind, entityId, fill).catch(() => undefined);
+  // The History line last: once it says who gave it, the record's fields say
+  // so too. Logged first, a read between the two found the line and an empty
+  // Acquired from (#9401).
+  await platform().activity.log({ orgId, userId: null, action: "record_handed_over", ref: { module: module ?? null, entityType: entityType ?? kind, entityId }, via: { kind: "share", label: from } });
 }
 
 /** Test-only: the next `times` runs of one hand-over step in a workspace

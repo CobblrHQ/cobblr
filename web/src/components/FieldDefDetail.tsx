@@ -100,6 +100,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
       toast.action(`${gone.effective_label ?? gone.display_label} deleted.`, {
         actionLabel: "Undo",
         duration: 10000,
+        // UNDO: restores the field this run deleted, with its values; a deleted field cannot be edited since
         onAction: () => {
           void changeWorkspaceShape(qc, slug, () => api.restoreFieldDef(slug, gone))
             .then(() => toast.success(`${gone.effective_label ?? gone.display_label} is back, with its values.`))

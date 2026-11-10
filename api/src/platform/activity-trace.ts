@@ -322,9 +322,14 @@ const faults = new Map<string, { fault: Fault; match: FaultMatch }>();
 /** `refuse`: the server's database refuses this workspace's History lines
  *  until cleared. `die`: the next line `match` names is lost the way a
  *  process dying after the change would lose it, once. */
-export function setTraceFaultForTests(orgId: string, fault: Fault | null, match: FaultMatch = {}): void {
+export function setTraceFaultForTests(orgId: string, fault: Fault | null, match: FaultMatch = {}): { dieLeft: boolean } {
+  // Whether a die was still waiting, so a test can tell its own line took it
+  // without reading History, which a background round may have filled by
+  // then (#9052).
+  const dieLeft = faults.get(orgId)?.fault === "die";
   if (fault) faults.set(orgId, { fault, match });
   else faults.delete(orgId);
+  return { dieLeft };
 }
 export function metaRefusedForTests(orgId: string): boolean {
   return faults.get(orgId)?.fault === "refuse";

@@ -26,6 +26,8 @@
 // A line is matched to the re-read only when both its position and its total
 // agree. On any doubt it stays exactly as it was, and is stamped and counted
 // as skipped. Every line it looks at is stamped, so none is looked at twice.
+// A line another write lands on while the receipt is read again is judged
+// again as it is now; one that keeps changing is left for the next round.
 //
 // BORN WITH: a fresh workspace has no rows, and every line it reads goes
 // through the parser and the match above.
@@ -178,6 +180,36 @@ export async function routeWithEvidence(menu: readonly ScanMenuEntry[]) {
   };
 }
 
+export type SettledLine =
+  | { outcome: "written"; verdict: OldLineVerdict }
+  /** No longer a line the heal looks at: filed, discarded or stamped meanwhile. */
+  | { outcome: "gone" }
+  /** Written by something else each time it was judged: left for the next round. */
+  | { outcome: "raced" };
+
+/** How many times a line is judged again after another write lands on it first. */
+const JUDGED_AGAIN = 3;
+
+/** Judge one line and write the verdict onto the line as it was judged. A
+ *  write that finds the line changed since is judged again on the line as it
+ *  is now, so a person's edit made meanwhile is still theirs, and a line that
+ *  keeps changing is reported, never dropped (#9437). */
+export async function settleLine(
+  row: OldLine,
+  judge: (row: OldLine) => OldLineVerdict,
+  write: (row: OldLine, verdict: OldLineVerdict) => Promise<boolean>,
+  reload: (id: string) => Promise<OldLine | undefined>,
+): Promise<SettledLine> {
+  let line: OldLine | undefined = row;
+  for (let tries = 0; tries <= JUDGED_AGAIN; tries++) {
+    const verdict = judge(line);
+    if (await write(line, verdict)) return { outcome: "written", verdict };
+    line = await reload(row.id);
+    if (!line) return { outcome: "gone" };
+  }
+  return { outcome: "raced" };
+}
+
 interface HealDB {
   core_scan_inbox_items: OldLine & { created_at: Date };
   core_scan_batches: { id: string; source_file_id: string | null };
@@ -187,28 +219,31 @@ export interface OldLinesOutcome {
   healed: number;
   skipped: number;
   failed: number;
+  /** Lines written by something else each time they were judged: the next round takes them. */
+  raced: number;
 }
 
 /** Heal one workspace. */
 export async function healOldReceiptLinesIn(orgId: string, db: Kysely<HealDB>, since: Date): Promise<OldLinesOutcome> {
-  const rows = (await db
-    .selectFrom("core_scan_inbox_items")
-    .select(sql<string>`updated_at::text`.as("updated_stamp"))
-    .select([
-      "id", "status", "updated_at", "scan_batch_id", "quantity", "suggested_name", "suggested_manufacturer", "suggested_sku",
-      "barcode_text", "source_kind", "ai_notes", "scan_area", "target_module", "target_entity_id", "suggested_metadata", "suggested_candidates",
-    ])
-    .where("status", "=", "pending")
-    .where("source_kind", "=", "receipt")
-    .where("created_at", "<", since)
-    .where("scan_batch_id", "is not", null)
-    .where(sql<boolean>`suggested_metadata->>'parse_method' = 'ocr-lines'`)
-    .where(sql<boolean>`coalesce((suggested_metadata->'${sql.raw(OLD_LINE_HEAL_KEY)}'->>'v')::int, 0) < ${OLD_LINE_HEAL_VERSION}`)
-    .where(sql<boolean>`((suggested_metadata->'weight') is null or (suggested_metadata->>'receipt_vendor') is null)`)
-    .orderBy("scan_batch_id")
-    .limit(PER_VISIT)
-    .execute()) as OldLine[];
-  const out: OldLinesOutcome = { healed: 0, skipped: 0, failed: 0 };
+  const oldLines = () =>
+    db
+      .selectFrom("core_scan_inbox_items")
+      .select(sql<string>`updated_at::text`.as("updated_stamp"))
+      .select([
+        "id", "status", "updated_at", "scan_batch_id", "quantity", "suggested_name", "suggested_manufacturer", "suggested_sku",
+        "barcode_text", "source_kind", "ai_notes", "scan_area", "target_module", "target_entity_id", "suggested_metadata", "suggested_candidates",
+      ])
+      .where("status", "=", "pending")
+      .where("source_kind", "=", "receipt")
+      .where("created_at", "<", since)
+      .where("scan_batch_id", "is not", null)
+      .where(sql<boolean>`suggested_metadata->>'parse_method' = 'ocr-lines'`)
+      .where(sql<boolean>`coalesce((suggested_metadata->'${sql.raw(OLD_LINE_HEAL_KEY)}'->>'v')::int, 0) < ${OLD_LINE_HEAL_VERSION}`)
+      .where(sql<boolean>`((suggested_metadata->'weight') is null or (suggested_metadata->>'receipt_vendor') is null)`);
+  const rows = (await oldLines().orderBy("scan_batch_id").limit(PER_VISIT).execute()) as OldLine[];
+  // The line as it is now, while it is still one this visit would take.
+  const reload = async (id: string) => (await oldLines().where("id", "=", id).executeTakeFirst()) as OldLine | undefined;
+  const out: OldLinesOutcome = { healed: 0, skipped: 0, failed: 0, raced: 0 };
   if (!rows.length) return out;
 
   const { parseReceipt } = await import("./services/receipt.js");
@@ -247,9 +282,10 @@ export async function healOldReceiptLinesIn(orgId: string, db: Kysely<HealDB>, s
           })()
         : { lines: [], count: 0, vendor: null };
       for (const row of lines) {
-        const v = oldLineVerdict(row, reread, route);
-        if (!(await stamp(row, v))) continue;
-        if (v.action === "heal") out.healed++;
+        const s = await settleLine(row, (r) => oldLineVerdict(r, reread, route), stamp, reload);
+        if (s.outcome === "raced") out.raced++;
+        if (s.outcome !== "written") continue;
+        if (s.verdict.action === "heal") out.healed++;
         else out.skipped++;
       }
     } catch (err) {
@@ -258,7 +294,7 @@ export async function healOldReceiptLinesIn(orgId: string, db: Kysely<HealDB>, s
       console.warn(`[core-scan] heal-old-receipt-lines: a session could not be read again in ${orgId}:`, (err as Error).message);
     }
   }
-  console.log(`[core-scan] heal-old-receipt-lines: ${orgId} healed ${out.healed}, skipped ${out.skipped}, failed ${out.failed}`);
+  console.log(`[core-scan] heal-old-receipt-lines: ${orgId} healed ${out.healed}, skipped ${out.skipped}, failed ${out.failed}, raced ${out.raced}`);
   return out;
 }
 
@@ -269,11 +305,11 @@ export function registerOldReceiptLinesHeal(): void {
     since: BY_WEIGHT_SINCE,
     shim: "modules/core-scan/src/heal-old-receipt-lines.ts",
     module: "core-scan",
-    // Skipped lines are counted and never reopened; a failed session is read
-    // again next round.
+    // Skipped lines are counted and never reopened; a failed session, or a
+    // line another write kept landing on first, is read again next round.
     visit: async ({ orgId, db, since }) => {
       const o = await healOldReceiptLinesIn(orgId, db as Kysely<HealDB>, since);
-      return { found: o.skipped + o.failed, settled: o.failed === 0 };
+      return { found: o.skipped + o.failed + o.raced, settled: o.failed === 0 && o.raced === 0 };
     },
   });
 }

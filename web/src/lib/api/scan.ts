@@ -653,11 +653,13 @@ export const scanApi = {
     // `reason` says why, in words, when no picture was kept. A picture made
     // the main photo says what the record had (`previous_image_path`, for
     // Undo); that one stays in the record's photos.
-    request<{ image_path: string | null; previous_image_path?: string | null; file_id?: string; reason?: string }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
-  /** Make one of a record's photos its main photo, or put back the one it had
-   *  (Undo). The photo it replaces stays in the record's photos. */
+    // `undo` is the way back issued to whoever made it main (#9377's class).
+    request<{ image_path: string | null; previous_image_path?: string | null; file_id?: string; reason?: string; undo?: unknown }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
+  /** Make one of a record's photos its main photo. The photo it replaces
+   *  stays in the record's photos; `undo` is the issued way back, which puts
+   *  it back only while this one is still main. */
   setMainPhoto: (slug: string, body: { entity_kind: string; entity_id: string; instance?: string | null; file_id?: string; image_path?: string | null }) =>
-    request<{ image_path: string | null; previous_image_path: string | null }>("POST", `/orgs/${slug}/modules/core-scan/entity-image/main`, body),
+    request<{ image_path: string | null; previous_image_path: string | null; undo?: unknown }>("POST", `/orgs/${slug}/modules/core-scan/entity-image/main`, body),
   /** The scan inbox's Pick best, for a record: the AI chooses among the
    *  pictures on screen that show the record. Runs only when pressed. */
   rankRecordPhotoAi: (slug: string, body: { entity_kind: string; entity_id: string; candidates: ImageOption[] }) =>

@@ -318,7 +318,7 @@ export function makeLexicalScorer(item: FitItem): {
   // itself; a name that IS a prepositional phrase falls back to the full name.
   const rawName = (item.name ?? "").toLowerCase();
   const nameCore = rawName.split(/\b(?:for|with|fits)\b/)[0]!.trim() || rawName;
-  const TAIL = new Set(["pack", "packs", "count", "ct", "pcs", "pc", "set", "sets", "oz", "ml", "lb", "lbs", "kg", "inch", "in", "ft", "each", "roll", "rolls",
+  const TAIL = new Set(["pack", "packs", "count", "ct", "pcs", "pc", "set", "sets", "oz", "ml", "lb", "lbs", "kg", "inch", "in", "ft", "each",
     // The sizes a store prints after a food (#7518): "Whole Milk 1 Gal" heads "milk".
     "gal", "gals", "gallon", "gallons", "quart", "quarts", "pint", "pints", "liter", "liters", "litre", "litres", "ltr", "gram", "grams", "ounce", "ounces", "pound", "pounds", "dozen", "doz"]);
   // Retail names end with the COLOR ("…Rocker Switch White", "…Soft White") —
@@ -331,9 +331,15 @@ export function makeLexicalScorer(item: FitItem): {
   // "…Repair Kit": the thing is the seasoning, the trail, the repair, not the
   // way it is packaged or put together) — the head noun is the thing itself,
   // never its packaging arithmetic, its finish, or its assembly.
+  // A roll is packaging only when it is counted: "Paper Towels 6 Rolls", "Tape
+  // 1 Roll". Uncounted it is the thing itself, and cinnamon rolls, dinner rolls
+  // and spring rolls are rolls: read past it, "Cinnamon Rolls" headed
+  // "cinnamon" and fitted the Spices table (#9380).
+  const countedRoll = /\d\s*(?:[a-z]+\s+)?rolls?\b/.test(nameCore);
   while (
     nameTokens.length > 1 &&
     (TAIL.has(nameTokens[nameTokens.length - 1]!) ||
+      (countedRoll && /^rolls?$/.test(nameTokens[nameTokens.length - 1]!)) ||
       COLOR_TAIL.has(nameTokens[nameTokens.length - 1]!) ||
       GENERIC_NOUNS.has(stem(nameTokens[nameTokens.length - 1]!)) ||
       /\d/.test(nameTokens[nameTokens.length - 1]!))

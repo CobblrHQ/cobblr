@@ -14,6 +14,7 @@ export function WorkspaceIntegrations({ slug, name, canEnable, offers }: { slug:
       if (result.already_enabled) return;
       toast.action(`Turned on ${label} for ${name}.`, {
         actionLabel: "Undo",
+        // UNDO: turns off only the feature this toast turned on; switching off keeps its records
         onAction: async () => {
           try {
             await changeWorkspaceShape(qc, slug, () => api.disableModule(slug, module));

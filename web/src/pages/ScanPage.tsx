@@ -1144,6 +1144,19 @@ export function ScanPage() {
   // The headline dropped the session's date to fit (a 320 px phone, a long
   // name), read as the ... opens: a tooltip can't be reached by a finger.
   const menuDateGone = useRef(false);
+  // Sessions whose headline gave its date away. Such a session always has its
+  // menu, which says the date, even when it has nothing else to offer: the
+  // date was otherwise on no line and in no menu (#9355).
+  const [datelessHeads, setDatelessHeads] = useState<Set<string>>(new Set());
+  const noteDateGone = useCallback((key: string, gone: boolean) => {
+    setDatelessHeads((prev) => {
+      if (prev.has(key) === gone) return prev;
+      const next = new Set(prev);
+      if (gone) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // Sessions whose "Do these belong together?" was pressed in the ⋯ (#3064).
   const [themeAsked, setThemeAsked] = useState<Set<string>>(new Set());
@@ -1968,6 +1981,7 @@ export function ScanPage() {
     toast.action(`Removed ${done.length} item${done.length === 1 ? "" : "s"}.`, {
       actionLabel: "Undo",
       duration: 7000,
+      // UNDO: restores the scans this run removed; a removed scan cannot be edited since
       onAction: async () => {
         await Promise.allSettled(done.map((id) => api.restoreScanItem(activeSlug, id)));
         void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
@@ -2019,6 +2033,7 @@ export function ScanPage() {
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       toast.action(`Merged ${r.moved} item${r.moved === 1 ? "" : "s"} into ${v.intoName}.`, {
         actionLabel: "Undo",
+        // UNDO: blind, narrow: the merged scans go back to their session whatever session they are in by then (#9419 audit part 1)
         onAction: async () => {
           try {
             await api.reassignScanBatch(activeSlug, v.itemIds, v.from);
@@ -2409,6 +2424,7 @@ export function ScanPage() {
     else if (ok > 0) {
       // A done thing is a toast, and the way back rides on it.
       const filedIds = filed.map((f) => f.id);
+      // UNDO: the unconfirm route refuses each scan whose filed record changed since (#9420)
       toast.action(parts.join(" · "), { actionLabel: "Undo", duration: 10000, onAction: () => void revertIds(filedIds).then(reportRevert) });
     } else toast.success(parts.join(" · "));
     return { ok, merged, skipped, failed };
@@ -3929,6 +3945,7 @@ export function ScanPage() {
                         }
                         date={sessionDate}
                         dateTitle={sessionDateWords}
+                        onDateGone={(gone) => noteDateGone(g.key, gone)}
                         count={g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" ? g.items.length : null}
                       />
                     </SessionIdentity>
@@ -4023,7 +4040,7 @@ export function ScanPage() {
                       session read as nagging). "Do these belong together?"
                       costs nothing until pressed; it also surfaces on its own
                       below, but only on evidence of a shared theme. */}
-                  {g.batchId && !routing && (themeOffer || mergeInto || phoneTucks || phoneFolds) && (
+                  {g.batchId && !routing && (themeOffer || mergeInto || phoneTucks || phoneFolds || (!!sessionDate && datelessHeads.has(g.key))) && (
                     <HeaderMenu
                       width={264}
                       align="right"

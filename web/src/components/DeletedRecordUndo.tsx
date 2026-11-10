@@ -11,6 +11,7 @@ export function DeletedRecordUndo() {
     await qc.invalidateQueries();
   } });
   useEffect(() => subscribeDeletedRecord(({ slug, id }) => {
+    // UNDO: restores the record this run deleted; a deleted record cannot be edited since
     toast.action("Moved to Recently deleted for 30 days.", { actionLabel: "Undo", duration: 10_000, onAction: async () => {
       try {
         await restore({ slug, id });

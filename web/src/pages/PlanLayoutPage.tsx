@@ -251,6 +251,7 @@ export function PlanLayoutPage() {
     mutationFn: (v: { id: string; body: PlanDraftBody }) => api.planDraftApply(slug, v.id, v.body),
     onSuccess: (r, { id }) => {
       refreshRoom();
+      // UNDO: the layout's Undo refuses a place a teammate changed since (#9423)
       toast.action(r.note, { actionLabel: "Undo", onAction: () => undo.mutate(id) });
     },
     // A refused Apply took back what it did, or left its part on the draft

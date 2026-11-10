@@ -426,7 +426,7 @@ async function boot() {
     deletedRecords,
     dispositions: { markGone: dispositions.markGone, bringBack: dispositions.bringBack },
     money,
-    activity: { log: activity.log, transaction: changeWithHistory, logMany: activity.logMany, createdNamesMatching: activity.createdNamesMatching, entryOf: activity.entryOf, changeSince: activity.changeSince, registerHistoryWriter },
+    activity: { log: activity.log, transaction: changeWithHistory, logMany: activity.logMany, createdNamesMatching: activity.createdNamesMatching, entryOf: activity.entryOf, changeSince: activity.changeSince, newestChangeOn: activity.newestChangeOn, registerHistoryWriter },
     events: { emit: events.emit, on: events.on },
     tenants: {
       getDb: async (orgId) => secretPresenceDb(orgId, await getTenantDb(orgId)),

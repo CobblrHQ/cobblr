@@ -95,7 +95,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         message,
         duration: opts.duration ?? 0,
         actionLabel: opts.actionLabel,
-        onAction: opts.onAction,
+        // A button that fails says why: an Undo refused over a teammate's
+        // later change throws its reason, and uncaught it left the toast
+        // sitting there saying nothing.
+        onAction: opts.onAction && (async () => {
+          try {
+            await opts.onAction!();
+          } catch (e) {
+            const said = e instanceof Error ? e.message : String(e ?? "");
+            push({ kind: "error", message: said.trim() ? said : ERROR_WITHOUT_WORDS, duration: 8000 });
+          }
+        }),
         secondaryLabel: opts.secondaryLabel,
         onSecondary: opts.onSecondary,
         startsAfter: opts.startsAfter,

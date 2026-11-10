@@ -55,10 +55,11 @@ function HoldForm({ api, order, who, onClose, onDone }: { api: SalesApi; order: 
   const [error, setError] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: () => api.holdOrder(order.id, day ? { until: day } : {}),
-    onSuccess: () => {
+    onSuccess: (held) => {
       onDone();
       onClose();
-      toast.action("Held.", { actionLabel: "Undo", duration: 8000, onAction: async () => { try { await api.releaseHold(order.id); toast.success("Hold released."); } catch (e) { toast.error((e as Error).message); } onDone(); } });
+      // UNDO: this hold only, while the order still has it; the route refuses over a teammate's hold since (#9421)
+      toast.action("Held.", { actionLabel: "Undo", duration: 8000, onAction: async () => { try { await api.undoHold(order.id, held); toast.success(held.previous ? "Back to the hold it had." : "Hold released."); } catch (e) { toast.error((e as Error).message); } onDone(); } });
     },
     onError: (e) => setError((e as Error).message),
   });

@@ -325,7 +325,10 @@ export default defineModule({
         appliesTo: { kinds: ["sales:order"] },
         invokeHandler: "sales.release-hold",
         userInvokable: true,
-        argsSchema: {},
+        argsSchema: {
+          held_at: { label: "The hold it takes back, as its hold answered (the Undo of a hold)", type: "text" },
+          previous: { label: "The hold the order had before it, when it had one", type: "json" },
+        },
       },
       {
         group: "more",

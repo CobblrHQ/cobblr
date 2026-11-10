@@ -139,6 +139,7 @@ export function PlaceItemsView({
         toast.action(placedSaying(nameOf(single.map(keyOf)), pathOf(locationId, byId), !!position), {
           actionLabel: "Undo",
           duration: 8000,
+          // UNDO: each way back sends the place it left and is refused once a teammate moved the thing since (#9422)
           onAction: async () => {
             for (const u of undos.reverse()) await u();
             actions.refresh();
@@ -177,6 +178,7 @@ export function PlaceItemsView({
       toast.action(`${nameOf(recs.map(keyOf))} has no place now`, {
         actionLabel: "Undo",
         duration: 8000,
+        // UNDO: each way back sends the place it left and is refused once a teammate moved the thing since (#9422)
         onAction: async () => {
           for (const u of undos.reverse()) await u();
           actions.refresh();
@@ -201,6 +203,7 @@ export function PlaceItemsView({
       } else if (a.kind === "some") {
         const undo = await actions.moveSome(r, a.fromHoldingId, a.fromLocationId, ask.locationId, a.qty);
         const msg = `${fmt(a.qty)} of ${r.name} moved to ${where}`;
+        // UNDO: the way back sends the place it left and is refused once a teammate moved the thing since (#9422)
         if (undo) toast.action(msg, { actionLabel: "Undo", duration: 8000, onAction: async () => { await undo(); actions.refresh(); } });
         else toast.success(msg);
       } else {

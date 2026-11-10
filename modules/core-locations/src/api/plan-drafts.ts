@@ -26,6 +26,7 @@ import { z } from "zod";
 import { sessionUser, tenantContext, type CoreLocationsDB } from "../db.js";
 import { movePlace, PlaceMoveRefused } from "./place-move.js";
 import { deletePlace } from "./place-delete.js";
+import { sameJson } from "./same-json.js";
 import { siblingNamed } from "./siblings.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
@@ -95,7 +96,8 @@ export interface ApplyResult {
   draft: { id: string; name: string };
   room: { id: string; name: string };
   created: Array<{ key: string; id: string; name: string }>;
-  moved: Array<{ id: string; name: string; before: { parent_id: string | null; floorplan: unknown } }>;
+  // after: what the apply left (#9423); an apply recorded before it has none.
+  moved: Array<{ id: string; name: string; before: { parent_id: string | null; floorplan: unknown }; after?: { parent_id: string | null; floorplan: unknown } }>;
   things: Array<{
     kind: string;
     id: string;
@@ -354,7 +356,7 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
         if (!["x_mm", "y_mm", "w_mm", "d_mm", "rot"].some((k) => fp[k] !== next![k])) next = null;
       }
       if (!reparents && !next) continue;
-      moved.push({ id: locId, name: cur.name, before });
+      moved.push({ id: locId, name: cur.name, before, after: { parent_id: reparents ? to! : cur.parent_id, floorplan: next ?? (cur.metadata as { floorplan?: unknown } | null)?.floorplan ?? null } });
       if (reparents) await reparent(db, locId, to!);
       if (next) await setFloorplan(db, locId, next);
     }
@@ -480,8 +482,14 @@ async function revertApplied(
   }
   let places = 0;
   for (const m of [...applied.moved].reverse()) {
-    const cur = await db.selectFrom("core_locations_locations").select(["parent_id"]).where("id", "=", m.id).executeTakeFirst();
+    const cur = await db.selectFrom("core_locations_locations").select(["parent_id", "metadata"]).where("id", "=", m.id).executeTakeFirst();
     if (!cur) continue;
+    // Only while it is still where and as the apply left it: a rack a
+    // teammate moved or redrew since keeps their change (#9423).
+    if (m.after && (cur.parent_id !== m.after.parent_id || !sameJson((cur.metadata as { floorplan?: unknown } | null)?.floorplan ?? null, m.after.floorplan))) {
+      leftWhereTheyAre++;
+      continue;
+    }
     if (cur.parent_id !== m.before.parent_id) await reparent(db, m.id, m.before.parent_id);
     await setFloorplan(db, m.id, (m.before.floorplan as Record<string, unknown> | null) ?? null);
     places++;
@@ -490,8 +498,8 @@ async function revertApplied(
   // given a shelf since keeps it, and stays with it (#4115).
   let deleted = 0;
   for (const c of [...applied.created].reverse()) {
-    const gone = await deletePlace(orgId, c.id, userId, undefined, true);
-    if (gone === "places_inside") leftWhereTheyAre++;
+    const gone = await deletePlace(orgId, c.id, userId, undefined, true, true);
+    if (gone === "places_inside" || gone === "things_inside") leftWhereTheyAre++;
     else if (gone) deleted++;
   }
   return { things, places, deleted, leftWhereTheyAre };

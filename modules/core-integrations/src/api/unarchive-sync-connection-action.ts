@@ -23,6 +23,7 @@ export function registerUnarchiveSyncConnectionAction(): void {
     await unarchiveConnection(db, conn.id);
     return { ok: true, summary: `${conn.label} is back in the list. Its syncing is off until someone turns it on.`, data: { connection: conn.id } };
   });
+  // UNDO: workspace setup, blind: archives the connection again over a later change to its syncing (#9419 audit part 2)
   platform().actions.registerUndo("core-integrations.unarchive-sync-connection", (result) => {
     const d = (result as { ok?: unknown; skipped?: unknown; data?: { connection?: string } } | null);
     if (d?.ok !== true || d.skipped || !d.data?.connection) return null;

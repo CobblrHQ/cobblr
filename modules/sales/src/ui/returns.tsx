@@ -95,6 +95,7 @@ function ReturnForm({ api, order, currency, lines, onClose, onDone }: { api: Sal
     onSuccess: (r) => {
       onDone();
       onClose();
+      // UNDO: takes back only the return this run recorded, by its id
       toast.action("Recorded.", { actionLabel: "Undo", duration: 8000, onAction: async () => { try { await api.undoReturn(order.id, r.return_id); toast.success("Taken back."); } catch (e) { toast.error((e as Error).message); } onDone(); } });
     },
     onError: (e) => setError((e as Error).message),

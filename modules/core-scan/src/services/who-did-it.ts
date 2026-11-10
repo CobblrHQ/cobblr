@@ -17,6 +17,9 @@ export interface ActOnRow {
 
 /** The row is being sent back by this person right now. */
 export const SENDING_BACK_KEY = "sending_back";
+/** The newest History entry on the record a filing made, as it was filed:
+ *  the filing's Undo refuses over any entry after it (#9420). */
+export const FILED_SEEN_KEY = "filed_seen_activity";
 /** The row was sent back by this person. */
 export const SENT_BACK_KEY = "sent_back";
 

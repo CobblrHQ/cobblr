@@ -31,6 +31,13 @@ const wrap =
   (req: Request, res: Response) => {
     fn(req, res).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
+      // A move compared against where the thing was expected (an Undo, a
+      // station's scan) found it moved since: a refusal a person reads, in
+      // plain words (#9422).
+      if (/^placement: this thing moved since/.test(message)) {
+        res.status(409).json({ error: { code: "moved_since", message: message.replace(/^placement:\s*/, "").replace(/^t/, "T") } });
+        return;
+      }
       // place() throws a plain Error on an illegal placement (self, cycle,
       // ineligible kind) — surface those as 422, everything else 500.
       const bad = /placement:/.test(message);
@@ -283,7 +290,9 @@ router.post(
   }),
 );
 
-const HomeBody = z.object({ containee: Ref, via: z.string().trim().min(1).max(80).optional() });
+// expected: the container the thing is in now, for an Undo that sends it home
+// only while it is still there (#9422).
+const HomeBody = z.object({ containee: Ref, via: z.string().trim().min(1).max(80).optional(), expected: z.object({ container: Ref }).optional() });
 
 // POST /return-home { containee, via? } — back to where it was before its
 // current container (a spool off a printer, onto its shelf).
@@ -298,6 +307,10 @@ router.post(
       return;
     }
     if (!(await requireCapability(req, res, "core-placement:return-home", parsed.data.containee))) return;
+    if (parsed.data.expected) {
+      const now = await platform().placement.containerOf({ orgId: orgId(req), containee: parsed.data.containee });
+      if (!now || now.kind !== parsed.data.expected.container.kind || now.id !== parsed.data.expected.container.id) throw new Error("placement: this thing moved since. Its later move was kept, so nothing was moved back.");
+    }
     const to = await platform().placement.returnHome({
       orgId: orgId(req),
       containee: parsed.data.containee,

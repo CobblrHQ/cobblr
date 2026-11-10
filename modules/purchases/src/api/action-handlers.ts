@@ -18,6 +18,7 @@ import { sql, type Kysely } from "kysely";
 import { platform, readListArg, type ActionInvokeContext } from "@cobblr/platform-contract";
 import type { OrderStatus, PurchasesDB } from "../db.js";
 import { PURCHASED_STATUSES } from "../price-stats.js";
+import { registerTakeBackVendor } from "./take-back-vendor-action.js";
 
 let registered = false;
 
@@ -43,6 +44,7 @@ const OPEN_STATUSES: OrderStatus[] = ["planned", "ordered", "in-transit"];
 
 export function registerPurchasesActionHandlers(): void {
   registerUndos();
+  registerTakeBackVendor();
   if (registered) return;
   registered = true;
 

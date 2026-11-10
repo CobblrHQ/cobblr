@@ -393,7 +393,11 @@ export class SalesApi {
   }
   /** Hold a draft order's stock for its customer; refused with a sentence when stock does not cover it. */
   holdOrder(orderId: string, body: { until?: string }) {
-    return this.req<{ ok: true; held: number; until: string | null }>("POST", `/orders/${orderId}/hold`, body);
+    return this.req<{ ok: true; held: number; until: string | null; held_at: string; previous: { until: string | null } | null }>("POST", `/orders/${orderId}/hold`, body);
+  }
+  /** The Undo of one hold: only that hold, while the order still has it; refused with why otherwise. */
+  undoHold(orderId: string, held: { held_at: string; previous: { until: string | null } | null }) {
+    return this.req<{ ok: true }>("POST", `/orders/${orderId}/hold/undo`, { held_at: held.held_at, previous: held.previous });
   }
   releaseHold(orderId: string) {
     return this.req<{ ok: true; released: number }>("DELETE", `/orders/${orderId}/hold`);

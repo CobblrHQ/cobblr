@@ -157,6 +157,7 @@ export function LocationDetailPage() {
       refresh();
       toast.action(deletedSentence(gone.name, gone), {
         actionLabel: "Undo",
+        // UNDO: restores the place this run deleted; a deleted place cannot be edited since
         onAction: async () => {
           try {
             const back = await api.restoreDeletedLocation(activeSlug, id!);
@@ -582,6 +583,7 @@ export function LocationDetailPage() {
             }
             toast.action(movedSentence(move), {
               actionLabel: "Undo",
+              // UNDO: put-back-everything moves back only what is still where the move left it
               onAction: async () => {
                 try {
                   const back = await api.putBackEverything(activeSlug, move);
@@ -668,6 +670,7 @@ function EditLocationModal({
       if (moved) {
         toast.action(moved.sentence, {
           actionLabel: "Undo",
+          // UNDO: the move's way back says where it found the place (edited-from), refused once a teammate moved it since
           onAction: async () => {
             try {
               await api.updateLocation(activeSlug, location.id, moved.back);

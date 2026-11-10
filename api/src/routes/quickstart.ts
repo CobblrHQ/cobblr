@@ -31,6 +31,7 @@ import { resolveFieldDefsForKind } from "../platform/field-defs.js";
 import { currentBundleId, humaniseBundleId } from "../lib/bundle-aliases.js";
 import { runSerialised } from "../platform/exclusive.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { refusalOf } from "@cobblr/platform-contract/self-call-refusal";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const quickstartRouter = Router({ mergeParams: true });
@@ -354,7 +355,7 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
     const onlyIds = parsed.data.item_ids ? new Set(parsed.data.item_ids) : null;
     const pending = await fetchPendingInbox(baseUrl, slug, token);
     let created = 0;
-    const errors: Array<{ id: string; status: number }> = [];
+    const errors: Array<{ id: string; status: number; message?: string }> = [];
     // Which captures fit this bundle. The inbox serves each row with its
     // offers judged against the workspace NOW (core-scan's resolve-offers):
     // once the install above has run, a capture that was offered this bundle
@@ -389,7 +390,8 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
         }),
       });
       if (confirmRes.ok) created += 1;
-      else errors.push({ id: it.id, status: confirmRes.status });
+      // The item's own refusal, in its words (#9413).
+      else errors.push({ id: it.id, status: confirmRes.status, message: (await refusalOf(confirmRes, "It could not be added.")).message });
     }
 
     const primary = targets[0]!;

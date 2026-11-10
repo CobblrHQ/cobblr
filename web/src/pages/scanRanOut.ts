@@ -62,6 +62,7 @@ export function useRanOut(item: ScanInboxItem | null, viewer: ScanRowStateContex
       toast.action(said, {
         actionLabel: "Undo",
         duration: 10_000,
+        // UNDO: the unconfirm route refuses once the record it filed changed since (#9420)
         onAction: async () => {
           try {
             if (!item) return;

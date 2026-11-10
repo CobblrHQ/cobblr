@@ -29,6 +29,7 @@ export function ScanBrokenMark({ item, onMarked }: { item: ScanInboxItem; onMark
       onMarked?.();
       toast.success(`${r.record.title} needs repair: it is in its service log.`, {
         actionLabel: "Undo",
+        // UNDO: the unconfirm route refuses once the record it filed changed since (#9420)
         onAction: async () => {
           const back = await api.unconfirmScanItem(activeSlug, item.id).catch((e: unknown) => {
             toast.error(e instanceof ApiError ? e.message : String(e));

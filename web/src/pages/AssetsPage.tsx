@@ -432,6 +432,7 @@ export function AssetsPage({
                       toast.action(`Moved ${countOf(n, words)} to ${where}.`, {
                         actionLabel: "Undo",
                         duration: 10_000,
+                        // UNDO: the mover's way back puts back only what is still where it moved it (#9419 audit part 1)
                         onAction: async () => {
                           await undo();
                           void qc.invalidateQueries({ queryKey: ["assets"] });

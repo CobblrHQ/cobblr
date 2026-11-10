@@ -170,15 +170,23 @@ export async function setEntityImageFile(opts: {
   return (await setEntityImagePath(opts, imagePath)) ? imagePath : null;
 }
 
+/** Why a record's photo was not changed, in the record's own words: its
+ *  update route's status and sentence (a member without the right to change
+ *  it is told so, #9396), or a plain "try again" when no answer came. */
+export type PhotoRefusal = { status: number; message: string };
+const NOT_CHANGED: PhotoRefusal = { status: 409, message: "The record's photo could not be changed. Try again." };
+
 /** PATCH a record's image_path to exactly this value (a file's address, an
- *  older outside address being put back by Undo, or nothing). */
-export async function setEntityImagePath(
+ *  older outside address being put back by Undo, or nothing). Answers the
+ *  record's refusal when it says no, so a caller never turns "you may not"
+ *  into "try again". */
+export async function writeImagePath(
   opts: { orgSlug: string; bearer: string; entityKind: string; entityId: string; instance?: string | null },
   imagePath: string | null,
-): Promise<boolean> {
+): Promise<{ ok: true } | { ok: false; refused: PhotoRefusal }> {
   try {
     const [moduleName, type] = opts.entityKind.split(":");
-    if (!moduleName || !type) return false;
+    if (!moduleName || !type) return { ok: false, refused: NOT_CHANGED };
     // Set image_path via the entity's CRUD route (loopback only, carries the
     // bearer). Instance items live under /instances/<instance>/items/<id>.
     const route = opts.instance
@@ -189,11 +197,24 @@ export async function setEntityImagePath(
       headers: { Authorization: `Bearer ${opts.bearer}`, "Content-Type": "application/json" },
       body: JSON.stringify({ image_path: imagePath }),
     });
-    return patch.ok;
+    if (patch.ok) return { ok: true };
+    const said = ((await patch.json().catch(() => null)) as { error?: { message?: unknown } } | null)?.error?.message;
+    // A refusal the person can act on keeps its words and status; a server
+    // fault or an answer without words stays a "try again".
+    if (patch.status < 500 && typeof said === "string" && said.trim()) return { ok: false, refused: { status: patch.status, message: said } };
+    return { ok: false, refused: NOT_CHANGED };
   } catch (err) {
     console.error("[core-scan] entity-image set failed:", (err as Error).message);
-    return false;
+    return { ok: false, refused: NOT_CHANGED };
   }
+}
+
+/** writeImagePath, for a caller that only needs to know whether it went. */
+export async function setEntityImagePath(
+  opts: { orgSlug: string; bearer: string; entityKind: string; entityId: string; instance?: string | null },
+  imagePath: string | null,
+): Promise<boolean> {
+  return (await writeImagePath(opts, imagePath)).ok;
 }
 
 /** Make a stored picture the record's main photo, keeping the one it had.
@@ -212,13 +233,18 @@ export async function setMainPhoto(opts: {
   entityId: string;
   instance?: string | null;
   fileId: string;
-}): Promise<{ image_path: string; previous_image_path: string | null } | null> {
+}): Promise<{ image_path: string; previous_image_path: string | null } | { refused: PhotoRefusal }> {
   const [sourceModule, sourceType] = opts.entityKind.split(":");
-  if (!sourceModule || !sourceType) return null;
+  if (!sourceModule || !sourceType) return { refused: NOT_CHANGED };
   const before = await platform().entities.lookup(opts.orgId, opts.entityKind, opts.entityId).catch(() => null);
   const previous = (before?.image_path ?? (before?.fields as { image_path?: unknown } | undefined)?.image_path ?? null) as string | null;
   // An item in a collection is changed through the collection's own route.
   const instance = opts.instance ?? before?.instance ?? null;
+  // The record is changed first: one that refuses (a member who may not edit
+  // it) is left as it was, with no picture attached to it (#9396).
+  const image_path = imagePathForFile(opts.orgSlug, opts.fileId);
+  const wrote = await writeImagePath({ ...opts, instance }, image_path);
+  if (!wrote.ok) return { refused: wrote.refused };
   const keep = async (fileId: string) => {
     await platform()
       .files.attach(opts.orgId, { fileId, source_module: sourceModule, source_type: sourceType, source_id: opts.entityId, role: "gallery" })
@@ -227,8 +253,7 @@ export async function setMainPhoto(opts: {
   const previousFile = fileIdOfImagePath(previous);
   if (previousFile && previousFile !== opts.fileId) await keep(previousFile);
   await keep(opts.fileId);
-  const image_path = await setEntityImageFile({ ...opts, instance });
-  return image_path ? { image_path, previous_image_path: previous || null } : null;
+  return { image_path, previous_image_path: previous || null };
 }
 
 /** The image-search phrase for an entity, derived server-side from its own

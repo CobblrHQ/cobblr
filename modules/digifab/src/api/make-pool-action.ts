@@ -16,6 +16,7 @@ export function registerMakePoolAction(): void {
   platform().actions.registerUndo("digifab.make-pool", (result) => {
     const d = (result as { ok?: unknown; data?: { pool?: string } } | null);
     if (d?.ok !== true || !d.data?.pool) return null;
-    return { action_id: "digifab:remove-pool", args: { pool: d.data.pool } };
+    // UNDO: removes the pool only while it is still empty; printers, a run or jobs added since keep it (remove-pool's only_if_empty)
+    return { action_id: "digifab:remove-pool", args: { pool: d.data.pool, only_if_empty: true } };
   });
 }

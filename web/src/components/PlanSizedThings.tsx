@@ -235,14 +235,16 @@ export function SizedThingBox({
 
   const writeOrder = async (spots: Array<{ key: string; x_mm: number }>, before: Map<string, number | null>) => {
     if (!shelf) return;
-    const place = (key: string, x: number | null) => {
+    const spotOf = (x: number | null) => (x === null ? null : { x_mm: x, y_mm: 0 });
+    const place = (key: string, x: number | null, expectedX?: number | null) => {
       const t = key.slice(key.lastIndexOf(":") + 1);
       const kind = key.slice(0, key.lastIndexOf(":"));
       return api.placementPlace(slug, {
         containee: { kind, id: t },
         container: { kind: LOCATION_KIND, id: shelf.shelfId },
-        position: x === null ? null : { x_mm: x, y_mm: 0 },
+        position: spotOf(x),
         via: "floor plan",
+        ...(expectedX !== undefined ? { expected: { container: { kind: LOCATION_KIND, id: shelf.shelfId }, position: spotOf(expectedX) } } : {}),
       });
     };
     try {
@@ -250,8 +252,9 @@ export function SizedThingBox({
       void qc.invalidateQueries({ queryKey: ["location-contents", slug, shelf.shelfId] });
       toast.action(`Moved ${thing.name} along the shelf`, {
         actionLabel: "Undo",
+        // UNDO: each thing slides back only while it is still at the spot this move left it on this shelf (#9422)
         onAction: async () => {
-          for (const s of spots) await place(s.key, before.get(s.key) ?? null);
+          for (const s of spots) await place(s.key, before.get(s.key) ?? null, s.x_mm);
           void qc.invalidateQueries({ queryKey: ["location-contents", slug, shelf.shelfId] });
         },
       });

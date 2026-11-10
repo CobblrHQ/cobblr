@@ -837,12 +837,21 @@ export async function list(orgId: string, kind: string, query: EntityListQuery =
   return { items: rows.slice(offset, offset + (query.limit ?? 50)), total: rows.length, ...(all.unapplied?.length ? { unapplied: all.unapplied } : {}) };
 }
 
+/** An empty or blank id names no record (a blank linked-record field, a
+ *  picker with nothing chosen). It is answered as none here, never handed to
+ *  a resolver whose database refuses the cast and counts the kind as failing
+ *  on /healthz (#9394). */
+function isRecordId(id: unknown): id is string {
+  return typeof id === "string" && id.trim() !== "";
+}
+
 export async function lookup(
   orgId: string,
   kind: string,
   id: string,
   viewer?: EntityViewer,
 ): Promise<ResolvedEntity | null> {
+  if (!isRecordId(id)) return null;
   const allowed = await guestRecordIds(orgId, kind, viewer);
   if (allowed && !allowed.has(id)) return null;
   const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
@@ -936,6 +945,7 @@ export async function lookupMany(
   refs: ReadonlyArray<{ kind: string; id: string }>,
   viewer?: EntityViewer,
 ): Promise<ResolvedEntity[]> {
+  refs = refs.filter((r) => isRecordId(r.id));
   if (viewer?.role === "guest" && !viewer.system) {
     const permitted = [];
     for (const ref of refs) {
