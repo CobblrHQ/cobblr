@@ -9,7 +9,7 @@ import { forgetDashboardCopies } from "../../dashboard/device-copy";
 import { UploadError, beginWrite, isAWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
 import { SHARE_VIEW_BLOCKED, SHARE_VIEW_READ_ONLY, shareViewPathAllowed } from "@cobblr/platform-contract/share-view";
-import { EDITED_FROM_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
+import { EDITED_FROM_HEADER, PAGE_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { counted } from "../in-flight";
 import { AI_AVAILABILITY_WRITE } from "../ai-availability-keys";
@@ -331,7 +331,8 @@ async function sendRequest<T>(
   // The page is going, with other credentials than it ran on (leaving View
   // as, opening a share's View as): it asks nothing more (page-leaving.ts).
   if (isPageLeaving()) return new Promise<T>(() => {});
-  const headers: Record<string, string> = { ...(extraHeaders ?? {}) };
+  // A page's request says so (#9448).
+  const headers: Record<string, string> = { [PAGE_HEADER]: "1", ...(extraHeaders ?? {}) };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   // Kept for the blocked-action sheet: `body` is shadowed by the response
   // below, and a refusal needs the request as it was sent.

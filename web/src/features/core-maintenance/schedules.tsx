@@ -18,6 +18,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, History, Loader2, Pencil, Trash2 } from "lucide-react";
 import { ChoiceCombobox, useRunWithUndo, useToast, type ChoiceOption } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
+import { scheduleAsOpened } from "./schedule-as-opened";
 import { api, type MaintenanceIntervalUnit, type MaintenanceSchedule, type MaintenanceReminder, type OverdueCadence } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 import { dayLabel, dayStoredHere, instantOnDay } from "@cobblr/platform-contract/day";
@@ -141,13 +143,16 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't log it"),
   });
   const [editing, setEditing] = useState<string | null>(null);
+  // The schedule as the form opened on it, not as a refresh shows it later:
+  // what the save says it changed from (#9446).
+  const [opened, setOpened] = useState<Record<string, unknown> | null>(null);
   const edit = useMutation({
     mutationFn: (v: { id: string; name: string; n: number; unit: string; remind: MaintenanceReminder; overdue_every: OverdueCadence | null }) => {
       const prior = schedulesQ.data?.items.find((s) => s.id === v.id);
       const counter = counters.find((c) => c.key === v.unit)?.key ?? (prior?.counter_field === v.unit ? v.unit : null);
       // Through the action, so the change carries its Undo (#5808).
       return runWithUndo({ actionId: "core-maintenance:update-schedule", args: {
-        schedule_id: v.id, name: v.name, remind: v.remind, overdue_every: v.overdue_every,
+        schedule_id: v.id, name: v.name, remind: v.remind, overdue_every: v.overdue_every, ...(opened ? { [EDITED_FROM_ARG]: opened } : {}),
         ...(counter
           ? { counter_field: counter, counter_every: v.n, every_n: prior?.counter_field ? prior.every_n : null, every_unit: prior?.counter_field ? prior.every_unit : null }
           : { every_n: Math.round(v.n), every_unit: v.unit as MaintenanceIntervalUnit, counter_field: null, counter_every: null }),
@@ -232,7 +237,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
               </button>
               <button
                 type="button"
-                onClick={() => setEditing(s.id)}
+                onClick={() => { setEditing(s.id); setOpened(scheduleAsOpened(s)); }}
                 aria-label={`Change ${s.name}`}
                 title="Change how often"
                 className="shrink-0 p-1 text-faint hover:text-accent transition"

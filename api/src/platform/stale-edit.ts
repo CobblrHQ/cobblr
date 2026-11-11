@@ -66,6 +66,16 @@ export async function refuseStaleEdit(req: Request, res: Response, orgId: string
   return true;
 }
 
+/** A save through an action (#9446): what its form opened with rides in its
+ *  args, and a field changed since to something else refuses it with who
+ *  changed it. The sentence, or null when nothing changed since. */
+export async function staleSaveRefusal(orgId: string, id: string, editedFrom: unknown, current: Record<string, unknown>, next: Record<string, unknown>): Promise<string | null> {
+  if (!editedFrom || typeof editedFrom !== "object" || Array.isArray(editedFrom)) return null;
+  const stale = staleFields(current, editedFrom as Record<string, unknown>, next);
+  if (!stale.length) return null;
+  return staleEditMessage(stale, await lastChangeOf(orgId, id, stale));
+}
+
 /** The platform seam (platform().http.refuseStaleEdit), for a module's own
  *  route: the workspace is the request's. */
 export function refuseStaleEditOf(req: unknown, res: unknown, recordId: string, current: Record<string, unknown>): Promise<boolean> {

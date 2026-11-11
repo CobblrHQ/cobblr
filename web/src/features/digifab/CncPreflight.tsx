@@ -4,7 +4,7 @@ import { CncStockDetails } from "./CncStockDetails";
 import { useEffect, useRef, useState } from "react";
 import type { CncApproval, CncMachine, CncProgramSummary, CncStationStock } from "@cobblr/platform-contract/cnc";
 const button="min-h-12 rounded border border-line px-4 py-3 disabled:opacity-50";
-export function CncPreflight({ program, machine, stock, slug, busy, stopInFooter=false, onSaveStock, onPlace, onStart, onFrame, onStop }: {program:CncProgramSummary;machine:CncMachine;stock:CncStationStock[];slug?:string;busy:boolean;stopInFooter?:boolean;onSaveStock?:(id:string,fields:Record<string,number>)=>Promise<void>;onPlace?:(stockId:string,tools:{number:number;partId:string}[])=>Promise<{x:number;y:number}>;onStart:(approval:CncApproval)=>void;onFrame:()=>void;onStop:()=>void}) {
+export function CncPreflight({ program, machine, stock, slug, busy, stopInFooter=false, onSaveStock, onPlace, onStart, onFrame, onStop }: {program:CncProgramSummary;machine:CncMachine;stock:CncStationStock[];slug?:string;busy:boolean;stopInFooter?:boolean;onSaveStock?:(id:string,fields:Record<string,number>,opened:Record<string,number|null>)=>Promise<void>;onPlace?:(stockId:string,tools:{number:number;partId:string}[])=>Promise<{x:number;y:number}>;onStart:(approval:CncApproval)=>void;onFrame:()=>void;onStop:()=>void}) {
  const [stockId,setStockId]=useState("");
  const [origin,setOrigin]=useState({x:0,y:0});
  const [checks,setChecks]=useState({stockLoaded:false,probedZ:false,workOffset:false,clampsClear:false});

@@ -1,4 +1,4 @@
-import { refuseStaleEditOf } from "./platform/stale-edit.js";
+import { refuseStaleEditOf, staleSaveRefusal } from "./platform/stale-edit.js";
 import { stopAtGate } from "./lib/gate-probe.js";
 import { registerPanelPresence } from "./platform/panel-presence.js";
 import { partIsOn } from "./platform/module-parts.js";
@@ -898,6 +898,7 @@ async function boot() {
     },
     http: {
       refuseStaleEdit: refuseStaleEditOf,
+      staleSaveRefusal,
       registerRequestGuard: hostedSeams.registerRequestGuard,
       registerWebhook: hostedSeams.registerWebhook,
       upload: uploadMiddleware,

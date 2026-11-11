@@ -9,6 +9,7 @@ import { openAuthedFile } from "../../lib/authed-file";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 import { dayLabel } from "@cobblr/platform-contract/day";
+import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
 const input = "w-full rounded-md border border-line bg-surface px-3 py-2 text-base";
 const date = (v: string | null) => v ? dayLabel(v) : "Date unknown";
 export function TermHistory({ slug, entityId, refresh }: { slug: string; entityId: string; refresh: () => void }) {
@@ -45,12 +46,15 @@ function TermEditor({ slug, term, close, refresh }: { slug: string; term: Mainte
   const [file, setFile] = useState<File | null>(null);
   const photo = usePhotoPick((files) => setFile(files[0] ?? null), { title: "Term document", label: "Choose document photo" });
   const moneyHidden = !Object.hasOwn(term, "cost_cents") || !Object.hasOwn(term, "currency");
-  const [draft, setDraft] = useState<MaintenanceTermPatch>({ term_start: term.term_start?.slice(0, 10), term_end: term.term_end?.slice(0, 10),
-    cost_cents: moneyHidden ? undefined : term.cost_cents, currency: Object.hasOwn(term, "currency") ? term.currency ?? main : undefined, reference: term.reference, quantity: term.quantity });
+  // What the form opened with is also what the save says it changed from, so
+  // a term a teammate corrected since is refused, not written over (#9446).
+  const [opened] = useState<MaintenanceTermPatch>(() => ({ term_start: term.term_start?.slice(0, 10), term_end: term.term_end?.slice(0, 10),
+    cost_cents: moneyHidden ? undefined : term.cost_cents, currency: Object.hasOwn(term, "currency") ? term.currency ?? main : undefined, reference: term.reference, quantity: term.quantity }));
+  const [draft, setDraft] = useState<MaintenanceTermPatch>(opened);
   const save = useMutation({ mutationFn: async () => {
     const uploaded = file ? await api.uploadFile(slug, file) : null;
     // Through the action, so the correction carries its Undo (#5808).
-    return runWithUndo({ actionId: "core-maintenance:update-term", args: { term_id: term.id, ...draft, ...(uploaded ? { file_id: uploaded.id } : {}) } }, `${term.name} updated.`);
+    return runWithUndo({ actionId: "core-maintenance:update-term", args: { term_id: term.id, ...draft, [EDITED_FROM_ARG]: Object.fromEntries(Object.entries(opened).filter(([, v]) => v !== undefined)), ...(uploaded ? { file_id: uploaded.id } : {}) } }, `${term.name} updated.`);
   }, onSuccess: () => { refresh(); close(); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save term") });
   return <RecordFormModal open onClose={close} title="Edit term"><form className="space-y-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
     <label className="block text-sm">Term start<input aria-label="Term start" className={input} type="date" value={draft.term_start ?? ""} onChange={(e) => setDraft({ ...draft, term_start: e.target.value || undefined })} /></label>

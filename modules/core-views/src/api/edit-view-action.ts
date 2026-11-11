@@ -11,6 +11,7 @@ import { findVisibleView } from "./view-lookup.js";
 const VIEW_TYPES: Record<string, string> = { board: "kanban", kanban: "kanban", calendar: "calendar", timeline: "gantt", gantt: "gantt", table: "table", grid: "table", list: "list" };
 
 export function registerEditViewAction(): void {
+  // UNJUDGED-SAVE: the assistant's edit of a view; no page form saves through it
   platform().actions.registerHandler("core-views.edit-view", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreViewsDB>;

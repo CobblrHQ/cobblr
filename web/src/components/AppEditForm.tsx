@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FieldPack, FieldValueEditor, SearchInput, fieldControl, fieldNeed, useRunAction, useToast, type PlatformFieldDef } from "@cobblr/platform-web";
 import { withArticle } from "@cobblr/platform-contract/plural";
@@ -35,13 +36,21 @@ export function AppEditForm({ slug, kind, only, theme }: { slug: string; kind: s
     queryFn: () => api.lookupEntity(slug, kind, picked!),
     enabled: !!picked,
   });
+  // The record as this form opened on it, held still while it is open: a
+  // refresh after a teammate's save must not become this form's starting
+  // point, or its save would write over that change in silence (#9446).
+  const [opened, setOpened] = useState<{ id: string; fields: Record<string, unknown> } | null>(null);
+  useEffect(() => {
+    if (picked && record.data && opened?.id !== picked) setOpened({ id: picked, fields: record.data.fields });
+  }, [picked, record.data, opened?.id]);
+  const was = opened?.id === picked ? opened.fields : record.data?.fields;
 
   if (options.isLoading || !options.data?.can_edit) return null;
   const fields = options.data.fields.filter((f) => !only?.length || only.includes(f.name));
   if (!fields.length) return null;
 
-  const current = (name: string) => (name in draft ? draft[name] : record.data?.fields[name]);
-  const changed = fields.filter((f) => f.name in draft && !same(draft[f.name], record.data?.fields[f.name]));
+  const current = (name: string) => (name in draft ? draft[name] : was?.[name]);
+  const changed = fields.filter((f) => f.name in draft && !same(draft[f.name], was?.[f.name]));
 
   const save = async () => {
     if (!picked || busy) return;
@@ -50,12 +59,15 @@ export function AppEditForm({ slug, kind, only, theme }: { slug: string; kind: s
     setError(null);
     try {
       const out = await run(
-        { actionId: "platform:update-fields", entityKind: "", entityId: "", args: { kind, id: picked, fields: Object.fromEntries(changed.map((f) => [f.name, draft[f.name]])) } },
+        { actionId: "platform:update-fields", entityKind: "", entityId: "", args: { kind, id: picked, fields: Object.fromEntries(changed.map((f) => [f.name, draft[f.name]])), [EDITED_FROM_ARG]: Object.fromEntries(changed.map((f) => [f.name, was?.[f.name] ?? null])) } },
         { done: "Saved." },
       );
       const result = out.result as { ok?: boolean; error?: string; summary?: string };
       if (!result?.ok) throw new Error(result?.error ?? "That did not save.");
       toast.success(result.summary ?? "Saved.");
+      // The form now stands on what it just saved, never on a copy from before
+      // it: its next save is not this one's change seen as a teammate's.
+      setOpened({ id: picked, fields: { ...(was ?? {}), ...Object.fromEntries(changed.map((f) => [f.name, draft[f.name]])) } });
       setDraft({});
       void qc.invalidateQueries({ queryKey: ["app-record", slug, kind, picked] });
       void qc.invalidateQueries({ queryKey: ["app-view-data", slug] });

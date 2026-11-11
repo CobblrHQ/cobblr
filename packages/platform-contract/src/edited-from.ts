@@ -26,6 +26,14 @@ export function agoWords(at: Date, now = Date.now()): string {
 
 /** The header that carries the values a save's fields had when its form opened. */
 export const EDITED_FROM_HEADER = "x-cobblr-edited-from";
+/** The same, for a save made through an action: its args carry what the
+ *  form's fields were when it opened under this key (#9446). */
+export const EDITED_FROM_ARG = "edited_from";
+/** Every request a page of the app sends carries this (#9448), so the server
+ *  can tell a page's form save from the assistant's, a token's or a
+ *  script's. Step 2 (after the next release) refuses a marked form save that
+ *  does not say what it opened with: a page older than its form's fix. */
+export const PAGE_HEADER = "x-cobblr-page";
 
 export type EditedFrom = Record<string, unknown>;
 

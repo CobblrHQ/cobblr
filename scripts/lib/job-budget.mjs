@@ -45,7 +45,11 @@ import { fileURLToPath } from "node:url";
 // (typecheck-tsgo.mjs, outgrewUnit), so it cannot go stale silently again.
 // 3400 since 2026-11-07: run 62919 peaked at 3073. Over the 89 typecheck logs read, one commit swung up to 179 MiB, and the
 // median grew about 130 MiB in three days. Above 3584, a compiler leaves its job under 1 GiB on a 4608 MiB cap: past that, raise the cap.
-export const UNIT_MIB = { tsc: 900, tsgo: 3400, vitest: 350, lint: 150 };
+// unit: a worker of the root vitest config (the unit job), apart from the api integration suite's forks (vitest, ~320
+// measured). 550 since 2026-11-11: run 63712's unit job started 8 workers at 350 under a 4608 MiB cap (4522 read) and two
+// were OOM-killed; the same job peaks at 4.6-6.0 GiB with 8 workers on a 6656 cap (the A6's memory sampler, 11-02 to
+// 11-11), so a worker and its share of the job's own is over 500. At 550 the 4608 lane runs 6, the 6656 lane still 8.
+export const UNIT_MIB = { tsc: 900, tsgo: 3400, vitest: 350, unit: 550, lint: 150 };
 export const SHARE = 0.5;
 // The heap a node process of a kind needs, MiB: measured, not estimated. node
 // sets its default heap to HALF the cgroup's limit (920 MiB under 1792m, 1048
@@ -62,10 +66,10 @@ export const HEAP_NEED_MIB = { tsc: 3072 };
 const HEAP_OVERHEAD_MIB = 256;
 export const CAPPED_SHARE = 0.8;
 const SHARE_ENV = "COBBLR_JOB_BUDGET_SHARE";
-const PIN = { tsc: "COBBLR_TSC_CONCURRENCY", tsgo: "COBBLR_TSGO_CONCURRENCY", vitest: "COBBLR_VITEST_WORKERS", lint: "COBBLR_LINT_CONCURRENCY" };
+const PIN = { tsc: "COBBLR_TSC_CONCURRENCY", tsgo: "COBBLR_TSGO_CONCURRENCY", vitest: "COBBLR_VITEST_WORKERS", unit: "COBBLR_VITEST_WORKERS", lint: "COBBLR_LINT_CONCURRENCY" };
 // A ceiling a workflow sets for CPU reasons (the shared CI box), which memory
 // can only lower: COBBLR_TSC_MAX / COBBLR_VITEST_MAX / COBBLR_LINT_MAX.
-const CAP = { tsc: "COBBLR_TSC_MAX", tsgo: "COBBLR_TSGO_MAX", vitest: "COBBLR_VITEST_MAX", lint: "COBBLR_LINT_MAX" };
+const CAP = { tsc: "COBBLR_TSC_MAX", tsgo: "COBBLR_TSGO_MAX", vitest: "COBBLR_VITEST_MAX", unit: "COBBLR_VITEST_MAX", lint: "COBBLR_LINT_MAX" };
 
 function read(path) {
   try {
@@ -296,7 +300,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     const mem = availableMib();
     console.log(
       `job budget: ${availableParallelism()} cores, ${mem == null ? "unknown" : Math.round(mem)} MiB available, share ${shareOf()}; ` +
-        `tsc ${width("tsc")}, tsgo ${width("tsgo")}, vitest ${width("vitest")}, lint ${width("lint")}`,
+        `tsc ${width("tsc")}, tsgo ${width("tsgo")}, vitest ${width("vitest")}, unit ${width("unit")}, lint ${width("lint")}`,
     );
   } else if (kind === "share") {
     // node scripts/lib/job-budget.mjs share <n>   each of n commands' slice of this process's share

@@ -5,6 +5,8 @@ import { TermHistory, TermReferenceQuantity } from "./terms";
 import { api, type MaintenanceSchedule, type MaintenanceReminder, type OverdueCadence } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 import { dayHere, dayLabel, daysUntil, dayStoredHere } from "@cobblr/platform-contract/day";
+import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
+import { scheduleAsOpened } from "./schedule-as-opened";
 
 const input = "w-full rounded-md border border-line bg-surface px-3 py-2 text-base text-content dark:bg-slate-900 dark:border-slate-700";
 function renewalDate(value: string, relative = false): string {
@@ -89,9 +91,12 @@ function RenewalSetup({ ctx, initial, close, refresh }: { ctx: EntityDetailPanel
   const [unit, setUnit] = useState<"year" | "month" | "week" | "day">(s?.every_unit ?? "year");
   const [remind, setRemind] = useState<MaintenanceReminder>(s?.remind ?? { before: 1, unit: "month" });
   const [cadence, setCadence] = useState<OverdueCadence | null>(s?.overdue_every ?? null);
+  // The schedule as this form opened on it: what the save says it changed
+  // from, so a teammate's change since is refused, not written over (#9446).
+  const [opened] = useState(() => (s ? { ...scheduleAsOpened(s), current_expiry: s.current_expiry?.slice(0, 10) ?? null, anchor: s.anchor ?? null } : null));
   const save = useMutation({ mutationFn: async () => {
     const rule = { name, current_expiry: expiry, anchor: repeat === "last" || (repeat === "custom" && lastDay) ? { month: Number(expiry.slice(5, 7)), last_day: true as const } : expiry.slice(5), every_n: repeat === "custom" ? n : 1, every_unit: repeat === "custom" ? unit : "year" as const, remind, overdue_every: cadence };
-    if (s) return runWithUndo({ actionId: "core-maintenance:update-schedule", args: { schedule_id: s.id, ...rule } }, `${s.name} changed.`);
+    if (s) return runWithUndo({ actionId: "core-maintenance:update-schedule", args: { schedule_id: s.id, ...rule, ...(opened ? { [EDITED_FROM_ARG]: opened } : {}) } }, `${s.name} changed.`);
     const [mod, type] = (ctx.kind ?? "").split(":");
     return api.createMaintenanceSchedule(ctx.slug, { ...rule, entity_module: mod!, entity_type: type!, entity_id: ctx.entityId, expiry_field: initial.field || null });
   }, onSuccess: () => { refresh(); close(); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save renewal") });

@@ -8,10 +8,11 @@ import { platform, type EntityUpdateResult } from "@cobblr/platform-contract";
 import { updaterFor } from "./entity-updaters.js";
 import { baseKindOf } from "./entities.js";
 import { commonBulkFields, type BulkField } from "./bulk-set-field.js";
+import { staleSaveRefusal } from "./stale-edit.js";
 
 export type UpdateFieldsOutcome =
   | { ok: true; summary: string; changed: string[]; withheld: string[] }
-  | { ok: false; code: "kind_not_updatable" | "missing_capability" | "not_found" | "no_fields" | "nothing_visible" | "refused"; error: string };
+  | { ok: false; code: "kind_not_updatable" | "missing_capability" | "not_found" | "no_fields" | "nothing_visible" | "refused" | "changed_since"; error: string };
 
 export async function updateRecordFields(args: {
   orgId: string;
@@ -20,6 +21,9 @@ export async function updateRecordFields(args: {
   kind: string;
   id: string;
   fields: Record<string, unknown>;
+  /** What the form's fields were when it opened (EDITED_FROM_ARG, #9446): a
+   *  field changed since to something else refuses the save, nothing written. */
+  editedFrom?: unknown;
 }): Promise<UpdateFieldsOutcome> {
   const { orgId, userId, role, kind, id } = args;
   const updater = updaterFor(await baseKindOf(orgId, kind));
@@ -41,6 +45,9 @@ export async function updateRecordFields(args: {
   const withheld = asked.filter((k) => hidden.has(k));
   const fields = Object.fromEntries(Object.entries(args.fields).filter(([k]) => !hidden.has(k)));
   if (!Object.keys(fields).length) return { ok: false, code: "nothing_visible", error: "You cannot see those fields, so you cannot change them." };
+
+  const refused = await staleSaveRefusal(orgId, id, args.editedFrom, seen.fields, fields);
+  if (refused) return { ok: false, code: "changed_since", error: refused };
 
   const result: EntityUpdateResult = await updater.update({ orgId, userId, role, kind, id, fields });
   if (!result.ok) return { ok: false, code: "refused", error: result.error };

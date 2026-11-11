@@ -51,6 +51,7 @@ import { BELOW_ZERO, NOTHING_ON_HAND, floorDelta } from "../stock-floor.js";
 import { STALE_DAYS, dayIn, daysUntil } from "@cobblr/platform-contract/day";
 import { stillGoodPatch } from "../still-good.js";
 import { stateWrite, type StateFieldDef } from "../state-write.js";
+import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
 
 /** The day it is for the person doing this: the zone their client sent, else
  *  what the platform knows of them (accounts.dayFor: the zone they told us,
@@ -1687,8 +1688,17 @@ export function registerInventoryActionHandlers(): void {
       const id = typeof a.id === "string" && a.id ? a.id : (ctx.entity as { id?: string } | null)?.id;
       if (!id) return { ok: false, error: "missing id" };
       const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-      const row = await db.selectFrom("inventory_parts").select("metadata").where("id", "=", id).executeTakeFirst();
+      const row = await db.selectFrom("inventory_parts").select(["metadata", "name", "manufacturer"]).where("id", "=", id).executeTakeFirst();
       if (!row) return { ok: false, error: "not_found" };
+      // A form that opened before a teammate's change never writes over it
+      // (#9446): the CNC station's block dimensions save through here.
+      const next: Record<string, unknown> = {
+        ...(typeof a.name === "string" ? { name: a.name.trim() } : {}),
+        ...(typeof a.manufacturer === "string" ? { manufacturer: a.manufacturer.trim() || null } : {}),
+        ...(a.fields && typeof a.fields === "object" ? { metadata: a.fields } : {}),
+      };
+      const refused = await platform().http.staleSaveRefusal(ctx.orgId, id, a[EDITED_FROM_ARG], { name: row.name, manufacturer: row.manufacturer, metadata: row.metadata }, next);
+      if (refused) return { ok: false, error: refused, data: { code: "changed_since" } };
       const set: Record<string, unknown> = { updated_at: new Date() };
       if (typeof a.name === "string" && a.name.trim()) set.name = a.name.trim().slice(0, 200);
       if (typeof a.manufacturer === "string") set.manufacturer = a.manufacturer.trim().slice(0, 120) || null;

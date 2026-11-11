@@ -78,6 +78,7 @@ function registerEditLine(): void {
   // Correct one line: what it is, how many, the price. The same rule as the
   // order page (line-edit.ts): a line whose stock was already added keeps its
   // count.
+  // UNJUDGED-SAVE: the assistant's edit of a line; a page's line edit goes through the line route, which judges it
   platform().actions.registerHandler("purchases.edit-line", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const lineId = typeof args.line_id === "string" ? args.line_id.trim() : "";

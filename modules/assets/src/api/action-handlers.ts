@@ -120,6 +120,7 @@ export function registerActionHandlers(): void {
     return { ok: true, filed, areas_created: areasCreated };
   });
 
+  // UNJUDGED-SAVE: a wire's or the assistant's write of the values it means, with no form opened earlier
   platform().actions.registerHandler("assets.update-fields", async (ctx) => {
     const args = (ctx.args as Record<string, unknown> | null) ?? {};
     const assetRef = typeof args.asset === "string" ? args.asset.trim() : "";

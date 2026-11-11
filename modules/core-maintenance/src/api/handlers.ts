@@ -27,6 +27,7 @@ import { serviceTimeZone, completeEntry, rollForward, rolledFromOf, unrollIfCurr
 import { createSchedule, refuseUnknownCounter, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule, removeSchedule } from "./schedules.js";
 import { NagBody, CadenceBody, changeNag } from "./reminders.js";
 import { moneyForStorage } from "@cobblr/platform-contract/money";
+import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
 import { TermBody } from "../term-fields.js";
 import { updateTerm, endRenewal } from "../terms-store.js";
 
@@ -46,6 +47,12 @@ function when(v: unknown): Date | null {
   return instantFromInput(str(v));
 }
 
+/** A stored value as an action's args say it: a day as YYYY-MM-DD, a count
+ *  as a number. */
+function argValue(k: string, v: unknown): unknown {
+  return v instanceof Date ? v.toISOString().slice(0, 10) : (k === "counter_every" || k === "quantity" || k === "cost_cents") && v != null ? Number(v) : v ?? null;
+}
+
 export function registerMaintenanceHandlers(): void {
   registerUndos();
   registerNeedsRepairAction();
@@ -63,6 +70,13 @@ export function registerMaintenanceHandlers(): void {
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
     const id = String(args.term_id ?? "");
     const prior = await db.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).where("is_term", "=", true).executeTakeFirst();
+    // A form that opened before a teammate's change never writes over it (#9446).
+    if (prior) {
+      const now: Record<string, unknown> = {};
+      for (const k of Object.keys(d.data)) now[k] = argValue(k, (prior as Record<string, unknown>)[k]);
+      const refused = await platform().http.staleSaveRefusal(ctx.orgId, id, args[EDITED_FROM_ARG], now, d.data as Record<string, unknown>);
+      if (refused) return { ok: false, error: refused, data: { code: "changed_since" } };
+    }
     const result = await updateTerm(db, ctx.orgId, id, d.data);
     // What Undo writes back: each field this edit set, as it was.
     const before: Record<string, unknown> = { term_id: id };
@@ -144,13 +158,13 @@ export function registerMaintenanceHandlers(): void {
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
     const before = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", String(args.schedule_id ?? "")).executeTakeFirst();
     if (!before) return { ok: false, error: "Schedule not found" };
-    const result = await updateSchedule(db, ctx.orgId, before, parsed.data);
     // What Undo writes back: each field this edit set, as the schedule had it.
     const was: Record<string, unknown> = { schedule_id: before.id };
-    for (const k of Object.keys(parsed.data)) {
-      const v = (before as Record<string, unknown>)[k];
-      was[k] = v instanceof Date ? v.toISOString().slice(0, 10) : k === "counter_every" && v != null ? Number(v) : v ?? null;
-    }
+    for (const k of Object.keys(parsed.data)) was[k] = argValue(k, (before as Record<string, unknown>)[k]);
+    // A form that opened before a teammate's change never writes over it (#9446).
+    const refused = await platform().http.staleSaveRefusal(ctx.orgId, before.id, args[EDITED_FROM_ARG], was, parsed.data as Record<string, unknown>);
+    if (refused) return { ok: false, error: refused, data: { code: "changed_since" } };
+    const result = await updateSchedule(db, ctx.orgId, before, parsed.data);
     return { ok: true, result, before: was };
   });
   platform().actions.registerHandler("core-maintenance.renew", async (ctx) => {

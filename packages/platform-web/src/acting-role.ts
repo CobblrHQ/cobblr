@@ -22,7 +22,7 @@ import { awaitBlockedAction, carriesOnItself, raiseBlockedAction, refusedRequest
 import { primedRead } from "./primed-reads";
 import { sharedRead } from "./shared-reads";
 import { networkFailureMessage } from "./network-failure";
-import { EDITED_FROM_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
+import { EDITED_FROM_HEADER, PAGE_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
 import { browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites } from "./waiting-writes";
 import { KEPT_OFFLINE, KEPT_SENTENCE } from "./network-failure";
 import { beginWrite, outcomeOf } from "./write-identity";
@@ -106,6 +106,12 @@ export const SUPPORT_READ_ONLY = "This is a read-only support session. Enable ed
  *  ITS answer is what the page gets, so a second refusal is shown the way the
  *  first would have been (#5890); closed, the page gets the refusal. */
 export async function workspaceFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  // A page's request says so (#9448), the module pages' door as the app's does.
+  if (!(input instanceof Request)) {
+    const marked = new Headers(init?.headers);
+    marked.set(PAGE_HEADER, "1");
+    init = { ...init, headers: marked };
+  }
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
   const byAPerson = madeByAPerson(method);

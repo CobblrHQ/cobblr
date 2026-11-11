@@ -100,6 +100,7 @@ import { confirmServiceJob, mayConfirm } from "./service-confirm.js";
 import { cancelRun } from "./service-supervisor.js";
 import { invokeAs, retryJob, skipJob, stableJson } from "./services.js";
 import { render } from "./templates.js";
+import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
 
 /** A service input with every string in it filled from the event
  *  (`{{event.jobId}}`): the wire engine fills only top-level strings, and an
@@ -438,6 +439,7 @@ export function registerPlatformActionHandlers(): void {
     }
     return { title: `Arrange record actions on ${kind.display_name_plural ?? kind.display_name}`, lines };
   });
+  // UNJUDGED-SAVE: expected_revision refuses a save over a layout saved since
   registerHandler("platform.edit-record-actions", async (ctx) => {
     const resolved = await resolveRecordActionArrangement(ctx);
     if (!resolved.ok) return { ok: false, error: resolved.error };
@@ -459,7 +461,7 @@ export function registerPlatformActionHandlers(): void {
     if (!ctx.userId) return { ok: false, error: "Sign in to change a record." };
     const membership = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", ctx.orgId).where("user_id", "=", ctx.userId).executeTakeFirst();
     if (!membership) return { ok: false, error: "You are not a member of this workspace." };
-    const r = await updateRecordFields({ orgId: ctx.orgId, userId: ctx.userId, role: membership.role, ...parsed.data });
+    const r = await updateRecordFields({ orgId: ctx.orgId, userId: ctx.userId, role: membership.role, ...parsed.data, editedFrom: (ctx.args as Record<string, unknown> | null)?.[EDITED_FROM_ARG] });
     if (!r.ok) return { ok: false, error: r.error, data: { code: r.code } };
     const withheld = r.withheld.length ? ` ${r.withheld.join(", ")} was left alone: you cannot see it.` : "";
     return { ok: true, summary: `${r.summary}${withheld}`, data: { kind: parsed.data.kind, id: parsed.data.id, changed: r.changed, withheld: r.withheld } };
@@ -472,6 +474,7 @@ export function registerPlatformActionHandlers(): void {
     if (!r.ok) return { ok: false, error: r.message };
     return { ok: true, summary: `Added ${r.person.name} to the People list.`, data: { id: r.person.id } };
   });
+  // UNJUDGED-SAVE: the assistant's edit, naming the details it means; no page form saves through it
   registerHandler("platform.edit-person", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const text = (k: string) => (typeof args[k] === "string" ? (args[k] as string) : undefined);
@@ -839,6 +842,7 @@ export function registerPlatformActionHandlers(): void {
     return { title: `Change "${label}" on ${(await kindWords(ctx.orgId, entityKind)).many}`, lines };
   });
 
+  // UNJUDGED-SAVE: workspace setup (a field's definition), the assistant's; no page form saves through it
   registerHandler("platform.edit-field", async (ctx: ActionInvokeContext) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const said = str(args.field);
@@ -2566,6 +2570,7 @@ export function registerPlatformActionHandlers(): void {
     return typeof id === "string" ? { action_id: "platform:unlink-records", args: { id } } : null;
   });
 
+  // UNJUDGED-SAVE: the assistant's edit of a link it names; no page form saves through it
   registerHandler("platform.edit-link", async (ctx: ActionInvokeContext) => {
     const a = (ctx.args ?? {}) as Record<string, unknown>;
     const id = str(a.id);
@@ -2672,6 +2677,7 @@ export function registerPlatformActionHandlers(): void {
     return typeof id === "string" ? { action_id: "platform:remove-wire", args: { wire_id: id } } : null;
   });
 
+  // UNJUDGED-SAVE: workspace setup (a wire), the assistant's; no page form saves through it
   registerHandler("platform.edit-wire", async (ctx: ActionInvokeContext) => {
     const a = (ctx.args ?? {}) as Record<string, unknown>;
     const id = str(a.wire_id);

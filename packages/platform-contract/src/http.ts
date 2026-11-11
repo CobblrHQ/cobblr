@@ -32,6 +32,12 @@ export interface PlatformHttp {
    *  this with the record as it is now, by the names its body uses. True when
    *  it answered the request (409, nothing written). */
   refuseStaleEdit(req: unknown, res: unknown, recordId: string, current: Record<string, unknown>): Promise<boolean>;
+  /** The same judgement for a save that arrives as an action's args (#9446):
+   *  `editedFrom` is the args' `edited_from` (EDITED_FROM_ARG), what the
+   *  form's fields were when it opened; `current` the record now and `next`
+   *  what this save writes, by the same names. The sentence a refused save
+   *  answers (nothing written), or null when nothing changed since. */
+  staleSaveRefusal(orgId: string, recordId: string, editedFrom: unknown, current: Record<string, unknown>, next: Record<string, unknown>): Promise<string | null>;
   /** Hosted overlay registers a request guard (rate-limit / abuse). */
   registerRequestGuard(g: RequestGuard): void;
   /** Register a global, UNAUTHENTICATED webhook endpoint mounted at
