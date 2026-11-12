@@ -163,12 +163,17 @@ const stem = (w: string): string => {
  *  "Apple" leading its name, was a confident grocery (#3544). A listing's
  *  TITLE still counts; it describes the product. */
 const SELLER_KEY = /^(merchant|merchants|seller|sellers|store|stores|shop|shops|retailer|retailers|vendor|domain|link|links|url|urls|href)$/i;
+/** What a thing may contain or have touched, never what it is: a catalog's
+ *  allergen and "may contain traces of" lists name other foods. A Stabilo
+ *  fineliner whose record carried traces of celery, eggs and milk matched four
+ *  Groceries words on them and was filed as food at 0.6 (#9458). */
+const MAY_CONTAIN_KEY = /^(traces|allergens)(_tags|_hierarchy|_from_ingredients|_from_user|_lc)?$/i;
 const LINK = /^(https?:\/\/|www\.)/i;
 /** The metadata as the haystack reads it: the values a catalog states, never
- *  the names of its slots, with seller keys and links out. Every Open Food
- *  Facts record carries "is_cheese", "is_water" and "sugars" as keys of its
- *  nutrition-score bookkeeping, so a can of WD-40 matched three Groceries
- *  words and filed as food (#7658). */
+ *  the names of its slots, with seller keys, may-contain lists and links out.
+ *  Every Open Food Facts record carries "is_cheese", "is_water" and "sugars"
+ *  as keys of its nutrition-score bookkeeping, so a can of WD-40 matched three
+ *  Groceries words and filed as food (#7658). */
 function aboutTheThing(v: unknown, depth = 0): string {
   if (depth > 6 || v == null) return "";
   if (typeof v === "string") return LINK.test(v) ? "" : v;
@@ -176,7 +181,7 @@ function aboutTheThing(v: unknown, depth = 0): string {
   if (Array.isArray(v)) return v.map((x) => aboutTheThing(x, depth + 1)).filter(Boolean).join(" ");
   if (typeof v === "object")
     return Object.entries(v as Record<string, unknown>)
-      .filter(([k]) => !SELLER_KEY.test(k))
+      .filter(([k]) => !SELLER_KEY.test(k) && !MAY_CONTAIN_KEY.test(k))
       .map(([, x]) => aboutTheThing(x, depth + 1))
       .filter(Boolean)
       .join(" ");

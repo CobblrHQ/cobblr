@@ -68,7 +68,7 @@ import { selfOrigin } from "@cobblr/platform-contract/self-api";
  *  and sets `since` to when it merges; every waiting row planned before it is
  *  then asked again. Earlier versions: "category-outranks-word" (#3004),
  *  "an-uncounted-roll-is-the-thing" (#9380). */
-export const REROUTE_RULE = { version: "a-follower-goes-with-its-twin", since: "2026-11-10T15:00:00Z" } as const;
+export const REROUTE_RULE = { version: "a-may-contain-list-is-not-evidence", since: "2026-11-12T14:50:00Z" } as const;
 const SHIM = "modules/core-scan/src/services/reroute-keyword-rows.ts";
 
 /** Rows per workspace per tick. The plan is pure; the query is the cost. */

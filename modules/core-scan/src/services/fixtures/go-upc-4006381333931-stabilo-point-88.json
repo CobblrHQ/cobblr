@@ -1,0 +1,49 @@
+{
+ "_note": "The go-upc record staging stored for EAN 4006381333931 on 2026-11-12 (#9458): a Stabilo fineliner whose catalog category reads Grinding Wheels & Points and whose record carries allergen traces.",
+ "suggested_name": "Stabilo Point 88 Azure 57",
+ "suggested_manufacturer": "Stabilo",
+ "barcode_text": "4006381333931",
+ "source_kind": "barcode",
+ "suggested_metadata": {
+  "category": "Grinding Wheels & Points",
+  "description": "The instantly recognizable STABILO point 88 fineliner is a timeless classic and is loved by so many all over the world. Whether you wish to structure your texts, underline, take notes or write full texts, you can rely on and enjoy this fineliner every day. The STABILO point 88 is the perfect companion for school children, students and professionals. For drawing you can create intricate details; for writing you can go really small with your font size. It is also perfect for use with rulers and stencils, making it ideal for precise work, structuring texts and taking notes. Thanks to the long cap-off time you won't have to worry if you accidentally leave it off.",
+  "source": "go-upc",
+  "traces": [
+   "celery",
+   "eggs",
+   "milk",
+   "soybeans"
+  ],
+  "raw": {
+   "via": "resolver",
+   "meta": {
+    "ean": "4006381333931",
+    "brand": "Stabilo",
+    "category": "Grinding Wheels & Points"
+   },
+   "title": "Stabilo Point 88 Azure 57",
+   "images": [
+    "https://go-upc.s3.amazonaws.com/images/84106586.jpeg"
+   ],
+   "attributes": {
+    "tipo": "Fineliner",
+    "busta": "No",
+    "punta": "Setto Metallico 0,4 Mm",
+    "colore/i": "Azzurro",
+    "accessori": "No",
+    "impermeabile": "No",
+    "ricaricabile": "No",
+    "larghezza linea": "F=0.4",
+    "colore del carattere": "Azzurro"
+   },
+   "description": "The instantly recognizable STABILO point 88 fineliner is a timeless classic and is loved by so many all over the world. Whether you wish to structure your texts, underline, take notes or write full texts, you can rely on and enjoy this fineliner every day. The STABILO point 88 is the perfect companion for school children, students and professionals. For drawing you can create intricate details; for writing you can go really small with your font size. It is also perfect for use with rulers and stencils, making it ideal for precise work, structuring texts and taking notes. Thanks to the long cap-off time you won't have to worry if you accidentally leave it off.",
+   "traces_tags": [
+    "en:celery",
+    "en:eggs",
+    "en:milk",
+    "en:soybeans"
+   ],
+   "allergens_tags": []
+  }
+ }
+}
