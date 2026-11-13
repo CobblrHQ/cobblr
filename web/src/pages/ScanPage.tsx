@@ -4716,6 +4716,7 @@ export function ScanPage() {
                     const caption = readyIds.length > 0 ? sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems), sessionMostPlace(placeItems))) : busy > 0 && !onlyReadingReceipts ? "Names, covers and where they go may still change" : null;
                     return (
                       <SessionMetaLine
+                        finishing={busy > 0}
                         parts={[
                           caption && <span data-testid="session-add-caption">{caption}</span>,
                           sessionSays.category && <span data-testid="session-category">{sessionSays.category}</span>,

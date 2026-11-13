@@ -77,7 +77,7 @@ export function registerMaintenanceHandlers(): void {
       const refused = await platform().http.staleSaveRefusal(ctx.orgId, id, args[EDITED_FROM_ARG], now, d.data as Record<string, unknown>);
       if (refused) return { ok: false, error: refused, data: { code: "changed_since" } };
     }
-    const result = await updateTerm(db, ctx.orgId, id, d.data);
+    const result = await updateTerm(db, ctx.orgId, ctx.userId, id, d.data);
     // What Undo writes back: each field this edit set, as it was.
     const before: Record<string, unknown> = { term_id: id };
     if (prior) for (const k of Object.keys(d.data) as Array<keyof typeof d.data>) {
@@ -164,7 +164,7 @@ export function registerMaintenanceHandlers(): void {
     // A form that opened before a teammate's change never writes over it (#9446).
     const refused = await platform().http.staleSaveRefusal(ctx.orgId, before.id, args[EDITED_FROM_ARG], was, parsed.data as Record<string, unknown>);
     if (refused) return { ok: false, error: refused, data: { code: "changed_since" } };
-    const result = await updateSchedule(db, ctx.orgId, before, parsed.data);
+    const result = await updateSchedule(db, ctx.orgId, ctx.userId, before, parsed.data);
     return { ok: true, result, before: was };
   });
   platform().actions.registerHandler("core-maintenance.renew", async (ctx) => {

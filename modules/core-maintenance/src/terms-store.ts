@@ -18,9 +18,11 @@ export async function endRenewal(db: Kysely<CoreMaintenanceDB>, id: string, user
   });
 }
 
-export async function updateTerm(db: Kysely<CoreMaintenanceDB>, orgId: string, id: string, d: z.infer<typeof TermBody>) {
+export async function updateTerm(db: Kysely<CoreMaintenanceDB>, orgId: string, userId: string | null, id: string, d: z.infer<typeof TermBody>) {
   if (d.file_id && !(await platform().files.describe(orgId, [d.file_id]))?.length) throw new MaintenanceRefusal("Choose a file in this workspace");
-  const updated = await db.transaction().execute(async (tx) => {
+  // The correction and its History line commit together, so a refused older
+  // form can name who changed the term and the term shows its changes (#9452).
+  const updated = await platform().activity.transaction(orgId, db, async (tx, log) => {
     const before = await tx.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).where("is_term", "=", true).executeTakeFirst();
     if (!before?.schedule_id) throw new MaintenanceRefusal("Term not found", 404);
     const schedule = await tx.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", before.schedule_id).forUpdate().executeTakeFirst();
@@ -44,6 +46,9 @@ export async function updateTerm(db: Kysely<CoreMaintenanceDB>, orgId: string, i
       const changed = await tx.updateTable("core_maintenance_schedules").set({ ...(!schedule.expiry_field ? { current_expiry: end } : {}), updated_at: new Date() }).where("id", "=", schedule.id).returningAll().executeTakeFirstOrThrow();
       await ensureOccurrence(tx, orgId, changed);
     }
+    const written: Record<string, unknown> = { name: row.name };
+    for (const k of Object.keys(d)) if (k !== "file_id" && k in row) written[k] = (row as Record<string, unknown>)[k];
+    await log({ orgId, userId, action: "term_updated", ref: { module: "core-maintenance", entityType: "term", entityId: id }, diff: written, before: current });
     return row;
   });
   if (d.file_id) await platform().files.attach(orgId, { fileId: d.file_id, source_module: "core-maintenance", source_type: "entry", source_id: id, role: "receipt" });

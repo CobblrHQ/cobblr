@@ -340,7 +340,7 @@ schedulesRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "schedule not found" } });
       return;
     }
-    const row = await updateSchedule(db, ctx.org.id, before, parsed.data);
+    const row = await updateSchedule(db, ctx.org.id, sessionUser(req).id, before, parsed.data);
     res.json(await present(ctx.org.id, row));
   }),
 );
@@ -369,7 +369,15 @@ schedulesRouter.delete(
   }),
 );
 
-export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: string, before: ScheduleRow, d: z.infer<typeof ScheduleUpdateBody>): Promise<ScheduleRow> {
+/** The fields an edit sent, as the schedule now stores them, for its History
+ *  line: compared with the row before, they are what changed. */
+function writtenOf(d: z.infer<typeof ScheduleUpdateBody>, row: ScheduleRow): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(d)) if (k in row) out[k] = (row as Record<string, unknown>)[k];
+  return out;
+}
+
+export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: string, userId: string | null, before: ScheduleRow, d: z.infer<typeof ScheduleUpdateBody>): Promise<ScheduleRow> {
   const id = before.id;
 
     const next = {
@@ -401,7 +409,11 @@ export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: strin
     const reading = counterChanged && next.counter_field
       ? await readCounter(orgId, `${before.entity_module}:${before.entity_type}`, before.entity_id, next.counter_field)
       : undefined;
-    const row = await db
+  // The edit and its History line commit together; the line is what a
+  // refused older form names as who changed it, and how a person sees who
+  // moved a service interval (#9452).
+  return platform().activity.transaction(orgId, db, async (trx, log) => {
+    const row = await trx
       .updateTable("core_maintenance_schedules")
       .set({
         ...next,
@@ -416,8 +428,13 @@ export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: strin
       .returningAll()
       .executeTakeFirstOrThrow();
     // The rule moved, so the open occurrence's date may have: make it again.
-    await ensureOccurrence(db, orgId, row);
-  return row;
+    await ensureOccurrence(trx, orgId, row);
+    // The line is about the serviced record too (its subject), so the feed
+    // opens the machine; given on both sides, it is never told as a change.
+    const subject = { kind: `${row.entity_module}:${row.entity_type}`, id: row.entity_id };
+    await log({ orgId, userId, action: "schedule_updated", ref: { module: "core-maintenance", entityType: "schedule", entityId: id }, diff: { name: row.name, subject, ...writtenOf(d, row) }, before: { ...before, subject } });
+    return row;
+  });
 }
 
 export const RenewBody = z.object({

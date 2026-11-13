@@ -29,11 +29,18 @@ export function sessionOrderPart(orderRef: string | null, purchaseId: string | n
 }
 
 /** The line under a session's header: what Add means and which order it is,
- *  one line, joined so no separator is ever left hanging. */
-export function SessionMetaLine({ parts }: { parts: ReadonlyArray<ReactNode | null | false | undefined> }) {
+ *  one line, joined so no separator is ever left hanging. While the session is
+ *  still being read, a phone's line holds two lines' room: the caption that
+ *  arrives when its lines are ready wraps the order onto a second line, and
+ *  that pushed every button under it down under a finger (#9454). */
+export function SessionMetaLine({ parts, finishing = false }: { parts: ReadonlyArray<ReactNode | null | false | undefined>; finishing?: boolean }) {
   if (!distinctParts(parts).length) return null;
   return (
-    <div data-testid="session-meta-line" className="px-2.5 text-[11px] text-muted dark:text-slate-400">
+    <div
+      data-testid="session-meta-line"
+      data-holds-two-lines={finishing ? "" : undefined}
+      className={`px-2.5 text-[11px] leading-4 text-muted dark:text-slate-400${finishing ? " max-lg:min-h-8" : ""}`}
+    >
       <MetaFlow parts={parts} />
     </div>
   );

@@ -24,6 +24,7 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { destinationChoices, entryKey } from "../lib/scanDestination";
 import { useUndoSplit } from "../lib/useUndoSplit";
 import { cleanCandidates } from "../pages/scanQuickFile";
+import { itemEnriching } from "../pages/scan-status";
 import { DestinationPicker } from "./DestinationPicker";
 import { currentPicture, leadYours, rowPictures } from "../lib/rowPictures";
 import type { SplitParent } from "../lib/splitLayout";
@@ -115,6 +116,12 @@ export function SplitLineGroup({
     );
   }, [routeOf, waiting, menu]);
   const shortOf = new Map((alike?.parts ?? []).map((p) => [p.id, p]));
+  // While the parts are still being read, none has its table yet, so whether
+  // they are alike is not known. Each waits as a short row of the same shape
+  // instead of a full card: drawn as cards, the ten folded into short rows the
+  // moment their reads finished, and every control in them (a quantity
+  // stepper, a picker) left the page under a finger (#9462).
+  const stillReading = !alike && waiting.length >= 2 && waiting.some((p) => itemEnriching(p));
   // A value said the way its field keeps it: money with its currency
   // ("Price per kg $8.80", never "8.8", #6527).
   const defs = new Map((menu?.find((m) => alike && m.module === alike.destination.module && (m.instance ?? null) === (alike.destination.instance ?? null))?.fields ?? []).map((f) => [f.name, f]));
@@ -296,6 +303,8 @@ export function SplitLineGroup({
         <div className="space-y-2 border-t border-line dark:border-slate-700 p-2 pl-3 sm:pl-6" data-testid="split-line-parts">
           {parts.map((p) => {
             const short = shortOf.get(p.id);
+            const reading = !short && stillReading && p.status === "pending";
+            const rowName = short ? titleWords(short.short) : (p.suggested_name ?? "A part");
             // One wrapper per part, its card always the wrapper's second child:
             // a part that turns into a short row as its table arrives keeps the
             // same card element, never a new one. Swapped, the card a person was
@@ -307,27 +316,30 @@ export function SplitLineGroup({
               <div
                 key={p.id}
                 onFocusCapture={() => {
-                  if (!short && opened !== p.id) setOpened(p.id);
+                  if (!short && !reading && opened !== p.id) setOpened(p.id);
                 }}
               >
-                {short && (
+                {(short || reading) && (
                 <div className="flex items-center gap-2 py-0.5" data-testid="split-part-row" data-part-id={p.id}>
                   <RowPicture item={p} size={40} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm text-content dark:text-mortar-100" data-testid="split-part-name" title={p.suggested_name ?? undefined}>
-                      {titleWords(short.short)}
+                      {rowName}
                     </div>
-                    {short.differs.length > 0 && (
+                    {reading ? (
+                      <div className="truncate text-xs text-muted" data-testid="split-part-reading">Reading…</div>
+                    ) : short && short.differs.length > 0 && (
                       <div className="truncate text-xs text-muted">
                         <MetaParts parts={short.differs.map(said)} />
                       </div>
                     )}
                   </div>
-                  {short.quantity !== 1 && <span className="shrink-0 text-xs text-muted">× {short.quantity}</span>}
+                  {short && short.quantity !== 1 && <span className="shrink-0 text-xs text-muted">× {short.quantity}</span>}
                   <button
                     type="button"
                     data-testid="split-part-add"
-                    disabled={adding}
+                    disabled={adding || reading}
+                    title={reading ? "Ready once it is read" : undefined}
                     onClick={async () => {
                       setAdding(true);
                       try {
@@ -345,8 +357,8 @@ export function SplitLineGroup({
                   <button
                     type="button"
                     aria-expanded={opened === p.id}
-                    aria-label={`Details of ${titleWords(short.short)}`}
-                    title={`Details of ${titleWords(short.short)}`}
+                    aria-label={`Details of ${rowName}`}
+                    title={`Details of ${rowName}`}
                     onClick={() => setOpened((o) => (o === p.id ? null : p.id))}
                     className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full border border-line dark:border-slate-700 text-content dark:text-mortar-100 hover:bg-surface"
                   >
@@ -354,7 +366,7 @@ export function SplitLineGroup({
                   </button>
                 </div>
                 )}
-                {(!short || opened === p.id || cardInUse(p.id)) && renderPart(p)}
+                {((!short && !reading) || opened === p.id || cardInUse(p.id)) && renderPart(p)}
               </div>
             );
           })}

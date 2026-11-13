@@ -36,7 +36,7 @@ termsRouter.get("/:id", asyncHandler(async (req, res) => {
 termsRouter.patch("/:id", asyncHandler(async (req, res) => {
   if (!(await requireCapability(req, res, "core-maintenance:update-term"))) return;
   const d = TermBody.safeParse(req.body); if (!d.success) return badBody(res, d.error);
-  res.json(await updateTerm(tenantDb(req), tenantContext(req).org.id, String(req.params.id), d.data));
+  res.json(await updateTerm(tenantDb(req), tenantContext(req).org.id, sessionUser(req).id, String(req.params.id), d.data));
 }));
 /** The route's body; its gate is the route's own (index.ts). */
 export async function endRenewalRoute(req: import("express").Request, res: import("express").Response) {
