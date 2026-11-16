@@ -1285,12 +1285,19 @@ export const CAPABILITIES: Capability[] = [
     // found (#7818, #7929).
     scope: ["modules/*/src/**/*.ts"],
     // A hand-rolled like: lower(<col>) like <needle>, in either the builder or
-    // raw-sql spelling, or a needle built for one (likeNeedle).
-    detect: /eb\.fn\(\s*["']lower["'][^\n]*["']like["']|lower\([a-z_.>'"-]+\)\s+like|\blikeNeedle\(/i,
+    // raw-sql spelling, or a needle built for one (likeNeedle). And ilike, in
+    // either spelling: the Customers, Orders and Knowledge lists each read q
+    // as one phrase through ilike, beside resolvers that used this, so
+    // "Okafor Ada" found Ada Okafor in Search and nothing in the list (#7921
+    // class 9).
+    detect: /eb\.fn\(\s*["']lower["'][^\n]*["']like["']|lower\([a-z_.>'"-]+\)\s+like|\blikeNeedle\(|["']ilike["']|\bilike\s+\$\{/i,
     use: "textSearchWhere(eb, query.q, { text: [...], json: [...] }) from @cobblr/platform-contract",
     except: {
       "modules/core-catalogs/src/api/catalogs.ts": "a catalog's own lookup by an entry's title or id, the picker's typeahead over reference data; its records' search is the resolver's",
       "modules/projects/src/api/pattern-text.ts": "one extra column beside the project's search (its pattern PDF's text, in its own table), shaped to that column's trigram index",
+      "modules/core-discussion/src/api/conversations.ts": "searches what was said: comment bodies in their own table, joined per conversation, not a column of the record listed",
+      "modules/inventory/src/api/part-query.ts": "a view's contains and does-not-contain filter on one named field, not q (its q search is textSearchWhere's, through applyPartSearch)",
+      "modules/digifab/src/families/production/production-actions.ts": "a test run's plan name is a value inside its plan json (plan->>'name'), an expression the helper's column list cannot name",
     },
   },
   {

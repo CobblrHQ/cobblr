@@ -1395,6 +1395,7 @@ function SettingsSheet(props: {
     setSaving(true);
     setError("");
     try {
+      // GATED-BY: Station draws SettingsSheet only when canConfigure: useRoleAtLeast(ADMIN_TIER) (setsUp), or the station tablet itself, which the route lets through on the owner PIN
       await api.saveStationScreen(props.slug, props.address, {
         label,
         settings: draft,

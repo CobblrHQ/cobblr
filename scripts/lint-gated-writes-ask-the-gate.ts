@@ -51,9 +51,20 @@
 // Spoolman, a label printer's settings and Forget, the builds stations'
 // Authorize and Revoke, sales' Email and order intake, and tracking's delete.
 //
-// Still not judged: which control in a web file a gate covers (a web file
-// with one gate passes), and a role other than a member (an operator's
-// refusals are fixed where they were found).
+// A WEB FILE'S OWN COMPONENTS (#7921 class 2). A web file used to pass with
+// one gate anywhere in it, so fleet.tsx, which asks useCan for its run
+// controls, drew the LAN access code, the machine links, the files' Print and
+// the floor's drag for every member, each refused after the tap. Now every
+// call is judged where it is made: the top-level component or hook holding it
+// asks the gate, or says on a GATED-BY: line which parent draws it only for
+// those allowed; otherwise the file's importers and routes are followed as
+// before. Every call is judged, not only a file's first.
+//
+// Still not judged: which control inside one component a gate covers (a
+// component that asks one gate passes for all its calls: DeviceCard asked
+// useCan("digifab:operate") and drew its admin-only camera address beside
+// it, fixed by hand and held by a-fleet-card-offers-a-station-only-to-
+// someone-who-runs-machines.test.tsx), and a role other than a member.
 //
 // PROVED RED on main: web/src/components/AppLayout.tsx (refreshApp, an
 // owner/admin route, sent on every managed app's first page), and
@@ -490,6 +501,26 @@ export function moduleUiViolations(files: Array<[string, string]>, routes: Map<s
   return out;
 }
 
+/** The top-level declaration of `file` holding offset `at`: the component or
+ *  hook that makes a call, as text. */
+function enclosingTopLevel(file: string, text: string, at: number): string {
+  const sf = parse(file, text);
+  for (const st of sf.statements) if (st.pos <= at && at < st.end) return text.slice(st.pos, st.end);
+  return text;
+}
+/** Does the component making the call at `at` ask a gate itself? */
+export function componentGated(file: string, text: string, at: number): boolean {
+  return GATE.test(enclosingTopLevel(file, text, at));
+}
+/** A path a member takes to `file` past no gate, through what imports it (the
+ *  file's own gates are judged per component, above). */
+function importerOpenPath(file: string, openPath: (f: string, seen: Set<string>) => string | null, importers: Map<string, Set<string>>, routedAt: Map<string, string[]>): string | null {
+  if (file === "web/src/App.tsx" || file === "web/src/main.tsx") return file;
+  for (const at of routedAt.get(file) ?? []) if (pageOpenTo(at.startsWith("/") ? at : `/${at}`, PROBE_ROLE)) return `the route ${at}`;
+  for (const by of importers.get(file) ?? []) { const via = openPath(by, new Set([file])); if (via) return by === via ? by : `${by} ← ${via}`.split(" ← ").slice(0, 3).join(" ← "); }
+  return null;
+}
+
 export function check(): Violation[] {
   const read = (fs: string[]) => fs.map((f) => [f, readFileSync(f, "utf8")] as [string, string]);
   const modules = repoFiles(["modules"]);
@@ -534,10 +565,16 @@ export function check(): Violation[] {
     for (const [name, route] of methods) {
       // A call draws or sends it; a reference handed on (the provider's client) does not.
       const re = new RegExp(`\\bapi\\.${name}!?\\s*\\(`, "g");
+      // Every call is judged, not only the file's first: a second component
+      // that sends the same request is a second control (EdgeBridgeSetup's
+      // connection beside CreateConnectionModal's). And the component that
+      // makes the call asks the gate, not some other component in its file:
+      // fleet.tsx asked useCan for its run controls, and that passed the LAN
+      // access code and the links it drew for every member (#7921 class 2).
       let at = -1;
-      for (let m = re.exec(text); m; m = re.exec(text)) if (!handedOn.some(([a, b]) => m!.index >= a && m!.index < b)) { at = m.index; break; }
+      for (let m = re.exec(text); m; m = re.exec(text)) if (!handedOn.some(([a, b]) => m!.index >= a && m!.index < b) && !componentGated(file, text, m.index)) { at = m.index; break; }
       if (at < 0) continue;
-      const via = openPath(file, new Set());
+      const via = importerOpenPath(file, openPath, importers, routedAt);
       if (!via) continue;
       out.push({ file, line: text.slice(0, at).split("\n").length, what: `api.${name} is ${route}, refused to a ${PROBE_ROLE} (${routes.get(route)![0]!.startsWith("capability ") ? routes.get(route)![0] : `requireRole ${routes.get(route)!.join(", ")}`}), and a ${PROBE_ROLE} reaches it with no gate (via ${via})` });
     }

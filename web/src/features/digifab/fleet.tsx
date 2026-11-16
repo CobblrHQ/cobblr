@@ -38,7 +38,8 @@ import { HomeNetworkHint } from "../../components/HomeNetworkHint";
 import { useHosted } from "../../lib/useHosted";
 import { needsBridge } from "@cobblr/platform-contract/address-reach";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
-import { useCan } from "../../lib/can";
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
+import { useCan, useRoleAtLeast } from "../../lib/can";
 import { useLater, Lightbox, SegmentedChoice, Modal, useToast, useConfirm, useImageSrc, relativeTime, EntityPhoto, SecretInput, AddressInput, NumberField } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
@@ -116,6 +117,7 @@ export function CreateConnectionModal({
 
   const save = useMutation({
     mutationFn: () =>
+      // GATED-BY: MachineDigifabPanel and DigifabPage draw CreateConnectionModal only when useRoleAtLeast(ADMIN_TIER) (setsUp)
       api.createDigifabConnection(activeSlug, {
         type,
         label: label.trim(),
@@ -357,6 +359,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, 
       for (const { m, id } of withIds) {
         const def = defOf(m);
         const config = { ...(m.driver === "snapmaker" && m.cfg.transport ? { transport: m.cfg.transport } : {}), driver: def.driver || m.driver, ...def.config, ...(bid ? { bridge: bid } : {}), ...(def.driver === "cnc" ? cncBridgeConfig({...m.cfg,name:m.name.trim()||def.label}) : { ...(m.driver === "gcode-laser" ? {name:m.name.trim() || def.label,...gcodeBridgeValues(m), ...(gcodeBridgeValues(m).transport === "tcp" ? {port:m.cfg.port || "23"} : {baud:m.cfg.baud || "115200"})} : {}), ...Object.fromEntries(def.fields.map((f) => [f.key, m.cfg[f.key]?.trim()]).filter(([, v]) => v)) }) };
+        // GATED-BY: drawn by CreateConnectionModal (whose parents ask useRoleAtLeast(ADMIN_TIER)) and by FoundDevices on /configuration/devices, which pageOpenTo keeps from a member and an operator
         const c = await api.createDigifabConnection(activeSlug, { type: "edge_adapter", label: m.name.trim() || defOf(m).label, base_url: `cobblr-edge://${id}`, config });
         if (!firstId) firstId = c.id;
         if (m.driver === "snapmaker") pairs.push({ id: c.id, name: m.name.trim() || def.label, paired: false });
@@ -600,6 +603,8 @@ function ReorderableRows({ slug, devices, gridCls, spanOf, canDrag, dataVersion,
   dataVersion: number;
   renderTile: (d: FleetDev) => ReactNode;
 }) {
+  const arranges = useCan("digifab:arrange-floor") === true;
+  const drags = canDrag && arranges;
   const later = useLater();
   const qc = useQueryClient();
   const toast = useToast();
@@ -763,7 +768,7 @@ function ReorderableRows({ slug, devices, gridCls, spanOf, canDrag, dataVersion,
                     {showSlot && <div data-drop-placeholder className={slotCls} />}
                     <div
                       data-drop-key={k}
-                      draggable={canDrag && !drag}
+                      draggable={drags && !drag}
                       onDragStart={(e) => {
                         e.dataTransfer.setData(DEVICE_DRAG_MIME, JSON.stringify({ connId: d.connId, id: d.id }));
                         e.dataTransfer.effectAllowed = "move";
@@ -776,7 +781,7 @@ function ReorderableRows({ slug, devices, gridCls, spanOf, canDrag, dataVersion,
                         });
                       }}
                       onDragEnd={finishDrag}
-                      className={(canDrag ? "cursor-grab active:cursor-grabbing " : "") + (drag === k ? "hidden " : "") + (spanOf?.(d) ?? "")}
+                      className={(drags ? "cursor-grab active:cursor-grabbing " : "") + (drag === k ? "hidden " : "") + (spanOf?.(d) ?? "")}
                     >
                       {renderTile(d)}
                     </div>
@@ -1298,6 +1303,10 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
   const runsMachines = useCan("digifab:operate") === true;
   // How a print came out is recorded by whoever may record it (#7892).
   const recordsOutcomes = useCan("digifab:machine-outcome") === true;
+  // A machine's camera address, its snapshot relay and its hour rate are the
+  // admin tier's: the routes and the action refuse anyone else, so the button
+  // that opens them is drawn only for those it lets save (#7921 class 2).
+  const setsCamera = useRoleAtLeast(ADMIN_TIER);
   const st = KLASS_STYLE[d.klass];
   // Progress: a Cobblr job's (0–1) wins; otherwise the printer's own live percent
   // (already 0–100, e.g. a Bambu print started from its own slicer).
@@ -1562,14 +1571,14 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         <span className={`w-2 h-2 rounded-full shrink-0 ${lost ? "bg-amber-500" : st.dot} ${d.klass === "printing" && !lost ? "animate-pulse" : ""}`} />
         <button type="button" onClick={(e) => { if (selecting) { e.stopPropagation(); onToggleSelect?.(); } else setDetailOpen(true); }} className="text-sm font-medium text-content dark:text-mortar-100 min-w-0 break-words whitespace-normal leading-snug hover:text-accent text-left" title={`${title ?? d.name}: open details`}>{title ?? d.name}</button>
         <div className="flex-1" />
-        <button
+        {setsCamera && <button
           aria-label={d.camera_url ? "Edit camera URL" : "Add a camera URL"}
           onClick={() => { setCamUrl(d.camera_url ?? ""); setCamOpen((o) => !o); }}
           title={d.camera_url ? "Edit camera URL" : "Add a camera URL"}
           className={`p-0.5 transition ${d.camera_url ? "text-accent" : "text-faint hover:text-accent"}`}
         >
           <Camera size={13} />
-        </button>
+        </button>}
       </div>
       {subtitle && <div className="text-[10px] text-faint truncate">{subtitle}</div>}
       <div className="flex flex-wrap items-center gap-2 mt-0.5">
@@ -1638,7 +1647,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
           ⏭ next: <span className="text-muted dark:text-slate-400">{jobDisplayName(d.next_job)}</span>{d.next_job.pooled ? " · pool" : ""}
         </div>
       )}
-      {camOpen && (
+      {camOpen && setsCamera && (
         <div className="mt-1.5 flex items-center gap-1">
           <input
             value={camUrl}
@@ -2079,7 +2088,8 @@ function FileRow({
   slug: string; connId: string; deviceId: string;
   file: { name: string; size?: number; modified?: string };
   printing: string | null;
-  onPrint: (name: string) => void;
+  /** Absent for a viewer who may not run the printer: no Print button. */
+  onPrint?: (name: string) => void;
   onZoom?: (src: string) => void;
   fmtSize: (b?: number) => string;
   /** The matched recent print — the row borrows its intelligence: the pleasant
@@ -2152,9 +2162,11 @@ function FileRow({
           </span>
         )}
         {file.size != null && <span className="text-faint font-mono shrink-0">{fmtSize(file.size)}</span>}
-        <button type="button" onClick={() => onPrint(file.name)} disabled={printing === file.name} className="shrink-0 text-accent hover:underline disabled:opacity-50">
-          {printing === file.name ? "Sending…" : "Print"}
-        </button>
+        {onPrint && (
+          <button type="button" onClick={() => onPrint(file.name)} disabled={printing === file.name} className="shrink-0 text-accent hover:underline disabled:opacity-50">
+            {printing === file.name ? "Sending…" : "Print"}
+          </button>
+        )}
       </div>
       {expanded && (
         <div className="mt-1 pl-12 text-[11px] text-faint">
@@ -2202,6 +2214,7 @@ export function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrin
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const runsMachines = useCan("digifab:operate") === true;
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [printing, setPrinting] = useState<string | null>(null);
@@ -2320,7 +2333,7 @@ export function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrin
       ) : (
         <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded max-h-72 overflow-y-auto">
           {grouped.map((f) => (
-            <FileRow key={f.name} slug={slug} connId={connId} deviceId={deviceId} file={f} printing={printing} onPrint={doPrint} onZoom={onZoom} fmtSize={fmtSize} printed={printedFor.get(f.name)} />
+            <FileRow key={f.name} slug={slug} connId={connId} deviceId={deviceId} file={f} printing={printing} onPrint={runsMachines ? doPrint : undefined} onZoom={onZoom} fmtSize={fmtSize} printed={printedFor.get(f.name)} />
           ))}
         </ul>
       )}
@@ -2409,6 +2422,7 @@ function LanCameraView({ slug, connId, deviceId, name, onZoom }: { slug: string;
 function LanAccessPanel({ slug, connId, deviceId, lan }: { slug: string; connId: string; deviceId: string; lan?: { applicable: boolean; configured: boolean; host?: string; mode?: "cloud" | "prefer_lan" | "lan_only" } }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
   const [host, setHost] = useState("");
   const [code, setCode] = useState("");
   // The corner shows a tiny affordance; the actual config (mode picker / setup /
@@ -2436,7 +2450,7 @@ function LanAccessPanel({ slug, connId, deviceId, lan }: { slug: string; connId:
     { key: "prefer_lan", label: "Prefer LAN", desc: "Status, control & file-push over your LAN/bridge; cloud fills in print-history names. Cloud is the fallback." },
     { key: "lan_only", label: "LAN only", desc: "Everything local, cloud off: no internet needed, max privacy. You lose cloud-only print-history names/covers." },
   ];
-  if (!lan?.applicable) return null;
+  if (!lan?.applicable || !setsUp) return null;
   const field = "px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   const modeLabel = MODES.find((m) => m.key === (lan.mode ?? "cloud"))?.label ?? "All cloud";
 
@@ -2524,6 +2538,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [printOpen, setPrintOpen] = useState<DigifabHistory["recent"][number] | null>(null);
   const [linkEdit, setLinkEdit] = useState(false);
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
   const detail = useQuery({ queryKey: ["digifab-device-detail", slug, connId, device.id], queryFn: () => api.getDigifabDeviceDetail(slug, connId, device.id), refetchInterval: 10_000 });
   // The AI failure-watch verdict for THIS printer — rendered on the camera
   // frame (badge + paused banner) and as a detail strip under it, so the
@@ -2611,10 +2626,10 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
               {device.linked_machine?.detail_url && (
                 <Link to={device.linked_machine.detail_url} onClick={onClose} className="text-accent hover:underline ml-1.5">Open machine →</Link>
               )}
-              <button type="button" onClick={() => setLinkEdit((v) => !v)} className="text-accent hover:underline ml-1.5">{linkEdit ? "close" : linkedMachine ? "change" : "link"}</button>
+              {setsUp && <button type="button" onClick={() => setLinkEdit((v) => !v)} className="text-accent hover:underline ml-1.5">{linkEdit ? "close" : linkedMachine ? "change" : "link"}</button>}
             </div>
           </div>
-          {linkEdit && (
+          {setsUp && linkEdit && (
             <Combobox
               value={linkedId ?? ""}
               allowClear
@@ -2716,7 +2731,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                 </div>
               )}
               {!laser && detail.data && detail.data.live === false && <div className="text-[11px] text-faint italic">No live cloud telemetry for this machine.</div>}
-              {detail.data?.lan?.applicable && (
+              {setsUp && detail.data?.lan?.applicable && (
                 <LanAccessPanel slug={slug} connId={connId} deviceId={device.id} lan={detail.data?.lan} />
               )}
             </div>
@@ -2842,6 +2857,8 @@ export function MachineDigifabPanel({
   driverHint?: string;
 }) {
   const managerPickerId = useId();
+  // Linking a machine and connecting a manager are the admin tier's.
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
   const qc = useQueryClient();
   const toast = useToast();
   const links = useQuery({
@@ -2924,7 +2941,7 @@ export function MachineDigifabPanel({
   });
 
   const conn = link ? connections.find((c) => c.id === link.connection_id) : undefined;
-  const connectModal = createConnOpen && (
+  const connectModal = setsUp && createConnOpen && (
     <CreateConnectionModal
       types={conns.data?.types ?? ["fdm_monster", "mock"]}
       typeNames={conns.data?.type_names}
@@ -2952,12 +2969,16 @@ export function MachineDigifabPanel({
       <div className="flex flex-wrap items-center gap-x-2 rounded-lg border border-line dark:border-slate-700 px-3 py-1 text-sm">
         <span className="font-semibold text-content dark:text-mortar-100">{capitalise(words.manager)}</span>
         <span className="text-muted dark:text-slate-400">none</span>
-        <span className="basis-full sm:basis-auto sm:flex-1 text-xs text-muted dark:text-slate-400">
-          {`Connect one (${words.managerExamples}) to send ${words.jobs} from here and see its camera and controls.`}
-        </span>
-        <button type="button" onClick={() => setCreateConnOpen(true)} className="ml-auto min-h-11 px-2 text-accent hover:underline">
-          Connect one
-        </button>
+        {setsUp && (
+          <>
+            <span className="basis-full sm:basis-auto sm:flex-1 text-xs text-muted dark:text-slate-400">
+              {`Connect one (${words.managerExamples}) to send ${words.jobs} from here and see its camera and controls.`}
+            </span>
+            <button type="button" onClick={() => setCreateConnOpen(true)} className="ml-auto min-h-11 px-2 text-accent hover:underline">
+              Connect one
+            </button>
+          </>
+        )}
         {connectModal}
       </div>
     );
@@ -2988,13 +3009,15 @@ export function MachineDigifabPanel({
                 {link.remote_device_name ?? link.remote_device_id}
               </span>
             </span>
-            <button
-              onClick={() => removeLink.mutate(link.id)}
-              disabled={removeLink.isPending}
-              className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1 disabled:opacity-50"
-            >
-              <Trash2 size={11} /> unlink
-            </button>
+            {setsUp && (
+              <button
+                onClick={() => removeLink.mutate(link.id)}
+                disabled={removeLink.isPending}
+                className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1 disabled:opacity-50"
+              >
+                <Trash2 size={11} /> unlink
+              </button>
+            )}
           </div>
           {/* Open the cockpit — the SAME modal a fleet tile opens. Enabled once
               the manager has reported this printer live (fleetDev present); a
@@ -3009,6 +3032,8 @@ export function MachineDigifabPanel({
             <Sliders size={13} /> Open controls
           </button>
         </div>
+      ) : !setsUp ? (
+        <p className="text-xs text-muted dark:text-slate-400">{`Not linked to ${withArticle(words.manager)} yet. An owner or admin of this workspace can link it.`}</p>
       ) : connections.length === 0 ? (
         <p className="text-xs text-muted dark:text-slate-400">
           {`No ${words.manager} connected yet - add ${words.managerExamples}.`}{" "}

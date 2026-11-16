@@ -3,10 +3,11 @@
 // states (services/withhold-picture.ts).
 //
 // DONE WHEN: no tenant DB has a pending core_scan_inbox_items row with a
-// catalog_image_file_id and no suggested_metadata->'catalog_colour' for that
-// file. Check with, per tenant:
+// catalog_image_file_id a person did not choose and no
+// suggested_metadata->'catalog_colour' for that file. Check with, per tenant:
 //   select count(*) from core_scan_inbox_items
 //    where status = 'pending' and catalog_image_file_id is not null
+//      and coalesce((suggested_metadata->>'catalog_image_user_set')::boolean, false) = false
 //      and coalesce(suggested_metadata->'catalog_colour'->>'file_id', '') <> catalog_image_file_id::text;
 // /healthz reports the count this pass found (noteHealShim). When it reads 0
 // on prod, staging and dev, delete this file and its boot call. Nothing
@@ -41,6 +42,9 @@ export async function healPictureColourIn(orgId: string, db: Kysely<HealDB>, sin
     .where("status", "=", "pending")
     .where("catalog_image_file_id", "is not", null)
     .where(sql<boolean>`coalesce(suggested_metadata->'catalog_colour'->>'file_id', '') <> catalog_image_file_id::text`)
+    // A picture a person chose is never judged, so it is never measured:
+    // left in, it would be found again every round and fill the page.
+    .where(sql<boolean>`coalesce((suggested_metadata->>'catalog_image_user_set')::boolean, false) = false`)
     .limit(200)
     .execute();
   let withheld = 0;

@@ -7,7 +7,7 @@ import { canPurgeDeletedRecord } from "@cobblr/platform-contract";
 import { notePhotoSource } from "./photo-source.js";
 import { Router } from "express";
 import { z } from "zod";
-import { likeEscape, platform, uploadOne } from "@cobblr/platform-contract";
+import { platform, textSearchWhere, unreadableFieldsOf, uploadOne } from "@cobblr/platform-contract";
 import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import type { CoreFilesDB, FileKind, FileVariants } from "../db.js";
@@ -252,7 +252,7 @@ filesRouter.get(
       if (kind) out = out.where("kind", "=", kind as FileKind);
       if (folder === "top") out = out.where("folder_id", "is", null);
       else if (folder && /^[0-9a-f-]{36}$/i.test(folder)) out = out.where("folder_id", "=", folder);
-      if (text) out = out.where("filename", "ilike", `%${likeEscape(text)}%`);
+      if (text) out = out.where((eb) => textSearchWhere(eb, text, { text: ["filename"], unreadable: unreadableFieldsOf(req) }));
       return out;
     };
     let q = db

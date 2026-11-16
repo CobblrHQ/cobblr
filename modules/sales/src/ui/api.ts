@@ -72,6 +72,8 @@ export interface SalesOrderItem {
   qty_fulfilled: string;
   /** How many of the fulfilled quantity came back (#8790). */
   qty_returned?: string;
+  /** How many of the fulfilled quantity are in a parcel (#9505); the rest reads "taken from stock". */
+  qty_in_parcels?: number;
   unit_price: string | null;
 }
 
@@ -150,8 +152,18 @@ export interface MoneySummaryView {
   owed: number;
 }
 
+/** One box an order went out in (#9505). */
+export interface SalesParcelView {
+  id: string;
+  tracking_number: string | null;
+  carrier: string | null;
+  shipped_at: string;
+  lines: Array<{ item_id: string; description: string | null; qty: number }>;
+}
+
 export interface SalesOrderDetail extends SalesOrder {
   items: SalesOrderItem[];
+  parcels?: SalesParcelView[];
   returns?: SalesReturnView[];
   payments?: SalesPaymentView[];
   money?: OrderMoneyView;
@@ -198,6 +210,9 @@ export interface ShipPreview {
 
 export interface ShipResult {
   order: SalesOrder;
+  /** False when this went out as a parcel and the order is still open (#9505). */
+  shipped?: boolean;
+  parcel_id?: string | null;
   carrier: string | null;
   tracking_number: string | null;
   lookup: ShipLookup | null;
@@ -365,6 +380,12 @@ export class SalesApi {
   }
   shipOrder(id: string, body: { tracking_number: string | null; carrier: string | null; email_customer: boolean }) {
     return this.req<ShipResult>("POST", `/orders/${id}/ship`, body);
+  }
+  addParcel(orderId: string, body: { tracking_number?: string | null; carrier?: string | null; email_customer?: boolean }) {
+    return this.req<{ parcel_id: string; shipped: boolean; created: boolean }>("POST", `/orders/${orderId}/parcels`, body);
+  }
+  setParcelTracking(orderId: string, parcelId: string, trackingNumber: string) {
+    return this.req<{ tracking_number: string }>("PATCH", `/orders/${orderId}/parcels/${parcelId}`, { tracking_number: trackingNumber });
   }
   makeLine(orderId: string, lineId: string, qty: number) {
     return this.req<{ ok: true; plannedId: string; buildName: string; qty: number; reused: boolean; makeId: string | null }>("POST", `/orders/${orderId}/items/${lineId}/make`, { qty });

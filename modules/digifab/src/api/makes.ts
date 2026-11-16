@@ -8,7 +8,7 @@
 import { Router, type Request } from "express";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { z } from "zod";
-import { likeEscape, platform } from "@cobblr/platform-contract";
+import { platform, textSearchWhere } from "@cobblr/platform-contract";
 import { readFilamentDrawn, readGramsByTool } from "@cobblr/platform-contract/filament-draw";
 import { pagedAnswer, readListPage, TOTAL_COLUMN, MAX_PAGE } from "@cobblr/platform-contract/list-page";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
@@ -94,18 +94,7 @@ async function filesOf(orgId: string, stepIds: string[]) {
 export async function listMakes(db: Kysely<DigifabDB>, q: string | undefined, limit: number, offset: number) {
   let query = db.selectFrom("digifab_makes").selectAll();
   const text = q?.trim();
-  if (text) {
-    const like = `%${likeEscape(text)}%`;
-    query = query.where((eb) =>
-      eb.or([
-        eb("name", "ilike", like),
-        eb("prompt", "ilike", like),
-        eb("printer_name", "ilike", like),
-        eb("material", "ilike", like),
-        eb("outcome", "ilike", like),
-      ]),
-    );
-  }
+  if (text) query = query.where((eb) => textSearchWhere(eb, text, { text: ["name", "prompt", "printer_name", "material", "outcome"], unreadable: undefined }));
   const rows = await query.orderBy("created_at", "desc").limit(limit).offset(offset).execute();
   const ids = rows.map((r) => r.id);
   const steps = ids.length

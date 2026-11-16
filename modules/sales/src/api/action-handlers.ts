@@ -93,7 +93,7 @@ export function registerSalesActionHandlers(): void {
       emailCustomer: null,
     });
     if (!r.ok) return { ok: false, error: r.message, code: r.code };
-    return { ok: true, orderId, carrier: r.carrier, tracking_number: r.tracking_number, tracking_url: r.lookup?.url ?? null };
+    return { ok: true, orderId, shipped: r.shipped, parcel_id: r.parcel_id, carrier: r.carrier, tracking_number: r.tracking_number, tracking_url: r.lookup?.url ?? null };
   });
 
   // sales.make-line: "Make this" for an order line, for the assistant or a

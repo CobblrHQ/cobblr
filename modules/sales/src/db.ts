@@ -138,6 +138,24 @@ export interface SalesOrderHistoryTable {
   created_at: Generated<Date>;
 }
 
+/** One box of an order (#9505): its tracking and carrier are optional until a person has them. */
+export interface SalesOrderParcelsTable {
+  id: Generated<string>;
+  order_id: string;
+  tracking_number: string | null;
+  carrier: string | null;
+  shipped_at: ColumnType<Date, Date | string | undefined, Date | string | undefined>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface SalesOrderParcelLinesTable {
+  parcel_id: string;
+  item_id: string;
+  qty: ColumnType<string, number, number>;
+}
+
 export interface SalesOrderDocumentsTable {
   id: Generated<string>;
   order_id: string;
@@ -160,6 +178,8 @@ export interface SalesDB {
   sales_payments: SalesPaymentsTable;
   sales_holds: SalesHoldsTable;
   sales_order_history: SalesOrderHistoryTable;
+  sales_order_parcels: SalesOrderParcelsTable;
+  sales_order_parcel_lines: SalesOrderParcelLinesTable;
   sales_settings: SalesSettingsTable;
 }
 

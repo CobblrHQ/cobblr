@@ -18,6 +18,7 @@ import { withOrderLock } from "./order-lock.js";
 import { drawStock } from "./stock-draw.js";
 import { orderHappened } from "./history.js";
 import { heldByOthers, releaseHoldUnderLock } from "./holds.js";
+import { recordParcelUnderLock, type ParcelResult } from "./parcels.js";
 
 export interface FulfilLine {
   id: string;
@@ -53,6 +54,8 @@ export type FulfilResult =
       complete: boolean;
       status: SalesOrderStatus;
       shipped: Array<{ line_id: string; part_id: string; qty: number }>;
+      /** The parcel "ship what is on hand" recorded for what left (#9505); absent for a plain fulfil. */
+      parcel?: Extract<ParcelResult, { ok: true }>;
     }
   | { ok: false; code: "not_enough_stock" | "nothing_to_ship" | "already_fulfilled" | "cancelled" | "not_found"; message: string; shortages: Shortage[]; doors: FulfilDoor[] };
 
@@ -183,11 +186,13 @@ export async function fulfilOrder(
   userId: string | null,
   orderId: string,
   mode: FulfilMode,
+  parcel: { trackingNumber?: string | null; carrier?: string | null } | false = {},
 ): Promise<FulfilResult> {
-  return withOrderLock(db, orgId, userId, orderId, () => fulfilOrderUnderLock(db, orgId, userId, orderId, mode));
+  return withOrderLock(db, orgId, userId, orderId, () => fulfilOrderUnderLock(db, orgId, userId, orderId, mode, parcel));
 }
 
-export async function fulfilOrderUnderLock(db: Kysely<SalesDB>, orgId: string, userId: string | null, orderId: string, mode: FulfilMode): Promise<FulfilResult> {
+/** `parcel`: what "available" records for what left. A tracking number and carrier ride on it when the person has them; `false` records none (Ship records its own). */
+export async function fulfilOrderUnderLock(db: Kysely<SalesDB>, orgId: string, userId: string | null, orderId: string, mode: FulfilMode, parcel: { trackingNumber?: string | null; carrier?: string | null } | false = {}): Promise<FulfilResult> {
   const order = await db.selectFrom("sales_orders").select(["id", "status"]).where("id", "=", orderId).executeTakeFirst();
   if (!order) return { ok: false, code: "not_found", message: "That order is not here any more.", shortages: [], doors: [] };
   const refusal = FULFILMENT_REFUSAL[order.status];
@@ -243,6 +248,16 @@ export async function fulfilOrderUnderLock(db: Kysely<SalesDB>, orgId: string, u
     .execute();
   if (status !== order.status) {
     await orderHappened(db, orgId, orderId, { kind: "status", from_status: order.status, to_status: status, by_user: userId });
+  }
+  // Only a part-fulfilment is a box of its own: when everything is out, Ship (or Record a parcel) writes the one box.
+  if (mode === "available" && parcel !== false && !complete && shipped.length > 0) {
+    const recorded = await recordParcelUnderLock(db, orgId, orderId, {
+      lines: shipped.map((s) => ({ item_id: s.line_id, qty: s.qty })),
+      trackingNumber: parcel.trackingNumber ?? null,
+      carrier: parcel.carrier ?? null,
+      userId,
+    });
+    if (recorded.ok) return { ok: true, complete, status: recorded.status, shipped, parcel: recorded };
   }
   return { ok: true, complete, status, shipped };
 }

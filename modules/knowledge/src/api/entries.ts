@@ -10,7 +10,8 @@
 
 import { Router } from "express";
 import { sql } from "kysely";
-import { likeEscape, platform, uploadOne } from "@cobblr/platform-contract";
+import { platform, textSearchWhere, unreadableFieldsOf, uploadOne } from "@cobblr/platform-contract";
+import { ENTRY_SEARCH } from "../search-columns.js";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
@@ -30,10 +31,8 @@ entriesRouter.get(
     let q = db.selectFrom("knowledge_entries").selectAll();
     if (req.query.pinned === "1" || req.query.pinned === "true") q = q.where("pinned", "=", true);
     if (typeof req.query.kind === "string" && req.query.kind) q = q.where("kind", "=", req.query.kind);
-    if (typeof req.query.q === "string" && req.query.q.trim()) {
-      const like = `%${likeEscape(req.query.q.trim())}%`;
-      q = q.where((eb) => eb.or([eb("title", "ilike", like), eb("body", "ilike", like), eb("code", "ilike", like)]));
-    }
+    const term = typeof req.query.q === "string" ? req.query.q : "";
+    if (term.trim()) q = q.where((eb) => textSearchWhere(eb, term, { ...ENTRY_SEARCH, unreadable: unreadableFieldsOf(req) }));
     // A page and the collection's count: a knowledge base past 500 entries
     // used to answer the newest 500 and nothing else.
     const page = readListPage(req.query);

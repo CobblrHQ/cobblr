@@ -455,6 +455,7 @@ function ShareMachinesModal({ slug, edgeConns, onClose }: { slug: string; edgeCo
   const [link, setLink] = useState<string | null>(null);
   const shares = useQuery({ queryKey: ["edge-shares", slug], queryFn: () => api.listEdgeShares(slug) });
   const create = useMutation({
+    // GATED-BY: ShareMachinesModal: DigifabPage opens this only from its Setup buttons drawn when useRoleAtLeast(ADMIN_TIER) (setsUp)
     mutationFn: () => api.createEdgeShare(slug, { label: label.trim(), scope, instance_ids: [...picked], ...(expiry ? { expires_in_days: Number(expiry) } : {}) }),
     onSuccess: (r) => {
       setLink(`${window.location.origin}/join-machines/${r.owner_org}/${r.token}`);
@@ -464,6 +465,7 @@ function ShareMachinesModal({ slug, edgeConns, onClose }: { slug: string; edgeCo
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't create the share"),
   });
   const revoke = useMutation({
+    // GATED-BY: ShareMachinesModal: DigifabPage opens this only from its Setup buttons drawn when useRoleAtLeast(ADMIN_TIER) (setsUp)
     mutationFn: (id: string) => api.revokeEdgeShare(slug, id),
     onSuccess: () => { toast.success("Access revoked"); void qc.invalidateQueries({ queryKey: ["edge-shares", slug] }); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't revoke"),
@@ -582,6 +584,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
   // Generic install — used by both the one-click catalog and the paste box.
   const manifestSent = useSentWords(manifest);
   const installManifest = useMutation({
+    // GATED-BY: DriversModal: DigifabPage opens this only from its Setup buttons drawn when useRoleAtLeast(ADMIN_TIER) (setsUp)
     mutationFn: (m: unknown) => api.installDigifabDriver(activeSlug, m),
     onSuccess: (d) => {
       toast.success(`Installed "${d.name}"`);
@@ -603,6 +606,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
     installManifest.mutate(parsed);
   };
   const remove = useMutation({
+    // GATED-BY: DriversModal: DigifabPage opens this only from its Setup buttons drawn when useRoleAtLeast(ADMIN_TIER) (setsUp)
     mutationFn: (key: string) => api.deleteDigifabDriver(activeSlug, key),
     onSuccess: () => { toast.success("Driver removed"); invalidate(); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -746,6 +750,7 @@ function ReassignControl({ job, slug, onDone }: { job: DigifabJob; slug: string;
     enabled: open && !!job.connection_id,
   });
   const assign = useMutation({
+    // GATED-BY: PrintQueueSection draws ReassignControl only when useCan("digifab:operate") (may.operate)
     mutationFn: () => api.assignDigifabJob(slug, job.id, deviceId),
     onSuccess: (r) => {
       toast[r.status === "sent" ? "success" : "info"](
@@ -2000,6 +2005,7 @@ function ConnectionEditModal({ connection, onClose, onSaved }: { connection: Dig
   const isMock = connection.type === "mock";
   const save = useMutation({
     mutationFn: () =>
+      // GATED-BY: ConnectionEditModal: DigifabPage sets editConn only from the Edit button drawn when useRoleAtLeast(ADMIN_TIER) (setsUp)
       api.updateDigifabConnection(activeSlug, connection.id, {
         label: label.trim(),
         base_url: baseUrl.trim(),
@@ -2268,6 +2274,7 @@ function NewJobModal({
 
   const save = useMutation({
     mutationFn: () =>
+      // GATED-BY: PrintQueueSection opens NewJobModal only from New job, drawn when useCan("digifab:operate") (may.operate)
       api.createDigifabJob(activeSlug, {
         // A pool job is unassigned — no connection; the worker picks a free member.
         connection_id: routeBy === "pool" ? undefined : connectionId,
@@ -2786,6 +2793,7 @@ export function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibrary
   const startReview = useJobStartReview(sent);
   const send = useMutation({
     mutationFn: async () => {
+      // GATED-BY: LibraryCard opens LibrarySendModal only from Send, drawn when useCan("digifab:operate") (may.send)
       if (mode === "pool") return api.sendDigifabLibrary(slug, item.id, { target_pool: poolId });
       const job = await api.createDigifabJob(slug, { connection_id: connectionId, target_device: deviceId, file_ref: item.name, file_id: item.file_id });
       refresh();
@@ -3068,6 +3076,7 @@ function FdmmImportModal({ slug, onClose, onDone }: { slug: string; onClose: () 
 
   const run = useMutation({
     mutationFn: () =>
+      // GATED-BY: FdmmImportModal: DigifabPage opens this only from its Setup buttons drawn when useRoleAtLeast(ADMIN_TIER) (setsUp)
       api.importDigifabFdmMonster(slug, { base_url: baseUrl.trim(), api_key: apiKey.trim() || undefined, mode, pool_name: poolName.trim() || "Imported farm" }),
     onSuccess: (r) => {
       toast.success(
@@ -3216,6 +3225,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
     const next: Record<string, string | null> = {};
     for (const r of rows) {
       try {
+        // GATED-BY: BulkAddModal: DigifabPage opens this only from its Setup buttons drawn when useRoleAtLeast(ADMIN_TIER) (setsUp)
         const res = await api.detectDigifabType(slug, { url: r.url, api_key: r.apiKey });
         next[r.url] = res.type;
       } catch {
@@ -3230,6 +3240,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
 
   const run = useMutation({
     mutationFn: () =>
+      // GATED-BY: BulkAddModal: DigifabPage opens this only from its Setup buttons drawn when useRoleAtLeast(ADMIN_TIER) (setsUp)
       api.bulkAddDigifabConnections(slug, {
         default_type: defaultType,
         pool_name: poolName.trim() || undefined,

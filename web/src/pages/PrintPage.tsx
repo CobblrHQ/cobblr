@@ -687,6 +687,7 @@ function PrinterModal({
           }),
     };
     try {
+      // GATED-BY: PrintPage opens PrinterModal on an existing printer only from Edit / Set type, drawn when useRoleAtLeast(ADMIN_TIER) (setsUp); a new one goes to createPrinter
       if (printer) await api.updatePrinter(slug, printer.id, body);
       else await api.createPrinter(slug, body);
       toast.success(printer ? "Printer saved" : "Printer added");

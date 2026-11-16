@@ -343,6 +343,7 @@ function singular(label: string): string {
  *  for pointing its webhook at it. Without it, the daily catch-up finds new
  *  items a day later. */
 function InstantSetup({ slug, setup }: { slug: string; setup: RecordDocuments["systems"][number]["push_setup"] & object }) {
+  // GATED-BY: DocumentsPanel draws this only when useRoleAtLeast(ADMIN_TIER) (setsUp)
   const toast = useToast();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);

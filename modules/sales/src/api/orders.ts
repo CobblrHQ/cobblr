@@ -16,7 +16,8 @@ import { arrivedEverywhere } from "@cobblr/platform-contract/day";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
-import { likeEscape, platform } from "@cobblr/platform-contract";
+import { platform, textSearchWhere, unreadableFieldsOf } from "@cobblr/platform-contract";
+import { ORDER_SEARCH } from "../search-columns.js";
 import { instanceOf, sessionUser, tenantContext, tenantDb, type SalesOrderStatus } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { orderAvailability } from "../availability.js";
@@ -27,7 +28,8 @@ import { addLine, changeLine, LineRefused, MOST_A_LINE_COSTS, MOST_ON_A_LINE, re
 import { canBeAName } from "@cobblr/platform-contract/readable-text";
 import { isSaleDay } from "../sale-day.js";
 import { cancelOrder, reinstateOrder } from "../cancel.js";
-import { shipOrder, shipPreview } from "../ship.js";
+import { notifyParcel, shipOrder, shipPreview } from "../ship.js";
+import { listParcels, parcelledByLine, recordParcel, setParcelTracking } from "../parcels.js";
 import { workOrdersFor } from "../work-orders.js";
 import { makeLine, makeIdsByWorkOrder } from "../make-line.js";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
@@ -140,10 +142,7 @@ const OrderList = z.object({
 /** The orders a list, its summary and its accountant's export all mean by the same filters, so their totals agree. */
 function matchingOrders(req: import("express").Request, f: z.infer<typeof OrderList>) {
   let q = tenantDb(req).selectFrom("sales_orders").selectAll().select(paidAsRead).where("instance", "=", instanceOf(req));
-  if (f.q) {
-    const like = `%${likeEscape(f.q)}%`;
-    q = q.where((eb) => eb.or([eb("customer_name", "ilike", like), eb("order_number", "ilike", like), eb("notes", "ilike", like)]));
-  }
+  if (f.q) q = q.where((eb) => textSearchWhere(eb, f.q, { ...ORDER_SEARCH, unreadable: unreadableFieldsOf(req) }));
   if (f.status) q = q.where("status", "=", f.status);
   if (f.paid) q = q.where(readsPaid, "=", f.paid === "true");
   if (f.customer_id) q = q.where("customer_id", "=", f.customer_id);
@@ -278,7 +277,10 @@ ordersRouter.get(
     const shop = await platform().money.currency(tenantContext(req).org.id);
     const payments = await db.selectFrom("sales_payments").selectAll().where("order_id", "=", order.id).orderBy("paid_on").orderBy("created_at").execute();
     const money = orderMoney(order, items, returns.map((r) => Number(r.refund_amount ?? 0)), shop, payments.map((p) => Number(p.amount)));
-    res.json({ ...order, items, total: sum.amount, other_currency_totals: sum.other, unpriced_lines: sum.unpriced, work_orders, availability, returns, payments, money });
+    const parcels = await listParcels(db, order.id);
+    const inParcels = await parcelledByLine(db, order.id);
+    const parcelledItems = items.map((it) => ({ ...it, qty_in_parcels: inParcels.get(it.id) ?? 0 }));
+    res.json({ ...order, items: parcelledItems, total: sum.amount, other_currency_totals: sum.other, unpriced_lines: sum.unpriced, work_orders, availability, returns, payments, money, parcels });
   }),
 );
 
@@ -856,7 +858,13 @@ ordersRouter.get(
 // ship what you have) instead of shipping parts that do not exist (#4050).
 // `{ ship: "available" }` is the second door: ship what is on hand, keep the
 // rest open.
-const FulfilBody = z.object({ ship: z.enum(["all", "available"]).default("all") });
+const FulfilBody = z.object({
+  ship: z.enum(["all", "available"]).default("all"),
+  /** With "available": the parcel that left may carry these, and the customer be told of it (a person pressed the box). */
+  tracking_number: z.string().max(120).nullable().optional(),
+  carrier: z.string().max(120).nullable().optional(),
+  email_customer: z.boolean().optional(),
+});
 // AI-ACTION: sales:fulfill-order
 ordersRouter.post(
   "/:id/fulfill",
@@ -877,12 +885,15 @@ ordersRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
       return;
     }
-    const result = await fulfilOrder(db, ctx.org.id, session?.id ?? null, order.id, body.data.ship);
+    const result = await fulfilOrder(db, ctx.org.id, session?.id ?? null, order.id, body.data.ship, { trackingNumber: body.data.tracking_number ?? null, carrier: body.data.carrier ?? null });
     if (!result.ok) {
       const status = result.code === "not_found" ? 404 : 409;
       res.status(status).json({ error: { code: result.code, message: result.message }, shortages: result.shortages, doors: result.doors });
       return;
     }
+    const told = result.parcel && body.data.email_customer && session?.id
+      ? await notifyParcel(db, ctx.org.id, order.id, { shop: ctx.org.name, carrier: result.parcel.carrier, trackingNumber: result.parcel.tracking_number, lookup: null, part: result.parcel.shipped ? null : result.parcel.lines.map((l) => `${l.qty} ${l.description ?? "item"}`).join(", "), pressedBy: session.id })
+      : null;
     const updated = await db.selectFrom("sales_orders").selectAll().where("id", "=", order.id).executeTakeFirstOrThrow();
     const decremented = result.shipped.map((s) => ({ part_id: s.part_id, qty: s.qty }));
     await platform().events.emit("sales.order.fulfilled", {
@@ -891,7 +902,63 @@ ordersRouter.post(
       decremented,
       complete: result.complete,
     });
-    res.json({ order: updated, decremented, complete: result.complete });
+    res.json({ order: updated, decremented, complete: result.complete, parcel: result.parcel ?? null, ...(told ? { email: told.email, notice: told.notice } : {}) });
+  }),
+);
+
+// The order's parcels: one box each, with its tracking, carrier, date and what it carries (#9505).
+// AI-REACH: a read of what already happened; the order's own detail carries it
+ordersRouter.get(
+  "/:id/parcels",
+  asyncHandler(async (req, res) => {
+    if (!(await orderHere(req))) return void res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+    res.json({ items: await listParcels(tenantDb(req), req.params.id!) });
+  }),
+);
+
+const ParcelBody = z.object({
+  tracking_number: z.string().trim().max(120).nullable().optional(),
+  carrier: z.string().max(120).nullable().optional(),
+  lines: z.array(z.object({ line_id: z.string().uuid(), qty: z.number().int().positive() })).max(200).optional(),
+  email_customer: z.boolean().optional(),
+});
+// AI-REACH: action sales:add-parcel
+ordersRouter.post(
+  "/:id/parcels",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "sales:add-parcel"))) return;
+    const body = ParcelBody.safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    if (!(await orderHere(req))) return void res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+    const r = await recordParcel(db, ctx.org.id, req.params.id!, {
+      lines: body.data.lines?.map((l) => ({ item_id: l.line_id, qty: l.qty })) ?? null,
+      trackingNumber: body.data.tracking_number ?? null,
+      carrier: body.data.carrier ?? null,
+      userId: session?.id ?? null,
+    });
+    if (!r.ok) return void res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+    const told = body.data.email_customer && session?.id
+      ? await notifyParcel(db, ctx.org.id, req.params.id!, { shop: ctx.org.name, carrier: r.carrier, trackingNumber: r.tracking_number, lookup: null, part: r.shipped ? null : r.lines.map((l) => `${l.qty} ${l.description ?? "item"}`).join(", "), pressedBy: session.id })
+      : null;
+    res.status(r.created ? 201 : 200).json({ ...r, ...(told ? { email: told.email, notice: told.notice } : {}) });
+  }),
+);
+
+const ParcelTracking = z.object({ tracking_number: z.string().trim().min(1).max(120), carrier: z.string().max(120).nullable().optional() });
+// AI-REACH: action sales:add-parcel (parcel_id)
+ordersRouter.patch(
+  "/:id/parcels/:parcelId",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "sales:add-parcel"))) return;
+    const body = ParcelTracking.safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    if (!(await orderHere(req))) return void res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+    const r = await setParcelTracking(tenantDb(req), tenantContext(req).org.id, req.params.id!, req.params.parcelId!, { trackingNumber: body.data.tracking_number, carrier: body.data.carrier ?? null, userId: sessionUser(req)?.id ?? null });
+    if (!r.ok) return void res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+    res.json(r);
   }),
 );
 

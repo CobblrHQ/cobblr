@@ -6,6 +6,7 @@ import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { type Kysely } from "kysely";
 import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { SalesDB } from "../db.js";
+import { CUSTOMER_SEARCH, ORDER_SEARCH } from "../search-columns.js";
 import { holdsImpossibleLine, paidAsRead } from "../reads-paid.js";
 
 let registered = false;
@@ -27,7 +28,7 @@ export function registerSalesResolvers(): void {
   platform().entities.registerListResolver("sales:customer", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<SalesDB>;
     let q = db.selectFrom("sales_customers").selectAll();
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "email", "phone", "address", "notes"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { ...CUSTOMER_SEARCH, unreadable: query.unreadable })!);
     const rows = (await groupListRows(db, q.orderBy("name"), query)) ?? await q.orderBy("name").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
     return { items: rows.map((row) => ({ kind: "sales:customer", id: row.id, title: row.name, detailUrl: `/sales/customers/${row.id}`, fields: { ...row } as Record<string, unknown> })) };
   });
@@ -73,7 +74,7 @@ async function listOrders(orgId: string, query: EntityListQuery, instance: strin
   let q = db.selectFrom("sales_orders").selectAll().where("instance", "=", instance);
   const status = query.filter?.status;
   if (typeof status === "string") q = q.where("status", "=", status as never);
-  if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["customer_name", "order_number", "notes", "shipping_address"], json: ["metadata"] })!);
+  if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { ...ORDER_SEARCH, unreadable: query.unreadable })!);
   const rows = (await groupListRows(db, q.orderBy("order_date", "desc"), query)) ?? await q.orderBy("order_date", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
   // Read apart, as a grouped list groups this query and a second "paid" column would be ambiguous there.
   const ids = rows.filter((r) => r.paid).map((r) => r.id);

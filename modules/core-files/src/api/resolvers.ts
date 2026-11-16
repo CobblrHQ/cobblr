@@ -16,7 +16,7 @@ import { sameBytes } from "./intake.js";
 import { notePhotoSource, photoSourceOf } from "./photo-source.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
-import { registerRowHistoryWriter, likeEscape, platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { registerRowHistoryWriter, platform, textSearchWhere, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { CoreFilesDB, FileVariants } from "../db.js";
 import { registerDocumentImageReader } from "@cobblr/platform-contract/document-images";
 import { extractPdfImages } from "./pdf-images.js";
@@ -64,7 +64,7 @@ export function registerFileResolvers(): void {
     // A copy that repeats another file's bytes is that file: listed once.
     let q = db.selectFrom("core_files_files").selectAll().where("deleted_at", "is", null).where("same_as", "is", null);
     const text = (query.q ?? "").trim();
-    if (text) q = q.where("filename", "ilike", `%${likeEscape(text)}%`);
+    if (text) q = q.where((eb) => textSearchWhere(eb, text, { text: ["filename"], unreadable: query.unreadable }));
     const rows = (await groupListRows(db, q .orderBy("created_at", "desc"), query)) ?? await q
       .orderBy("created_at", "desc")
       .limit(Math.min(query.limit ?? 50, 200))

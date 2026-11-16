@@ -2,7 +2,7 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { readListPage, pagedAnswer, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
-import { likeEscape } from "@cobblr/platform-contract";
+import { textSearchWhere, unreadableFieldsOf } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../../../db.js";
 import { asyncHandler, requireRole } from "../../../api/util.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
@@ -21,7 +21,7 @@ productionRouter.get("/:collection", asyncHandler(async (req, res) => {
  if (collection === "units") {
   const q = z.string().max(160).parse(req.query.q ?? "");
   let query = db.selectFrom("digifab_test_units").selectAll().select(sql<string>`count(*) over()`.as(TOTAL_COLUMN));
-  if (q) query = query.where("serial", "ilike", `%${likeEscape(q)}%`);
+  if (q) query = query.where((eb) => textSearchWhere(eb, q, { text: ["serial"], unreadable: unreadableFieldsOf(req) }));
   const rows = await query.orderBy("created_at", "desc").orderBy("unit_id", "asc").limit(page.limit).offset(page.offset).execute(); return void res.json(pagedAnswer(rows, page));
  }
  if (collection === "runs") {

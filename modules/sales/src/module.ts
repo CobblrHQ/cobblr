@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.4.4",
+  version: "0.5.0",
   displayName: "Sales",
   description:
     "Customers and the orders they place; fulfilling an order takes what you sold out of stock.",
@@ -21,6 +21,8 @@ export default defineModule({
     onBoot: async () => {
       const { registerSaleRecordsHeal } = await import("./heal-sale-records.js");
       registerSaleRecordsHeal();
+      const { registerShippedParcelsHeal } = await import("./heal-shipped-parcels.js");
+      registerShippedParcelsHeal();
     },
   },
 
@@ -482,6 +484,25 @@ export default defineModule({
           qty: { label: "How many", type: "number", oneOf: "change" },
           unit_price: { label: "Price each", type: "number", oneOf: "change" },
           description: { label: "What it says", type: "text", oneOf: "change" },
+        },
+      },
+      {
+        group: "more",
+        id: "sales:add-parcel",
+        changes: "records",
+        runBy: "member",
+        examples: ["the first two mugs went out with tracking 1Z999AA10123456784", "add the tracking number to that parcel"],
+        label: "Record a parcel",
+        description: "Record one parcel of a sales order: the stock already taken out that is not in a box yet (or the lines and counts named), with its tracking number and carrier when there is one. The same tracking number twice adds to that parcel. A parcel with no tracking number takes one later through parcel_id. The order reads shipped once every line is in a parcel. Never emails the customer: a person does that from the order. Args: { order_id, tracking_number?, carrier?, lines?, parcel_id? }.",
+        appliesTo: { kinds: ["sales:order"] },
+        invokeHandler: "sales.add-parcel",
+        userInvokable: true,
+        argsSchema: {
+          order_id: { label: "Sales order id", type: "text" },
+          tracking_number: { label: "The parcel's tracking number", type: "text" },
+          carrier: { label: "The carrier, if the number does not say", type: "text" },
+          lines: { label: "The lines in this parcel, each { line_id, qty }; left out, all stock taken out and not yet in a parcel", type: "json" },
+          parcel_id: { label: "To give an existing parcel its tracking number, which parcel", type: "text" },
         },
       },
     ],

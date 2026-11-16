@@ -66,6 +66,9 @@ import { registerHoldOrderAction } from "./hold-order-action.js";
 import { registerReleaseHoldAction } from "./release-hold-action.js";
 import { registerHoldSweep } from "../holds.js";
 import { registerSalesDashboardReads } from "../dashboard-reads.js";
+import { registerAddParcelAction } from "./add-parcel-action.js";
+
+registerAddParcelAction();
 
 registerChangeLineAction();
 registerReturnLineAction();

@@ -8,7 +8,8 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
-import { likeEscape, platform } from "@cobblr/platform-contract";
+import { platform, textSearchWhere, unreadableFieldsOf } from "@cobblr/platform-contract";
+import { CUSTOMER_SEARCH } from "../search-columns.js";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -28,7 +29,7 @@ const CustomerCreate = z.object({
 const CustomerUpdate = CustomerCreate.partial();
 
 /** A page of customers, by name, with how many there are. `q` searches the
- *  name, the email and the phone. */
+ *  way Search does (CUSTOMER_SEARCH). */
 customersRouter.get(
   "/",
   asyncHandler(async (req, res) => {
@@ -44,10 +45,7 @@ customersRouter.get(
           .whereRef("o.customer_id", "=", "c.id").as("order_count"),
         sql<string>`count(*) over()`.as(TOTAL_COLUMN),
       ]);
-    if (term) {
-      const like = `%${likeEscape(term)}%`;
-      q = q.where((eb) => eb.or([eb("c.name", "ilike", like), eb("c.email", "ilike", like), eb("c.phone", "ilike", like)]));
-    }
+    if (term) q = q.where((eb) => textSearchWhere(eb, term, { ...CUSTOMER_SEARCH, unreadable: unreadableFieldsOf(req) }));
     const rows = await q.orderBy("c.name").orderBy("c.id").limit(page.limit).offset(page.offset).execute();
     const answer = pagedAnswer(rows, page);
     res.json({ ...answer, items: answer.items.map((c) => ({ ...c, order_count: Number(c.order_count ?? 0) })) });

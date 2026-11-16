@@ -18,6 +18,7 @@ import {
 import { OrderDocuments } from "./documents.js";
 import { ReturnsPanel } from "./returns.js";
 import { PaymentsPanel } from "./payments.js";
+import { ParcelsPanel } from "./parcels.js";
 import { HoldPanel } from "./holds.js";
 import { SalesSummary } from "./summary.js";
 import { IntakeSettings } from "./intake.js";
@@ -610,7 +611,11 @@ export function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: Sale
                       </span>
                     )}
                     {!fulfilled && it.part_id && Number(it.qty_fulfilled) > 0 && (
-                      <span className="text-xs text-moss-700 dark:text-moss-300 tabular-nums">{Number(it.qty_fulfilled)} shipped</span>
+                      <span className="text-xs text-moss-700 dark:text-moss-300 tabular-nums">
+                        {Number(it.qty_in_parcels ?? 0) > 0 && `${Number(it.qty_in_parcels)} shipped`}
+                        {Number(it.qty_in_parcels ?? 0) > 0 && Number(it.qty_fulfilled) > Number(it.qty_in_parcels ?? 0) && ", "}
+                        {Number(it.qty_fulfilled) > Number(it.qty_in_parcels ?? 0) && `${Number(it.qty_fulfilled) - Number(it.qty_in_parcels ?? 0)} taken from stock`}
+                      </span>
                     )}
                     {it.part_id && (() => {
                       const wo = (d.work_orders ?? []).find((w) => w.output_part_id === it.part_id && w.status !== "cancelled");
@@ -700,6 +705,7 @@ export function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: Sale
                 Shipped{d.carrier ? ` with ${d.carrier}` : ""}{d.shipped_at ? ` on ${new Date(d.shipped_at).toLocaleDateString()}` : ""}. Tracking number <span className="font-mono text-content dark:text-mortar-100">{d.tracking_number}</span>
               </div>
             )}
+            <ParcelsPanel api={api} order={d} />
             {short && !fulfilled && (
               <div role="alert" className="rounded border border-ember-200 dark:border-ember-700 bg-ember-50 dark:bg-ember-900/30 px-3 py-2.5 space-y-2">
                 <p className="text-sm text-content dark:text-mortar-100">{short.message}</p>
@@ -943,9 +949,10 @@ export function ShipDialog({ api, orderId, onClose, onShipped }: { api: SalesApi
     // pressing Ship inside the 400 ms beat shipped the previous (empty) number (#7988).
     mutationFn: () => api.shipOrder(orderId, { tracking_number: typed.trim() || null, carrier: null, email_customer: emailIt && !!p?.email.available }),
     onSuccess: (r) => {
-      if (r.email.asked && r.email.sent && r.email.status === "sent") toast.success(`Shipped. ${r.email.to} was emailed.`);
+      if (r.email.asked && r.email.sent && r.email.status === "sent") toast.success(`${r.shipped === false ? "Parcel recorded" : "Shipped"}. ${r.email.to} was emailed.`);
       else if (r.email.asked && r.email.sent) toast.error(`Shipped, but ${r.email.to} cannot receive mail, so no email went.`);
       else if (r.email.asked && !r.email.sent) toast.error(`Shipped, but the email did not go: ${r.email.reason}`);
+      else if (r.shipped === false) toast.success("Parcel recorded. The rest of the order is still open.");
       else toast.success("Shipped");
       onShipped();
     },

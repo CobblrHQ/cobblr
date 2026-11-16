@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-files",
-  version: "0.9.0",
+  version: "0.9.1",
   displayName: "Files",
   description:
     "Keep photos, manuals and other files with the things they belong to.",

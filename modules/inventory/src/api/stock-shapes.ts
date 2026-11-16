@@ -2,7 +2,7 @@ import { Router } from "express";
 import { isGone } from "./action-handlers.js";
 import { z } from "zod";
 import { sql, type Kysely, type Selectable } from "kysely";
-import { ActionRefusal, likeEscape, platform, readJsonArg, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { ActionRefusal, platform, readJsonArg, textSearchWhere, type ActionInvokeContext } from "@cobblr/platform-contract";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { pagedAnswer, readListPage } from "@cobblr/platform-contract/list-page";
 import { tenantDb, tenantContext, sessionUser, type InventoryDB } from "../db.js";
@@ -51,7 +51,7 @@ async function listStock(db: Kysely<InventoryDB>, asked: unknown) {
   const q = StockList.parse(asked);
   const { limit, offset } = readListPage(asked);
   let query = db.selectFrom("inventory_parts as p").leftJoin("inventory_stock as s", "s.part_id", "p.id").selectAll("p").where("p.archived", "=", false).where("p.state", "=", "active");
-  if (q.q) query = query.where("p.name", "ilike", `%${likeEscape(q.q)}%`);
+  if (q.q) query = query.where((eb) => textSearchWhere(eb, q.q, { text: ["p.name"], unreadable: undefined }));
   if (q.shape) query = query.where(sql<string>`coalesce(s.shape, case when p.metadata ? 'laser_sheet' or (p.metadata ? 'material' and p.metadata ? 'width_mm') then 'sheet' else 'count' end)`, "=", q.shape);
   const [rows, count, loaded] = await Promise.all([
     query.orderBy("p.name").orderBy("p.id").limit(limit).offset(offset).execute(),

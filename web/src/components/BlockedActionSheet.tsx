@@ -53,7 +53,6 @@ export function BlockedActionSheet() {
 
   return (
     <>
-      {/* GATED-BY: the server's own answer for this person (blocked.selfApply), the gate a module's switch meets */}
       {raised && raised.blocked.selfApply && <TurnOnSheet raised={raised} onClose={clearBlockedAction} />}
       {raised && !raised.blocked.selfApply && <AskSheet raised={raised} onClose={clearBlockedAction} />}
       {resumeId && !raised && <ResumeSheet requestId={resumeId} />}
@@ -68,6 +67,7 @@ export function BlockedActionSheet() {
  *  It used to be a sentence about Configuration → Modules and a Close button,
  *  with the order line's shortage left for them to find again (#5865). */
 function TurnOnSheet({ raised, onClose }: { raised: RaisedBlock; onClose: () => void }) {
+  // GATED-BY: BlockedActionSheet draws this only on the server's own answer for this person (blocked.selfApply), the gate a module's switch meets
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const qc = useQueryClient();

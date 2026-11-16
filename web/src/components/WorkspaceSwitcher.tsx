@@ -499,6 +499,7 @@ export function RenameWorkspaceModal({
       const body: { name?: string; slug?: string } = {};
       if (org && name.trim() && name.trim() !== org.name) body.name = name.trim();
       if (org && advanced && slug.trim() && slug.trim() !== displaySlug(org.slug)) body.slug = slug.trim();
+      // GATED-BY: WorkspaceSwitcher opens this only from its owned rows (org.role === "owner"), the route's owner floor
       return api.renameOrg(org!.slug, body);
     },
     onSuccess: async (r) => {
