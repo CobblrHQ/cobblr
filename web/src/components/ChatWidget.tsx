@@ -4,7 +4,7 @@
 // messages render markdown; the input auto-grows. Portals to <body> so the
 // header's backdrop-blur can't trap its position:fixed (CLAUDE.md modal note).
 
-import { undoAsk, undoTarget, undoneSaid } from "../lib/undo-target";
+import { AFTER_A_FAILED_TURN, undoAsk, undoTarget, undoneSaid } from "../lib/undo-target";
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { mayRead } from "../lib/acting-role";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -63,6 +63,7 @@ import { ContextChip, PopoverLayer, useEscapeToClose, useMenuFocus, useCloseOnPa
 import { ServiceJobCard } from "./ServiceJobCard";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { personalKeptOff, receiptReadSaid, type ReceiptReadResult } from "../lib/attachment-said";
 
 // Chat history is cached per-workspace in localStorage so a page refresh doesn't
 // wipe the conversation: every message as it was shown, cards and their state
@@ -1060,18 +1061,42 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   async function send(spoken?: string) {
     const text = (spoken ?? input).trim();
     if ((!text && !documentFile) || busy) return;
+    // What the attachment became, said in the conversation before the words
+    // sent with it, so Cobb answers "file that receipt" knowing it is there.
+    const attached: Msg[] = [];
     if (documentFile) {
       const generation = documentGeneration.current;
+      const file = documentFile;
       setBusy(true); setError(null);
       try {
-        const read = await api.readPersonalDocument(activeSlug, documentFile);
+        const read = await api.readPersonalDocument(activeSlug, file);
         if (generation !== documentGeneration.current) return;
-        if (read.kind !== "registration" && !read.renewalType) { setError("This attachment is not a registration renewal. Use Scan for other documents."); return; }
-        raisePersonalDocument({ orgSlug: activeSlug, read, file: documentFile });
-        setDocumentFile(null); setInput("");
-      } catch (error) { if (generation === documentGeneration.current) setError(error instanceof Error ? error.message : "The document could not be read."); }
-      finally { setBusy(false); }
-      return;
+        if (read.kind === "registration" || read.renewalType) {
+          raisePersonalDocument({ orgSlug: activeSlug, read, file });
+          setDocumentFile(null); setInput("");
+          return;
+        }
+        // Anything else is not refused: "This attachment is not a
+        // registration renewal" met a receipt, and the typed "File that
+        // receipt." sat unsent beside it (#9517). An ordinary document is
+        // read as a receipt into the scan inbox, the scanner's own door; a
+        // personal one is kept off the shared files and said so.
+        setDocumentFile(null);
+        if (read.privacy === "personal") {
+          attached.push({ role: "assistant", content: personalKeptOff(file.name) });
+        } else {
+          const stored = await api.uploadFile(activeSlug, file);
+          const r = await api.scanReceipt(activeSlug, stored.id, { origin: "upload" });
+          attached.push({ role: "assistant", content: receiptReadSaid(file.name, r as ReceiptReadResult) });
+        }
+      } catch (error) {
+        if (generation === documentGeneration.current) setError(error instanceof Error ? error.message : "The document could not be read.");
+        return;
+      } finally { setBusy(false); }
+      if (!text) {
+        setMessages((prev) => [...prev, ...attached]);
+        return;
+      }
     }
     // Past what the no-AI path reads, say so and keep the words to shorten,
     // rather than send them to be refused (#7599).
@@ -1099,6 +1124,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     setError(null);
     const next: Msg[] = [
       ...messages,
+      ...attached,
       { role: "user", content: text, ...(selection ? { sentWith: selection } : {}) },
     ];
     setMessages(next);
@@ -1220,16 +1246,27 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           setBusy(false);
           return;
         }
+        if (undoAct && target.kind === "failed") {
+          // The newest thing is a turn that did not go through: "that" is it,
+          // never an older change behind it (#9509).
+          setMessages((prev) => [...prev, { role: "assistant", content: AFTER_A_FAILED_TURN }]);
+          setBusy(false);
+          return;
+        }
         if (undoAct && target.kind === "change") {
           let ok = 0;
+          const undoSaid: string[] = [];
           for (const id of undoAct.ledger_ids) {
             const u = await api.aiChatUndo(activeSlug, id).catch(() => ({ ok: false, message: "" }));
-            if (u.ok) ok++;
+            if (u.ok) {
+              ok++;
+              if (typeof u.message === "string") undoSaid.push(u.message);
+            }
           }
           if (ok) workspaceChanged();
           setMessages((prev) => [
             ...prev.map((m, i) => (i === target.index ? { ...m, undone: true } : m)),
-            { role: "assistant", content: undoneSaid(target.said, ok, undoAct.ledger_ids.length) },
+            { role: "assistant", content: undoneSaid(target.said, ok, undoAct.ledger_ids.length, undoSaid) },
           ]);
           setBusy(false);
           return;
@@ -2622,7 +2659,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
               A highlight is gone the moment the caret enters this box, so it is
               captured as a chip instead of being read back at send-time. */}
           <div ref={composer} className="border-t border-line dark:border-slate-700 p-3 flex flex-col gap-2 shrink-0">
-            <div className="flex flex-wrap items-center gap-2 text-sm"><button type="button" className="text-accent underline" disabled={busy} onClick={() => documentInput.current?.click()}>Attach personal document</button><input ref={documentInput} type="file" className="sr-only" aria-label="Attach personal document" accept="application/pdf,image/*" onChange={event => { setDocumentFile(event.target.files?.[0] ?? null); event.target.value = ""; }} />{documentFile && <span className="min-w-0 break-words">{documentFile.name} <button type="button" className="underline" onClick={() => setDocumentFile(null)}>Remove</button></span>}</div>
+            <div className="flex flex-wrap items-center gap-2 text-sm"><button type="button" className="text-accent underline" disabled={busy} onClick={() => documentInput.current?.click()}>Attach a receipt or document</button><input ref={documentInput} type="file" className="sr-only" aria-label="Attach a receipt or document" accept="application/pdf,image/*" onChange={event => { setDocumentFile(event.target.files?.[0] ?? null); event.target.value = ""; }} />{documentFile && <span className="min-w-0 break-words">{documentFile.name} <button type="button" className="underline" onClick={() => setDocumentFile(null)}>Remove</button></span>}</div>
             {selection && (
               // INSIDE the box, at its top. Three attempts got here:
               //   a row of its own above the composer — a second divider and a

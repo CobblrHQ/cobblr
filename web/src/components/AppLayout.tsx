@@ -206,6 +206,11 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       // Never above the status bar: a phone's bar hidden on the way down
       // leaves 0 here, and a sticky heading then sat under the clock (#7827).
       document.documentElement.style.setProperty("--app-header-bottom", `max(var(--top-edge, 0px), ${bottom}px)`);
+      // Its whole height, hidden or not: a control Tab moves focus to is
+      // scrolled clear of it (index.css, scroll-padding-top). A phone's bar
+      // hidden on the way down comes back on the way up, over what Tab just
+      // brought to the top, so the hidden bar's 0 would not do (#9501).
+      document.documentElement.style.setProperty("--app-header-height", `calc(var(--top-chrome-height, 0px) + ${el.offsetHeight}px)`);
       if (trackHideTop) setHideTop(bottom);
     };
     const update = () => { if (!queued) queued = requestAnimationFrame(measure); };
@@ -252,6 +257,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       window.removeEventListener("scroll", onScroll);
       el.removeEventListener("transitionend", update);
       document.documentElement.style.removeProperty("--app-header-bottom");
+      document.documentElement.style.removeProperty("--app-header-height");
     };
   }, [trackHideTop]);
   // And the destination is known the moment the bar is told to move: hidden

@@ -10,7 +10,7 @@ import { Plus, X } from "lucide-react";
 import { useInventory } from "./context";
 import { LowStockAlerts } from "./LowStockAlerts.js";
 import { InventoryApiError, type InvFieldDef } from "./api";
-import { NounChoiceButtons, OnceQuiet, changeWorkspaceShape, nounChoiceHeading, usePageTitle, MutationError } from "@cobblr/platform-web";
+import { NounChoiceButtons, OnceQuiet, changeWorkspaceShape, nounChoiceHeading, usePageTitle, MutationError, useFieldPresentation } from "@cobblr/platform-web";
 
 export function SettingsPage() {
   usePageTitle("Inventory settings");
@@ -181,6 +181,7 @@ function FieldsCard() {
   const fields = (defs.data?.items ?? [])
     .filter((d) => d.type !== "computed")
     .sort((a, b) => a.position - b.position);
+  const fp = useFieldPresentation(entityKind);
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
@@ -201,7 +202,7 @@ function FieldsCard() {
         {/* Categories sit IN this list, not in a card of their own: they are the
             Category field's options as far as anyone using this page is
             concerned, and two panels for one idea read as two ideas (reported 2026-08-01). They keep their own API + slugs underneath. */}
-        <CategoryRow />
+        {fp.ready && !fp.hidden("category") && <CategoryRow />}
         {fields.map((f) => (
           <FieldRow key={f.id} def={f} />
         ))}

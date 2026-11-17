@@ -107,9 +107,12 @@ export function codeGroupOf(
 ): { key: string; label: string } {
   if (groupField !== "instance") return groupValueOf(baseKind, groupField, ent.fields);
   const fromField = typeof ent.fields.instance === "string" && ent.fields.instance.trim() ? ent.fields.instance.trim() : null;
-  const collection = ent.instance || kindInstance || fromField;
-  const { key, label } = groupValueOf(baseKind, "instance", { instance: collection ?? "" });
   const module = baseKind.split(":")[0] ?? baseKind;
+  const named = ent.instance || kindInstance || fromField;
+  // The default collection carries the module's own name (inventory's parts
+  // say instance "inventory"); it is the kind-wide line, not a list of its own.
+  const collection = named && named !== module ? named : null;
+  const { key, label } = groupValueOf(baseKind, "instance", { instance: collection ?? "" });
   return { key, label: (collection && collectionName.get(`${module}|${collection}`)) || label };
 }
 

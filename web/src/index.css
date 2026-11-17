@@ -5,6 +5,22 @@
 @tailwind utilities;
 
 @layer base {
+  /* A control Tab moves focus to is scrolled clear of the top bar. The bar is
+     fixed and the browser brought a control to the very top of the window,
+     under it (#9501); its whole height, hidden or not, since a phone's bar
+     comes back on the way up. The bottom is the dock's (bottom-dock.ts). */
+  html {
+    scroll-padding-top: var(--app-header-height, 0px);
+  }
+
+  /* A file input or a box drawn by its label (sr-only, the label is what
+     shows) takes focus out of sight: the label draws the mark instead. Tab
+     onto Home's "Bring a file" showed nothing at all (#9500). */
+  label:has(input.sr-only:focus-visible) {
+    outline: 2px solid rgb(var(--c-accent));
+    outline-offset: 2px;
+  }
+
   /* An unticked box is an outline with nothing in it. In a dark page an iPhone
      draws it solid black, which reads as filled (#9269). Ticked stays the
      system's, in the colour its accent-* class names. :where keeps the size

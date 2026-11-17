@@ -20,7 +20,8 @@ import { resolveCreatePath,
 } from "@cobblr/workspace-tools";
 import { renderKindLines, anyHiddenFields, HIDDEN_FIELDS_RULE } from "./kind-lines.js";
 import { renderEntityActions, renderWorkspaceActions, RAIL_LOOKUP_NOTE, type RailMode } from "./action-rail.js";
-import { appSurfacePrompt } from "./app-surface.js";
+import { appSurfacePrompt, featuresOffPrompt } from "./app-surface.js";
+import type { AppModuleLike } from "@cobblr/platform-contract/app-catalog";
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { pageContextLine } from "../page-context.js";
 import { selectionLine } from "../selection-line.js";
@@ -77,6 +78,23 @@ export interface PromptOptions {
   consent?: { read_tools: boolean; write_mode: "off" | "ask" | "auto" };
   /** What the no-AI path would have done with this sentence, if anything. */
   suggestion?: { template: string; summary: string; operations: number; note?: string; leftHeading?: string; also?: Array<{ title: string }> };
+  /** The person's own calendar day (YYYY-MM-DD), from their client's clock. */
+  today?: string;
+}
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/** The day it is for the person, as a sentence. A model has no clock: asked
+ *  for "due back Friday" with nothing to go on, it worked from the day it
+ *  guessed (March 5, 2026, on November 17) and proposed a loan due back in
+ *  2025 (#9507). */
+export function todayLine(today?: string): string {
+  const m = today ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(today) : null;
+  if (!m) return "";
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== today) return "";
+  return `\n\nTODAY is ${WEEKDAYS[d.getUTCDay()]}, ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} (${today}), the person's own day. Work out every date they say in words ("Friday", "next week", "in a month", "this week") from it, never from what you remember.`;
 }
 
 /** The consent the user has set for this chat, as a sentence. */
@@ -100,7 +118,7 @@ export function consentLine(prefs?: { read_tools: boolean; write_mode: "off" | "
  *  copies of a situational rule is how the bench ended up measuring a prompt
  *  the app does not send. */
 export function situationalSuffix(opts: PromptOptions): string {
-  return `${pageContextLine(opts.context)}${selectionLine(opts.selection)}${consentLine(opts.consent)}${
+  return `${todayLine(opts.today)}${pageContextLine(opts.context)}${selectionLine(opts.selection)}${consentLine(opts.consent)}${
     opts.suggestion ? suggestionLine(opts.suggestion) : ""
   }`;
 }
@@ -174,9 +192,13 @@ export async function buildSystemPromptBlocks(
   // does not have is not somewhere it can go, and naming it would be the
   // original bug wearing a badge.
   let enabledModules: Set<string> | undefined;
+  let featuresOff = "";
   try {
     const mods = await w.get("/modules");
     const items = (mods.body.items as Array<{ name?: string; module_name?: string; enabled?: boolean }> | undefined) ?? [];
+    featuresOff = featuresOffPrompt(
+      items.filter((m): m is AppModuleLike => typeof m.name === "string" && typeof (m as { displayName?: unknown }).displayName === "string" && typeof m.enabled === "boolean"),
+    );
     const names = items
       .filter((m) => m.enabled !== false)
       .map((m) => m.module_name ?? m.name)
@@ -271,7 +293,7 @@ ${TOOL_USE_RULES}`;
   const workspace = `THIS WORKSPACE is called "${w.orgName}".
 
 ${appSurfacePrompt(enabledModules)}
-
+${featuresOff ? `\n${featuresOff}\n` : ""}
 ENTITY KINDS in this workspace:
 ${kindLines}
 ${anyHiddenFields(kinds) ? HIDDEN_FIELDS_RULE : ""}

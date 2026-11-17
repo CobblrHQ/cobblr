@@ -8,7 +8,10 @@ import { landingPath } from "../lib/landing-path";
  *  now" button. Production would deliver via email and this panel
  *  just shows the "check your inbox" confirmation. */
 /** `next`: the page the link lands on (the item they scanned), when there is one. */
-export function MagicLinkPanel({ email, next }: { email: string; next?: string | null }) {
+/** `reaches`: false when the server says no link it mints reaches anyone
+ *  (/auth/config's email_links "none", #9488); the page that read the config
+ *  hands it down, and absent is the page as it always was. */
+export function MagicLinkPanel({ email, next, reaches = true }: { email: string; next?: string | null; reaches?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [devLink, setDevLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +54,9 @@ export function MagicLinkPanel({ email, next }: { email: string; next?: string |
       setBusy(false);
     }
   }
+
+  // A box that cannot send email cannot send this link either (#9488).
+  if (!reaches) return null;
 
   return (
     <div className="mt-4 bg-surface/60 dark:bg-slate-900/40 border border-line dark:border-slate-700 rounded-xl p-4 space-y-3">

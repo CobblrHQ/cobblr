@@ -26,6 +26,9 @@ export interface AuthConfigShape {
   demo_signin: { email: string; password: string; note: string | null } | null;
   /** The managed service (not a self-hosted install). */
   hosted: boolean;
+  /** What becomes of a sign-in or reset link: emailed, shown on the page, or
+   *  reaching nobody (a box with no email sender, #9488). Unknown on an older api. */
+  email_links: "sent" | "inline" | "none" | null;
 }
 
 export type AuthConfigState =
@@ -52,6 +55,7 @@ export function useAuthConfig(): AuthConfigState & { retry: () => void } {
             captcha: c.captcha ?? null,
             hosted: c.hosted === true,
             demo_signin: c.demo_signin ?? null,
+            email_links: c.email_links ?? null,
           },
         });
       })

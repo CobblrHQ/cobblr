@@ -713,8 +713,7 @@ const AttachBody = z.object({
   reason: optionalField(z.enum(SCAN_COUNT_REASONS)),
 });
 
-// AI-REACH: exempt — attaches the bytes of a file a person uploads with it;
-// the assistant files paperwork it holds through core-scan:attach-paperwork
+// AI-TOOL: change_scan_item
 attachRouter.post(
   "/inbox/:id/attach",
   asyncHandler(async (req, res) => {

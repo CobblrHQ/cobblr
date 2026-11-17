@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Lock } from "lucide-react";
-import { downloadBlob, raisePersonalDocument, useConfirm, useFieldDraft, useLater, usePageTitle, usePasteImage, useToast, OnceQuiet } from "@cobblr/platform-web";
+import { MovedUnderNote, downloadBlob, raisePersonalDocument, useConfirm, useFieldDraft, useLater, usePageTitle, usePasteImage, useToast, OnceQuiet } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { api, type VaultEvent, type VaultFile, type VaultFolder } from "../lib/api";
@@ -338,6 +338,7 @@ function OwnerPanel({ folder, onChanged, onDeleted }: { folder: VaultFolder & { 
           className="flex flex-wrap gap-2"
           onSubmit={async (e) => {
             e.preventDefault();
+            if (!name.mayWrite()) return;
             try {
               await api.vaultUpdateFolder(activeSlug, folder.id, { name: name.draft.trim() });
               name.committed(name.draft);
@@ -351,6 +352,7 @@ function OwnerPanel({ folder, onChanged, onDeleted }: { folder: VaultFolder & { 
           <label className="sr-only" htmlFor="vault-folder-name">Folder name</label>
           <input id="vault-folder-name" value={name.draft} onChange={(e) => name.setDraft(e.target.value)} className="flex-1 min-w-0 rounded-md border border-line bg-surface px-3 py-2 text-sm" />
           <button type="submit" className={btn} disabled={!name.draft.trim() || name.draft.trim() === folder.name}>Rename</button>
+          <MovedUnderNote movedTo={name.movedTo} />
         </form>
         <button
           type="button"

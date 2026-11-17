@@ -80,14 +80,21 @@ export function stackCorner(pieces: readonly { order: number; lift: number; heig
   return { offsets, top: next === null ? 0 : next - CORNER_GAP };
 }
 
-/** Which corner a piece is in, from where it is drawn: a pill hugging the
- *  right edge, the left, or a bar centred across the bottom. */
+/** Which corner a piece is in, from the edge it hugs: a pill nearer the
+ *  right edge, the left, or a bar as far from both. Never from its middle: a
+ *  pill grows away from its edge with the text, and at 200% Quick Access's
+ *  middle crossed the screen's, so it was filed as a centred bar, a stack of
+ *  its own, and drawn over the feedback bubble (#9497). */
 export function cornerSide(rect: { left: number; right: number }, viewportWidth: number): CornerSide {
-  const centre = (rect.left + rect.right) / 2;
-  if (centre > viewportWidth * 0.6) return "right";
-  if (centre < viewportWidth * 0.4) return "left";
-  return "centre";
+  const fromLeft = rect.left;
+  const fromRight = viewportWidth - rect.right;
+  if (Math.abs(fromLeft - fromRight) <= CENTRED_WITHIN) return "centre";
+  return fromRight < fromLeft ? "right" : "left";
 }
+
+/** How far apart a centred bar's two margins may be, in px (a scrollbar's
+ *  width, a rounding). */
+const CENTRED_WITHIN = 24;
 
 /** The room the overlays leave at the foot of the screen: from the screen's
  *  bottom edge to the top of the tallest corner piece that stays up over an
@@ -132,12 +139,19 @@ function heightOf(el: HTMLElement): number {
 /** A corner piece's lift above the dock, in px, as the browser resolved it
  *  (its --fc-lift, default 1rem). */
 function liftOf(el: HTMLElement): number {
-  const v = getComputedStyle(el).getPropertyValue("--fc-lift").trim();
-  if (!v) return 16;
-  if (v.endsWith("rem")) return parseFloat(v) * parseFloat(getComputedStyle(document.documentElement).fontSize || "16");
-  if (v.endsWith("px")) return parseFloat(v);
+  return liftPx(getComputedStyle(el).getPropertyValue("--fc-lift"), parseFloat(getComputedStyle(document.documentElement).fontSize || "16") || 16);
+}
+
+/** PURE. A lift as written (--fc-lift), in px, given the page's rem. None
+ *  written is the stylesheet's 1rem: read as a fixed 16, at 200% text the
+ *  page's foot cleared the corner 16 px short and a control Tab reached sat
+ *  under Quick Access (#9497). */
+export function liftPx(value: string, remPx: number): number {
+  const v = value.trim();
+  if (!v) return remPx;
+  if (v.endsWith("rem")) return parseFloat(v) * remPx;
   const n = parseFloat(v);
-  return Number.isFinite(n) ? n : 16;
+  return Number.isFinite(n) ? n : remPx;
 }
 
 function layout(): void {
@@ -188,8 +202,10 @@ function layout(): void {
   if (clearance > 0) root.style.setProperty(BOTTOM_CLEARANCE_VAR, `${clearance}px`);
   else root.style.removeProperty(BOTTOM_CLEARANCE_VAR);
   document.body.style.paddingBottom = clearance > 0 ? `calc(var(--inset-bottom, 0px) + ${clearance}px)` : "";
-  // Native focus scrolling must clear the dock anywhere in the page.
-  root.style.scrollPaddingBottom = total > 0 ? `calc(var(--inset-bottom, 0px) + ${total}px)` : "";
+  // Native focus scrolling must clear the dock anywhere in the page, and the
+  // corner pieces above it: a control Tab moved to was scrolled to just above
+  // the bars, under Quick Access and the feedback bubble (#9497).
+  root.style.scrollPaddingBottom = clearance > 0 ? `calc(var(--inset-bottom, 0px) + ${clearance}px)` : "";
   // Measured after the stacking above, so the rect is where the piece now is.
   const reserve = overlayBottomReserve(vh, [...overOverlays].filter((el) => !el.hasAttribute(NO_ROOM_ATTR)).map((el) => {
     const r = el.getBoundingClientRect();

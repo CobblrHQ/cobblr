@@ -51,6 +51,9 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
   // rather than drawing a form the server may refuse after typing (#2804).
   const authCfg = useAuthConfig();
   const signupEnabled = authCfg.cfg ? authCfg.cfg.signup_enabled : true;
+  // Does a sign-in or reset link this server mints reach anyone? Not on a box
+  // with no email sender: then neither is offered (#9488).
+  const emailLinksReach = authCfg.cfg?.email_links !== "none";
   // Null until /auth/config says this surface can complete a hand-off. Defaulting to
   // null (rather than showing the button optimistically) means we never offer a route
   // that fails after the redirect, on a site that cannot explain what went wrong.
@@ -339,7 +342,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
             />
           </Field>
 
-          {mode === "login" && <ForgotPasswordRow email={email.includes("@") ? email : ""} />}
+          {mode === "login" && <ForgotPasswordRow email={email.includes("@") ? email : ""} reaches={emailLinksReach} />}
 
           {mode === "signup" && captchaCfg?.site_key && (
             <TurnstileWidget siteKey={captchaCfg.site_key} onToken={setCaptchaToken} />
@@ -378,7 +381,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
         )}
 
         {!onPage && mode === "login" && !provisioning && (
-          <MagicLinkPanel email={email} next={hereAsLanding()} />
+          <MagicLinkPanel email={email} next={hereAsLanding()} reaches={emailLinksReach} />
         )}
 
         <p className="mt-6 text-center text-[11px] font-mono text-faint dark:text-slate-500">

@@ -116,6 +116,11 @@ export interface ActionInvokeContext {
    *  not a person. A handler that would spend the workspace's AI on a
    *  fallback skips it: an assistant's read is never an AI bill (#7858). */
   byAssistant?: boolean;
+  /** A person pressed this on a page (the request said x-cobblr-page), not
+   *  an assistant, a token, a wire or an issued Undo. A form save through
+   *  the action that does not say what its form opened with is a page older
+   *  than the app, and staleSaveRefusal refuses it (#9448). */
+  fromPage?: boolean;
   /** Pre-rendered template result, if the binding had a template. */
   rendered?: string;
   /** Extra args from the binding (passed through). */

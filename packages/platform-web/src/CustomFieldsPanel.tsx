@@ -14,6 +14,7 @@ import { SecretField } from "./SecretField";
 import { ColourInput } from "./ColourInput";
 import { useMemo, useState, type FocusEvent } from "react";
 import { useFieldDraft } from "./use-field-draft";
+import { MovedUnderNote } from "./EditField";
 import { useQuery } from "@tanstack/react-query";
 import { fieldValueProblem } from "@cobblr/platform-contract/entity-metadata";
 import { choiceLearns } from "@cobblr/platform-contract/field-choices";
@@ -475,10 +476,10 @@ function PlainRow({
   const initial = fieldInputText(def, value);
   const usingFallback = isBlank(value) && !isBlank(fallbackValue);
   const fallbackStr = fallbackValue == null ? "" : String(fallbackValue);
-  const { draft, setDraft, committed } = useFieldDraft(initial);
+  const { draft, setDraft, committed, mayWrite, movedTo } = useFieldDraft(initial);
   function commit(e: FocusEvent<HTMLInputElement>) {
     const next = e.target.value;
-    if (next === initial) return;
+    if (next === initial || !mayWrite()) return;
     committed(next);
     onCommit(valueFromInput(def, next));
   }
@@ -536,6 +537,7 @@ function PlainRow({
           />
         )}
       </div>
+      <MovedUnderNote movedTo={movedTo} />
     </label>
   );
 }
@@ -866,7 +868,7 @@ function MarkdownRow({
   onCommit: (v: unknown) => void;
 }) {
   const initial = value == null ? "" : String(value);
-  const { draft, setDraft, committed } = useFieldDraft(initial);
+  const { draft, setDraft, committed, mayWrite, movedTo } = useFieldDraft(initial);
   return (
     <label className="block">
       <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
@@ -878,11 +880,12 @@ function MarkdownRow({
         ariaLabel={def.display_label}
         onChange={setDraft}
         onBlur={() => {
-          if (draft === initial) return;
+          if (draft === initial || !mayWrite()) return;
           committed(draft);
           onCommit(draft === "" ? null : draft);
         }}
       />
+      <MovedUnderNote movedTo={movedTo} />
     </label>
   );
 }
@@ -900,7 +903,7 @@ function ColorRow({
   onCommit: (v: unknown) => void;
 }) {
   const initial = value == null ? "" : String(value);
-  const { draft, setDraft, committed } = useFieldDraft(initial);
+  const { draft, setDraft, committed, mayWrite, movedTo } = useFieldDraft(initial);
   return (
     <label className="block">
       <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
@@ -913,6 +916,7 @@ function ColorRow({
           label={def.display_label}
           onPreview={setDraft}
           onCommit={(next) => {
+            // WRITES-ON-PICK: the swatch writes once, on release of the colour picked
             setDraft(next);
             committed(next);
             onCommit(next);
@@ -924,7 +928,7 @@ function ColorRow({
           placeholder="#hex or a colour name"
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
-            if (draft === initial) return;
+            if (draft === initial || !mayWrite()) return;
             committed(draft);
             onCommit(draft.trim() === "" ? null : draft);
           }}
@@ -934,6 +938,7 @@ function ColorRow({
           className="input flex-1"
         />
       </div>
+      <MovedUnderNote movedTo={movedTo} />
     </label>
   );
 }

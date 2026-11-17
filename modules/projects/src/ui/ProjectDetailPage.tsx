@@ -7,7 +7,7 @@ import { useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent 
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
-import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, MutationError, OnceQuiet, PresentationGate, useConfirm, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
+import { MovedUnderNote, ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, MutationError, OnceQuiet, PresentationGate, useConfirm, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
 import { describeInterval } from "@cobblr/platform-contract/interval";
 import { TaskSheet, checklistProgress, dueState, localToday } from "./TaskSheet";
 import { useProjects } from "./context";
@@ -38,22 +38,26 @@ function ProjectInput({
 }) {
   const f = useFieldDraft(value);
   return (
+    <>
     <input
       {...rest}
       value={f.draft}
       onChange={(e) => {
         f.setDraft(e.target.value);
         if (commitOn === "change") {
+          // WRITES-ON-PICK: commitOn "change" is a date or a pick, written as chosen
           f.committed(e.target.value);
           onCommit(e.target.value);
         }
       }}
       onBlur={(e) => {
-        if (commitOn !== "blur" || e.target.value === value) return;
+        if (commitOn !== "blur" || e.target.value === value || !f.mayWrite()) return;
         f.committed(e.target.value);
         onCommit(e.target.value);
       }}
     />
+    <MovedUnderNote movedTo={f.movedTo} />
+    </>
   );
 }
 
@@ -111,12 +115,13 @@ function NameField({ value, onCommit, className = "", ...rest }: Omit<ComponentP
           }
         }}
         onBlur={(e) => {
-          if (e.target.value === value) return;
+          if (e.target.value === value || !f.mayWrite()) return;
           f.committed(e.target.value);
           onCommit(e.target.value);
         }}
         className={`[grid-area:1/1] resize-none overflow-hidden text-content dark:text-mortar-100 bg-transparent focus:outline-none focus:bg-subtle dark:focus:bg-slate-800/70 ${face}`}
       />
+      <span className="[grid-area:2/1]"><MovedUnderNote movedTo={f.movedTo} /></span>
     </div>
   );
 }
@@ -126,12 +131,13 @@ function DescriptionField({ value, onCommit }: { value: string; onCommit: (v: st
   const { noun } = useProjects();
   const f = useFieldDraft(value);
   return (
+    <>
     <AutoGrowTextarea
       value={f.draft}
       onChange={(e) => f.setDraft(e.target.value)}
       onBlur={(e) => {
         const v = e.target.value.trim();
-        if (v === value) return;
+        if (v === value || !f.mayWrite()) return;
         f.committed(v);
         onCommit(v);
       }}
@@ -139,6 +145,8 @@ function DescriptionField({ value, onCommit }: { value: string; onCommit: (v: st
       placeholder={`What is this ${noun} about?`}
       className="input text-sm w-full resize-y"
     />
+    <MovedUnderNote movedTo={f.movedTo} />
+    </>
   );
 }
 

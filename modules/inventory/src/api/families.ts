@@ -23,7 +23,7 @@ import { columnSet, placeNames, platform } from "@cobblr/platform-contract";
 import { coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
 import { TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { instanceOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
-import { isLowStock } from "../on-hand.js";
+import { isLowStock, onHandCount, openUnitsFor } from "../on-hand.js";
 import { canonicalColour, coloursFromName, filamentFieldsFromName, formatColour, parseColour } from "@cobblr/platform-contract/colour";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
 
@@ -329,7 +329,7 @@ async function healFamilyLocked(orgId: string, db: Kysely<InventoryDB>, fam: Fam
 
 const THING_COLUMNS = ["id", "name", "qty", "unit", "min_qty", "location_id", "image_path", "metadata", "manufacturer", "created_at"] as const;
 
-function thing(r: Record<string, unknown>) {
+function thing(r: Record<string, unknown>, opened: ReadonlyMap<string, readonly { qty: number }[]>) {
   const qty = Number(r.qty ?? 0);
   const min = r.min_qty == null ? null : Number(r.min_qty);
   return {
@@ -338,7 +338,7 @@ function thing(r: Record<string, unknown>) {
     qty,
     unit: (r.unit as string | null) ?? null,
     min_qty: min,
-    low: isLowStock({ onHand: qty, minQty: min }),
+    low: isLowStock({ onHand: onHandCount(qty, opened.get(r.id as string) ?? []), minQty: min }),
     location_id: (r.location_id as string | null) ?? null,
     image_path: (r.image_path as string | null) ?? null,
     metadata: coerceMetadata(r.metadata),
@@ -414,7 +414,8 @@ familiesRouter.get(
         numbers.set(id, { ...n, jobs: Number(sum?.jobs ?? 0) });
       }
     }
-    const thingById = new Map(things.map((t) => [t.id, { ...thing(t as unknown as Record<string, unknown>), location_name: places.get(t.id) ?? null, material: numbers.get(t.id) ?? null }]));
+    const opened = await openUnitsFor(db, things.map((t) => t.id));
+    const thingById = new Map(things.map((t) => [t.id, { ...thing(t as unknown as Record<string, unknown>, opened), location_name: places.get(t.id) ?? null, material: numbers.get(t.id) ?? null }]));
     const claimed = new Set<string>();
     const cards = types.map((t) => {
       const kids = (byType.get(t.id) ?? []).map((id) => thingById.get(id)).filter((x): x is NonNullable<typeof x> => !!x);

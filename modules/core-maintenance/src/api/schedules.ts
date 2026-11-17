@@ -14,7 +14,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb, sessionUser, type CoreMaintenanceDB } from "../db.js";
 import type { Kysely, Selectable } from "kysely";
 import { asyncHandler, badBody } from "./util.js";
-import { counterDefs, dueOf, ensureOccurrence, readCounter, renewalState, writeExpiry, rollForward, type ScheduleRow } from "../schedules-store.js";
+import { counterDefs, dueOf, ensureOccurrence, readCounter, recordDate, renewalState, writeExpiry, rollForward, type ScheduleRow } from "../schedules-store.js";
 import { INTERVAL_UNITS, describeRule, hasCalendar, hasCounter, nextRenewalExpiry, nextReminderAt, cancelBy } from "../schedule.js";
 import { sql } from "kysely";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
@@ -81,6 +81,9 @@ export const ScheduleUpdateBody = z.object({
   counter_field: Rule.counter_field,
   counter_every: Rule.counter_every,
   last_done_at: Rule.last_done_at,
+  /** The reading the last service was at. Given, it stands instead of the
+   *  counter's reading now: a counter change's Undo puts it back with it. */
+  last_done_counter: z.number().min(0).max(1e12).nullable().optional(),
 });
 
 /** A list's schedules presented a few at a time, within the workspace's
@@ -421,7 +424,7 @@ export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: strin
         remind: next.remind ? JSON.stringify(next.remind) as never : null,
         current_expiry: next.expiry_field ? null : next.current_expiry,
         ...(d.last_done_at !== undefined ? { last_done_at: when(d.last_done_at) } : {}),
-        ...(reading !== undefined ? { last_done_counter: reading } : {}),
+        ...(d.last_done_counter !== undefined ? { last_done_counter: d.last_done_counter } : reading !== undefined ? { last_done_counter: reading } : {}),
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -500,3 +503,33 @@ schedulesRouter.get("/renewal-fields", asyncHandler(async (req, res) => {
   const meta = (fields.metadata ?? {}) as Record<string, unknown>;
   res.json({ fields: defs.filter((f) => f.type === "date" && f.name.endsWith("_expires")).map((f) => ({ key: f.name, label: f.display_label.replace(/ expires$/i, ""), value: meta[f.name] ?? fields[f.name] ?? null })) });
 }));
+
+const dayOf = (d: Date | null) => d ? d.toISOString().slice(0, 10) : null;
+
+/** What a schedule edit's Undo writes back (#7921 class 4): each field the
+ *  edit set, as it was, and what the edit changed along with them.
+ *  - A changed counter takes a fresh reading as the last service's, so its
+ *    Undo puts back the reading the last service was at; otherwise the next
+ *    service moves on by the use since (an oil change put off by the miles
+ *    already driven).
+ *  - A renewal's date is kept in a date field of the record, so an edit of it
+ *    is undone by that field's day before, not by the schedule's own column
+ *    (which is empty while a field holds the date).
+ *  Null when the edit writes a record's day that Undo could not put back: a
+ *  field that held no date, or another day, before the edit chose it. */
+export async function scheduleUndoArgs(orgId: string, before: ScheduleRow, d: z.infer<typeof ScheduleUpdateBody>, was: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  const undo = { ...was };
+  if (d.counter_field !== undefined && (d.counter_field ?? null) !== (before.counter_field ?? null) && d.last_done_counter === undefined) {
+    undo.last_done_counter = before.last_done_counter == null ? null : Number(before.last_done_counter);
+  }
+  const field = d.expiry_field !== undefined ? d.expiry_field : before.expiry_field;
+  if (field && d.current_expiry) {
+    if (field !== before.expiry_field && dayOf(await recordDate(orgId, before, field)) !== d.current_expiry) return null;
+    if (before.expiry_field) {
+      const day = dayOf(await recordDate(orgId, before, before.expiry_field));
+      if (!day) return null;
+      undo.current_expiry = day;
+    }
+  }
+  return undo;
+}

@@ -27,6 +27,17 @@
 // the test "an item's open detail shows the result of an action run from it"
 // is the backstop for the shared editors.
 //
+// AND A DRAFT ASKS BEFORE IT WRITES (#9534). Following the record has its
+// other side: while the person types, the record can change under them (the
+// same machine renamed in another tab, picked up by the live stream), and the
+// page's copy of the record moves with it. A write then is judged against the
+// new copy and replaces the other change without anyone seeing it, the very
+// thing #7925 refuses. So every `committed(` (the draft is being written)
+// asks `mayWrite()` in the lines just above it, which refuses once and says
+// what the record now holds. A control that writes the moment it is picked (a
+// select, a date, a colour swatch) has no typing window: it says so with
+// `// WRITES-ON-PICK: <why>` on the line or within the six above.
+//
 //   npx tsx scripts/lint-record-fields-follow-the-record.ts   (pnpm lint record-fields-follow-the-record)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -60,6 +71,8 @@ function* walk(dir: string): Generator<string> {
 
 /** The check. Return every violation in one file; an empty array is a pass. */
 const DRAFT_FROM_VALUE = /\bdefaultValue=|\buseState\((initial|value)\)/;
+/** A draft being written: FieldDraft's `committed(v)`. */
+const WRITES_DRAFT = /\bcommitted\(\s*[^)\s]/;
 
 function check(file: string, src: string): Violation[] {
   // Module code outside its UI (api handlers, migrations) renders nothing.
@@ -76,6 +89,13 @@ function check(file: string, src: string): Violation[] {
     const near = lines.slice(Math.max(0, i - 3), i + 1).join("\n");
     if (/DRAFT-OK: \S/.test(near)) continue;
     out.push({ file, line: i + 1, what: `${m[0]} takes the record's value once; draft through useFieldDraft, or say why nothing moves it with // DRAFT-OK: <why>` });
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (!WRITES_DRAFT.test(line) || /\bcommitted\s*[:=]/.test(line)) continue;
+    const near = lines.slice(Math.max(0, i - 6), i + 1).join("\n");
+    if (/\bmayWrite\(\)/.test(near) || /WRITES-ON-PICK: \S/.test(near)) continue;
+    out.push({ file, line: i + 1, what: "a draft is written without asking mayWrite() first: the record may have changed while the person typed, and this write would replace that change unseen; ask it, or say why there is no typing window with // WRITES-ON-PICK: <why>" });
   }
   return out;
 }

@@ -28,7 +28,7 @@ import {
   type CardRollup,
 } from "@cobblr/platform-contract/holdings";
 import { instanceOf, partKindOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
-import { isLowStock } from "../on-hand.js";
+import { isLowStock, onHandCount, openUnitsFor } from "../on-hand.js";
 import { expiryFor, putLots, takeLots, addBatch, servedLots, type Batch } from "../batches.js";
 import { withBatches } from "./action-handlers.js";
 import { recordConsumption } from "./stock-ledger.js";
@@ -134,7 +134,7 @@ export async function readHoldingRows(c: HoldingsCtx, ids: string[]): Promise<Ma
     .where("p.id", "in", ids)
     .where("p.instance", "=", c.instance)
     .execute();
-  const [names, heldIn] = await Promise.all([locationNames(c, rows.map((r) => r.location_id)), heldInLines(c.orgId, "inventory:part", rows)]);
+  const [names, heldIn, opened] = await Promise.all([locationNames(c, rows.map((r) => r.location_id)), heldInLines(c.orgId, "inventory:part", rows), openUnitsFor(c.db, rows.map((r) => r.id))]);
   for (const r of rows) {
     const qty = Number(r.qty);
     const minQty = r.min_qty == null ? null : Number(r.min_qty);
@@ -147,7 +147,7 @@ export async function readHoldingRows(c: HoldingsCtx, ids: string[]): Promise<Ma
       qty,
       min_qty: minQty,
       low: isLowStock({
-        onHand: qty,
+        onHand: onHandCount(qty, opened.get(r.id) ?? []),
         assigned: Number(r.assigned_qty ?? 0),
         minQty,
         approximate: r.approximate_qty == null ? null : Number(r.approximate_qty),

@@ -6,6 +6,15 @@ import type { ProposalValue } from "../proposal-values";
 import { ApiError, idsThatFitAUrl, lookupInBody, request } from "./client";
 import type { AiChainAnswer } from "../ai-chain";
 import type { AiProviderDef } from "./integrations";
+import { dayHere } from "@cobblr/platform-contract/day";
+
+/** The person's own day and zone, sent with every Cobb turn: the model has no
+ *  clock, and works "due back Friday" out from what it is told (#9507). */
+function yourDay(): { today: string; time_zone?: string } {
+  let zone: string | undefined;
+  try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined; } catch { zone = undefined; }
+  return { today: dayHere(), ...(zone ? { time_zone: zone } : {}) };
+}
 
 export interface AiStatus {
   available: boolean;
@@ -758,19 +767,19 @@ export const aiApi = {
    *  "add it to the list AND save it as a note"). */
   aiChat: (
     slug: string,
-    messages: { role: "user" | "assistant"; content: string }[],
+    messages: { role: "user" | "assistant"; content: string; failed?: true }[],
     /** What the user is looking at right now (route + one-line summary), for
      *  Cobb's situational awareness. See web/src/lib/chat-context.ts. */
     context?: { label: string; summary?: string; kind?: string },
   ) =>
-    request<AiChatResponse>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages, ...(context ? { context } : {}) }),
+    request<AiChatResponse>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages, ...(context ? { context } : {}), ...yourDay() }),
   /** The same turn, PERSISTED. Returns at once with a turn id; subscribe with
    *  aiChatTurnEvents for progress and the final response. This is what makes
    *  the widget show progress, survive a refresh, and stay in sync across
    *  tabs: the turn lives server-side, not in one tab's pending promise. */
   aiChatStart: (
     slug: string,
-    messages: { role: "user" | "assistant"; content: string }[],
+    messages: { role: "user" | "assistant"; content: string; failed?: true }[],
     context?: { label: string; summary?: string; kind?: string },
     /** What the user is pointing AT — ticked rows, or a highlight. The
      *  difference between Cobb knowing you are on Locations and Cobb knowing
@@ -780,7 +789,7 @@ export const aiApi = {
     request<{ type: "turn"; turn_id: string }>(
       "POST",
       `/orgs/${slug}/modules/core-ai/chat?mode=turn`,
-      { messages, ...(context ? { context } : {}), ...(selection ? { selection } : {}) },
+      { messages, ...(context ? { context } : {}), ...(selection ? { selection } : {}), ...yourDay() },
     ),
   /** Is a turn already running for me in this workspace? A tab asks on open. */
   aiChatOpenTurn: (slug: string) =>

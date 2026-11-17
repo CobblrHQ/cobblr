@@ -354,15 +354,20 @@ export function rolledFromOf(v: unknown): RolledFrom | null {
   };
 }
 
-export async function renewalState(orgId: string, s: ScheduleRow): Promise<ScheduleState> {
-  const state = stateOf(s);
-  if (!s.anchor || !s.expiry_field) return state;
+/** The day a date field of the serviced record holds, or null when it holds none. */
+export async function recordDate(orgId: string, s: Pick<ScheduleRow, "entity_module" | "entity_type" | "entity_id">, field: string): Promise<Date | null> {
   const record = await platform().entities.lookup(orgId, kindOf(s), s.entity_id);
   const fields = record?.fields ?? {};
   const metadata = (fields.metadata ?? {}) as Record<string, unknown>;
-  const value = metadata[s.expiry_field] ?? fields[s.expiry_field];
+  const value = metadata[field] ?? fields[field];
   const date = typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value) ? new Date(value.slice(0, 10) + "T12:00:00Z") : null;
-  state.current_expiry = date && Number.isFinite(date.getTime()) ? date : null;
+  return date && Number.isFinite(date.getTime()) ? date : null;
+}
+
+export async function renewalState(orgId: string, s: ScheduleRow): Promise<ScheduleState> {
+  const state = stateOf(s);
+  if (!s.anchor || !s.expiry_field) return state;
+  state.current_expiry = await recordDate(orgId, s, s.expiry_field);
   if (state.current_expiry && typeof state.anchor === "string") state.anchor = state.current_expiry.toISOString().slice(5, 10);
   if (state.current_expiry && typeof state.anchor === "object" && state.anchor) state.anchor = { month: state.current_expiry.getUTCMonth() + 1, last_day: true };
   return state;

@@ -8,6 +8,7 @@ import { Link } from "react-router-dom";
 import { CheckCircle, RotateCcw, X } from "lucide-react";
 import { EntityPhoto } from "@cobblr/platform-web";
 import { filedNameOf, filedSummary, filedWords, type FiledRow } from "../lib/filedRows";
+import { firstFilingLine } from "../lib/firstFilingLine";
 import { navTargetFor } from "../components/useNavModules";
 import { useActiveOrgOptional } from "../auth/ActiveOrgContext";
 import { rowPictures } from "../lib/rowPictures";
@@ -80,7 +81,7 @@ export function FiledRowView({
       </div>
       {row.firstEver && (
         <p data-testid="filed-row-first" className="mt-2 text-[12px] text-muted dark:text-slate-400">
-          {row.destination} is new: find it any time in the menu.
+          {firstFilingLine(row.destination, false)}
         </p>
       )}
     </div>
@@ -123,7 +124,7 @@ export function FiledSummaryView({ slug, rows, onDismiss }: { slug: string; rows
       </div>
       {first && (
         <p data-testid="filed-row-first" className="mt-1.5 pl-6 text-[12px] text-muted dark:text-slate-400">
-          {first.destination} is new: find it any time in the menu.
+          {firstFilingLine(first.destination, false)}
         </p>
       )}
     </div>

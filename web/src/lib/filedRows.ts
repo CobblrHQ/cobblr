@@ -145,7 +145,7 @@ export function useFiledRows(slug: string, pending: ReadonlyArray<{ id: string; 
         knownNewest.current = [...latest.current.map((p) => String(p.created_at ?? "")), ...filed.map((f) => String(f.item.created_at ?? "")), knownNewest.current].sort().at(-1) ?? "";
         // Claimed here, once, never inside the state updater (which may run twice).
         const first = filed.length > 0 && claimFirstFiling(slug);
-        if (first) pointAtInNav(slug, filed[0]!.destination);
+        if (first) pointAtInNav(slug, filed[0]!.destination, false);
         setRows((prev) => {
           const kept = prev.filter((r) => !undone.has(r.item.id) && !filed.some((f) => f.item.id === r.item.id));
           return [...kept, ...filed.map((f, i) => (first && i === 0 ? { ...f, firstEver: true } : f))];

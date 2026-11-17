@@ -1302,6 +1302,20 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "inventory:on-hand",
+    what: "what is on hand, the figure every low-stock judgement and Available compare: the unopened count plus each open unit still holding something",
+    why:
+      "the parts list counted an open skein as yarn you have while a place's stock view, its holdings rows and a family's things judged " +
+      "low on the bare count, so one yarn read low in one screen and fine in the next (#7921 class 6). The rule lives in on-hand.ts; " +
+      "every reader hands isLowStock what onHandCount says",
+    owner: "modules/inventory/src/on-hand.ts",
+    scope: ["modules/inventory/src/**/*.ts"],
+    // An on-hand read straight off the count: onHand: qty, onHand: Number(r.qty).
+    detect: /\bonHand:\s*(?:Number\()?[\w.]*\bqty\b/,
+    use: "onHand: onHandCount(qty, openUnits) from modules/inventory/src/on-hand.ts (openUnitsFor reads a page's open units in one query)",
+  },
+  {
+    kind: "owns",
     id: "entities:metadata-write-shape",
     what: "how a record write reaches its `metadata` bag: unknown keys lifted in, server-managed keys kept, the bag read back from an object or a jsonb string",
     why:

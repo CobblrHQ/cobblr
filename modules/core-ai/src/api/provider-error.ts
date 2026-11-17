@@ -8,7 +8,7 @@
 
 import { forAPerson } from "./says-something.js";
 import { REPLAY_MISSING_RESULT_MESSAGE } from "../providers/replay-failure.js";
-import { providerSentence, type CredentialDoor, type ProviderReason } from "@cobblr/platform-contract/provider-reason";
+import { providerSentence, tryAgainIn, type CredentialDoor, type ProviderReason } from "@cobblr/platform-contract/provider-reason";
 
 /** What the router's refusal carried beside the message, when it did: the
  *  provider's reason as its adapter read it, which door the credential came
@@ -105,7 +105,7 @@ export function humanizeProviderError(error: string, detail?: ProviderFailureDet
     };
   }
   if (isProvider && (status === "429" || quota)) {
-    const wait = retryAfterSec ? `Try again in about ${retryAfterSec} seconds.` : "Try again in a minute.";
+    const wait = retryAfterSec ? tryAgainIn(retryAfterSec) : "Try again in a minute.";
     const tier = /free.?tier/i.test(raw) ? " (free tier)" : "";
     return {
       code: "rate_limited",

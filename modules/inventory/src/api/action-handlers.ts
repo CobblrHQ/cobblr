@@ -51,7 +51,7 @@ import { BELOW_ZERO, NOTHING_ON_HAND, floorDelta } from "../stock-floor.js";
 import { STALE_DAYS, dayIn, daysUntil } from "@cobblr/platform-contract/day";
 import { stillGoodPatch } from "../still-good.js";
 import { stateWrite, type StateFieldDef } from "../state-write.js";
-import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
+import { EDITED_FROM_ARG, staleRefusalCode } from "@cobblr/platform-contract/edited-from";
 
 /** The day it is for the person doing this: the zone their client sent, else
  *  what the platform knows of them (accounts.dayFor: the zone they told us,
@@ -440,7 +440,9 @@ async function applyStockDraws(orgId: string, draws: StockDraw[], reason: string
 // ─────────────────────────── the way back ───────────────────────────────
 // Every stock move and lifecycle mark changes a part's count and a few keys
 // of its metadata (the lots, the dates, a status); the item edit changes its
-// name, fields and place. The honest inverse of any of them is the part the
+// name, maker, fields and place. Every column a wrapped handler writes is in
+// the snapshot, or its Undo leaves that change standing
+// (an-undo-of-a-part-puts-back-every-column-its-run-wrote.test.ts). The honest inverse of any of them is the part the
 // way it was, and one action puts it there: restore-part, given what the run
 // changed and the values before. The wrapper takes the snapshot on the way
 // in, diffs on the way out, and hands the difference back with the result;
@@ -449,6 +451,7 @@ async function applyStockDraws(orgId: string, draws: StockDraw[], reason: string
 export interface PartSnapshot {
   qty: number;
   name: string;
+  manufacturer: string | null;
   location_id: string | null;
   metadata: Record<string, unknown>;
 }
@@ -457,13 +460,14 @@ export async function partSnapshot(orgId: string, partId: string): Promise<PartS
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
   const row = await db
     .selectFrom("inventory_parts")
-    .select(["qty", "name", "location_id", "metadata"])
+    .select(["qty", "name", "manufacturer", "location_id", "metadata"])
     .where("id", "=", partId)
     .executeTakeFirst();
   if (!row) return null;
   return {
     qty: Number(row.qty),
     name: row.name,
+    manufacturer: row.manufacturer ?? null,
     location_id: row.location_id ?? null,
     metadata: ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>,
   };
@@ -474,6 +478,7 @@ export interface PartUndoState {
   partId: string;
   qty?: number;
   name?: string;
+  manufacturer?: string | null;
   location_id?: string | null;
   /** Metadata keys to set back, with their values before. */
   metadata?: Record<string, unknown>;
@@ -516,6 +521,7 @@ export function partUndoState(partId: string, before: PartSnapshot, after: PartS
   const state: PartUndoState = { partId };
   if (after.qty !== before.qty) state.qty = before.qty;
   if (after.name !== before.name) state.name = before.name;
+  if (after.manufacturer !== before.manufacturer) state.manufacturer = before.manufacturer;
   if (after.location_id !== before.location_id) state.location_id = before.location_id;
   const keys = new Set([...Object.keys(before.metadata), ...Object.keys(after.metadata)]);
   for (const k of keys) {
@@ -551,6 +557,9 @@ async function restorePart(ctx: ActionInvokeContext): Promise<Record<string, unk
   }
   if (typeof a.name === "string" && a.name !== current.name) {
     await db.updateTable("inventory_parts").set({ name: a.name, updated_at: new Date() }).where("id", "=", partId).execute();
+  }
+  if (a.manufacturer !== undefined && a.manufacturer !== current.manufacturer) {
+    await db.updateTable("inventory_parts").set({ manufacturer: a.manufacturer ?? null, updated_at: new Date() }).where("id", "=", partId).execute();
   }
   if (a.location_id !== undefined && a.location_id !== current.location_id) {
     try {
@@ -1697,8 +1706,8 @@ export function registerInventoryActionHandlers(): void {
         ...(typeof a.manufacturer === "string" ? { manufacturer: a.manufacturer.trim() || null } : {}),
         ...(a.fields && typeof a.fields === "object" ? { metadata: a.fields } : {}),
       };
-      const refused = await platform().http.staleSaveRefusal(ctx.orgId, id, a[EDITED_FROM_ARG], { name: row.name, manufacturer: row.manufacturer, metadata: row.metadata }, next);
-      if (refused) return { ok: false, error: refused, data: { code: "changed_since" } };
+      const refused = await platform().http.staleSaveRefusal(ctx.orgId, id, a[EDITED_FROM_ARG], { name: row.name, manufacturer: row.manufacturer, metadata: row.metadata }, next, ctx.fromPage);
+      if (refused) return { ok: false, error: refused, data: { code: staleRefusalCode(refused) } };
       const set: Record<string, unknown> = { updated_at: new Date() };
       if (typeof a.name === "string" && a.name.trim()) set.name = a.name.trim().slice(0, 200);
       if (typeof a.manufacturer === "string") set.manufacturer = a.manufacturer.trim().slice(0, 120) || null;

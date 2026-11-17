@@ -174,7 +174,7 @@ export function DiscussionInboxPage() {
       type="button"
       onClick={() => setLane(id)}
       className={
-        "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition " +
+        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-sm transition " +
         (lane === id
           ? "bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100 font-medium"
           : "text-muted hover:text-content dark:hover:text-mortar-200")
@@ -197,10 +197,12 @@ export function DiscussionInboxPage() {
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <SearchInput value={q} onChange={setQ} placeholder="Search what was said…" aria-label="Search what was said" wrapperClassName="flex-1 min-w-[12rem]" />
+        <SearchInput value={q} onChange={setQ} placeholder="Search what was said…" aria-label="Search what was said" wrapperClassName="flex-1 min-w-[min(12rem,100%)]" />
       </div>
 
-      <div className="flex items-center gap-1">
+      {/* Wraps rather than squeezes: at 200% text the three tabs are wider
+          than a phone, and "New" was pressed narrower than its word (#9498). */}
+      <div className="flex flex-wrap items-center gap-1">
         {tab("me", "Addressed to me", lanes.me.length)}
         {tab("new", "New", lanes.new.length)}
         {tab("all", "All", lanes.all.length)}

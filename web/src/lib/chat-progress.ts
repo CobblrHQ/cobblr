@@ -83,6 +83,14 @@ export function foldStep(prev: TurnStep[], kind: string, data: Record<string, un
     }
     case "tool-result":
     case "applied": {
+      // A write sent back to the model to settle before any card: nothing
+      // failed, and what it was told is for the model. Its step goes; the
+      // settled call is a step of its own (#9516: "5 steps · 4 failed" over
+      // a card that worked, each "failure" a note to the model).
+      if (kind === "tool-result" && data.handed_back === true) {
+        for (let i = prev.length - 1; i >= 0; i--) if (prev[i]!.state === "doing") return [...prev.slice(0, i), ...prev.slice(i + 1)];
+        return prev;
+      }
       const ok = kind === "applied" || data.ok !== false;
       const copy = [...prev];
       for (let i = copy.length - 1; i >= 0; i--) {

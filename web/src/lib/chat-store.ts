@@ -69,6 +69,10 @@ export function slimForStore<M extends StoredChatMessage>(messages: M[], max: nu
 /** The conversation as it is SENT with a message: the newest messages up to
  *  the number the server keeps, each just its role and words. The whole
  *  scrollback stays on the device. */
-export function historyToSend<M extends { role: "user" | "assistant"; content: string }>(messages: M[]): Array<{ role: "user" | "assistant"; content: string }> {
-  return messages.slice(-CHAT_HISTORY_MESSAGES).map((m) => ({ role: m.role, content: m.content }));
+export function historyToSend<M extends { role: "user" | "assistant"; content: string; failed?: boolean }>(
+  messages: M[],
+): Array<{ role: "user" | "assistant"; content: string; failed?: true }> {
+  // A failed turn says so, so the model reads it as finished rather than as
+  // the request still to do (#9510).
+  return messages.slice(-CHAT_HISTORY_MESSAGES).map((m) => ({ role: m.role, content: m.content, ...(m.failed ? { failed: true as const } : {}) }));
 }

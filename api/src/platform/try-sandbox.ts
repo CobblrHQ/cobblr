@@ -39,6 +39,20 @@ import * as activity from "./activity.js";
  *  nothing else in a row can tell them apart. */
 export const SANDBOX_HANDED_OVER = "sandbox_handed_over";
 
+/** The id of a sandbox's hand-over row, or null for a workspace never handed
+ *  over (every ordinary one). A sandbox's feed starts here. */
+export async function handedOverId(orgId: string): Promise<number | null> {
+  const row = await meta
+    .selectFrom("activity_log")
+    .select("id")
+    .where("org_id", "=", orgId)
+    .where("action", "=", SANDBOX_HANDED_OVER)
+    .orderBy("id", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  return row ? Number(row.id) : null;
+}
+
 /** True only on a box that opted in. */
 export function sandboxEnabled(): boolean {
   return env.COBBLR_TRY_SANDBOX === true;

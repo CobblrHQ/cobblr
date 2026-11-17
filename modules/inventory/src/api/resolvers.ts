@@ -18,7 +18,8 @@ import type { Remaining } from "@cobblr/platform-contract/consumption-gauge";
 import { remainingFor } from "./remaining.js";
 import { annotateInstalled } from "./installed.js";
 import { capacitySourceField } from "../consumption-unit.js";
-import { UNIT_OF_KEY } from "../on-hand.js";
+import { UNIT_OF_KEY, openUnitsFor, openUnitsSummary, onHandCount, isLowStock } from "../on-hand.js";
+import { availableOnHand } from "../stock-derived.js";
 
 let registered = false;
 
@@ -105,11 +106,12 @@ export function registerInventoryResolvers(): void {
       (async () => (await groupListRows(db, groupedQ, await withOpenRemainders(orgId, query, instance))) ?? await sortedQ.limit(limit).offset(offset).execute())(),
       hideUnavailable ? Promise.resolve(null) : q.clearSelect().select((eb) => eb.fn.countAll<string>().as("n")).executeTakeFirst(),
     ]);
-    const [names, places, left, held, inst] = await Promise.all([
+    const [names, places, left, held, opened, inst] = await Promise.all([
       categoryNames(db, rows),
       locationNames(orgId, rows),
       remainingFor(orgId, db, rows),
       reservedFor(db, rows),
+      openUnitsFor(db, rows.map((r) => r.id)),
       annotateInstalled(orgId, rows.map((r) => ({ id: r.id, qty: Number(r.qty), approximate_qty: r.approximate_qty == null ? null : Number(r.approximate_qty) }))),
     ]);
     const areas = await sheetViews(db, rows);
@@ -117,7 +119,7 @@ export function registerInventoryResolvers(): void {
     const instOf = new Map(inst.map((i) => [i.id, i]));
     const items = rows
       .map((r) => {
-        const base = withReserved(toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.id) ?? null, left.get(r.id) ?? null), r, held);
+        const base = withReserved(toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.id) ?? null, left.get(r.id) ?? null), r, held, opened);
         const sheet = areas.get(r.id);
         const stock = stocks.get(r.id);
         const e = { ...base, fields: { ...base.fields, stock, stock_used: stock?.used ?? 0, ...(sheet ? { sheet_geometry: sheet } : {}) } };
@@ -171,16 +173,18 @@ export function registerInventoryResolvers(): void {
 async function resolvePartRows(orgId: string, db: Kysely<InventoryDB>, rows: Array<Selectable<InventoryDB["inventory_parts"]>>): Promise<Map<string, ResolvedEntity>> {
   const out = new Map<string, ResolvedEntity>();
   if (!rows.length) return out;
-  const [categories, places, remaining, readiness, sheets, stocks] = await Promise.all([
+  const [categories, places, remaining, readiness, sheets, stocks, held, opened] = await Promise.all([
     categoryNames(db, rows),
     locationNames(orgId, rows),
     remainingFor(orgId, db, rows),
     storageViews(db, orgId, rows as never),
     sheetViews(db, rows),
     stockViews(db, rows),
+    reservedFor(db, rows),
+    openUnitsFor(db, rows.map((r) => r.id)),
   ]);
   for (const row of rows) {
-    const resolved = toResolvedPart(row, categories.get(row.category_id ?? "") ?? null, places.get(row.id) ?? null, remaining.get(row.id) ?? null);
+    const resolved = withReserved(toResolvedPart(row, categories.get(row.category_id ?? "") ?? null, places.get(row.id) ?? null, remaining.get(row.id) ?? null), row, held, opened);
     const ready = readiness.get(row.id);
     if (ready) resolved.fields.storage_readiness = ready;
     const sheet = sheets.get(row.id);
@@ -224,15 +228,35 @@ async function reservedFor(db: Kysely<InventoryDB>, rows: readonly { id: string 
   return new Map(sums.map((x) => [x.part_id, Number(x.held)]));
 }
 
-/** A listed part carries its instance and what of it is free, the figures the
- *  parts list shows (assigned_qty / available_qty), so a reader in another
- *  module (a pattern matching its yarn) sees what the stash page sees. */
-function withReserved(e: ResolvedEntity, row: { id: string; qty: string; instance: string }, held: Map<string, number>): ResolvedEntity {
+/** A part's record carries its instance and the stock figures the parts list
+ *  shows, from the same rules (on-hand.ts, stock-derived.ts): what is on hand
+ *  (the unopened count and every open unit still holding something), what is
+ *  reserved, what is Available and whether it is low. So a reader in another
+ *  module, Cobb and Search (a pattern matching its yarn) see what the stash
+ *  page sees. The record used to count only the unopened ones, so the last
+ *  skein opened read 0 available beside the list's 1, and its single read
+ *  carried no figure at all (#7921 class 6). */
+function withReserved(
+  e: ResolvedEntity,
+  row: { id: string; qty: string; instance: string; min_qty: string | null; approximate_qty?: string | null },
+  held: Map<string, number>,
+  opened: Map<string, Array<{ qty: number }>>,
+): ResolvedEntity {
   const assigned = held.get(row.id) ?? 0;
-  const qty = Number(row.qty);
+  const qty = Number.isFinite(Number(row.qty)) ? Number(row.qty) : 0;
+  const onHand = onHandCount(qty, openUnitsSummary(opened.get(row.id) as never)?.remaining ?? []);
+  const minQty = row.min_qty == null ? null : Number(row.min_qty);
+  const approximate = row.approximate_qty == null ? null : Number(row.approximate_qty);
   return {
     ...e,
-    fields: { ...e.fields, instance: row.instance, assigned_qty: assigned, available_qty: (Number.isFinite(qty) ? qty : 0) - assigned },
+    fields: {
+      ...e.fields,
+      instance: row.instance,
+      assigned_qty: assigned,
+      available_qty: availableOnHand({ qty, available_qty: qty - assigned, on_hand: onHand }),
+      on_hand: onHand,
+      low_stock: isLowStock({ onHand, assigned, minQty, approximate }),
+    },
   };
 }
 

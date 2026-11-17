@@ -15,7 +15,7 @@
 import { useRef, type ReactNode } from "react";
 import { fieldNeed, type FieldNeed } from "./field-pack";
 import { fieldPackControlClass, type FieldPackItem } from "./FieldPack";
-import { useFieldDraft } from "./use-field-draft";
+import { movedUnderSentence, useFieldDraft } from "./use-field-draft";
 import { MoneyInput } from "./MoneyInput";
 import { UsedValueInput } from "./UsedValueInput";
 import type { MoneyStorage } from "@cobblr/platform-contract/money";
@@ -23,6 +23,16 @@ import type { MoneyStorage } from "@cobblr/platform-contract/money";
 /** The small mono caption every field in a pack wears over its control. */
 export function FieldLabel({ children }: { children: ReactNode }) {
   return <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{children}</span>;
+}
+
+/** Said under a field whose record changed while the person typed (#9534). */
+export function MovedUnderNote({ movedTo }: { movedTo: string | null }) {
+  if (movedTo === null) return null;
+  return (
+    <span role="status" className="mt-1 block text-[11px] text-ember-600 dark:text-ember-400">
+      {movedUnderSentence(movedTo)}
+    </span>
+  );
 }
 
 /** A caption over any control: for the pickers and selects a page renders
@@ -92,7 +102,7 @@ export function EditField({ label, value, onCommit, numeric, fractionDigits, mul
             return;
           }
           const v = e.target.value;
-          if (v !== initial) {
+          if (v !== initial && f.mayWrite()) {
             f.committed(v);
             onCommit(v);
           }
@@ -110,6 +120,7 @@ export function EditField({ label, value, onCommit, numeric, fractionDigits, mul
         rows={multiline ? 3 : undefined}
         className={"input " + fieldPackControlClass + (className ? " " + className : "")}
       />
+      <MovedUnderNote movedTo={f.movedTo} />
     </label>
   );
 }
@@ -152,6 +163,7 @@ export function EditSelect({ label, value, options, onCommit }: { label: ReactNo
       <select
         value={f.draft}
         onChange={(e) => {
+          // WRITES-ON-PICK: a select writes the choice the moment it is picked
           f.setDraft(e.target.value);
           f.committed(e.target.value);
           onCommit(e.target.value);

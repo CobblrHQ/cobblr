@@ -49,6 +49,7 @@ import { ocrAvailable } from "@cobblr/core-scan/services/ocr";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { issueUndos, judgeUndo, returnIssuedUndo, spendIssuedUndo } from "../platform/issued-undos.js";
+import { fromAPage } from "../platform/stale-edit.js";
 import { askedByAnAssistant, doorRefusal, isUndoOnly, mayInvoke, permissionRefusal, type InvokeAsker } from "../platform/may-invoke.js";
 import { UNDO_ONLY_NEEDS_ITS_UNDO, undoOnlyVerdict } from "../platform/undo-only.js";
 import { actionGateOf } from "../platform/action-gates.js";
@@ -1087,6 +1088,7 @@ platformOrgRouter.post(
         rendered,
         args,
         ...(askedByAnAssistant(asker) ? { byAssistant: true } : {}),
+        ...(fromAPage(req) && !ownUndo && !askedByAnAssistant(asker) ? { fromPage: true } : {}),
         ...(uploadedFile(req) ? { document: {
           bytes: await readFile(uploadedFile(req)!.path),
           name: uploadedFile(req)!.originalname,

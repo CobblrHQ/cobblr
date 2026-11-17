@@ -35,7 +35,7 @@ import { claimFirstFiling, filedNameOf, filedWords } from "../lib/filedRows";
 import { navTargetFor } from "../components/useNavModules";
 import { pointAtInNav } from "../lib/navPointer";
 import { announceJustFiled } from "../lib/justFiled";
-import { installToastLine } from "../lib/installSummary";
+import { installMadeTheTable, installToastLine } from "../lib/installSummary";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 
 export interface CameraScanTarget {
@@ -389,7 +389,8 @@ export function ScanResultModal({
       const into = filedIntoOf(filed.item.suggested_metadata);
       const label = into?.label ?? oneTap!.label;
       const first = claimFirstFiling(activeSlug);
-      if (first) pointAtInNav(activeSlug, label);
+      const madeTheTable = installMadeTheTable(installed);
+      if (first) pointAtInNav(activeSlug, label, madeTheTable);
       // The table it went to, where the visitor can see it among the rest,
       // with the record itself one tap away on the notice.
       const record = into?.kind ? recordRoute(into.kind, filed.created.id) : null;
@@ -402,6 +403,7 @@ export function ScanResultModal({
         announceJustFiled({
           label,
           firstEver: first,
+          madeTheTable,
           installed: installed ? installToastLine(installed) : null,
           record: underPage ? null : to === record ? null : record,
           path: to,

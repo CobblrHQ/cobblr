@@ -31,8 +31,8 @@ export const EDITED_FROM_HEADER = "x-cobblr-edited-from";
 export const EDITED_FROM_ARG = "edited_from";
 /** Every request a page of the app sends carries this (#9448), so the server
  *  can tell a page's form save from the assistant's, a token's or a
- *  script's. Step 2 (after the next release) refuses a marked form save that
- *  does not say what it opened with: a page older than its form's fix. */
+ *  script's, and refuses a page's form save that does not say what it opened
+ *  with: a page older than its form's fix (pageSaveRefusal). */
 export const PAGE_HEADER = "x-cobblr-page";
 
 export type EditedFrom = Record<string, unknown>;
@@ -92,4 +92,37 @@ export function staleFields(current: Record<string, unknown>, opened: EditedFrom
     if (!sameStored(current[field], was) && !sameStored(current[field], next[field])) out.push(field);
   }
   return out;
+}
+
+/** How many fields a save writes: each named field, and each key of its
+ *  `metadata` bag (a record's custom fields) as one. */
+export function fieldsWritten(body: Record<string, unknown>): number {
+  let n = 0;
+  for (const [key, value] of Object.entries(body)) n += key === "metadata" ? Object.keys(bag(value)).length : 1;
+  return n;
+}
+
+/** What a page that is older than the app hears when its form save is
+ *  refused (#9448). */
+export const PAGE_OUT_OF_DATE =
+  "This page is older than the app, so nothing was saved. Reload the page, then make the change again.";
+
+/** A page's form save that does not say what its form opened with (#9448).
+ *  Every page has sent what its forms opened with since 2026-11-11, so a page
+ *  that says nothing is a tab opened before then, and its form's old copy
+ *  would go back over whatever was saved since, unjudged. Refused with
+ *  PAGE_OUT_OF_DATE; null lets it through. Let through: a save that is not a
+ *  page's (the assistant, a token, a script: they write what they mean), a
+ *  save that says what it opened with (judged by staleFields), and a named
+ *  setter of one field (`{ checked }`, `{ qty }`), a tap whose value is the
+ *  person's intent rather than a copy of what the form held. */
+/** The code a refused save answers beside its sentence. */
+export function staleRefusalCode(sentence: string): "page_out_of_date" | "changed_since" {
+  return sentence === PAGE_OUT_OF_DATE ? "page_out_of_date" : "changed_since";
+}
+
+export function pageSaveRefusal(fromPage: boolean, editedFrom: unknown, body: Record<string, unknown>): string | null {
+  if (!fromPage) return null;
+  if (editedFrom && typeof editedFrom === "object" && !Array.isArray(editedFrom)) return null;
+  return fieldsWritten(body) >= 2 ? PAGE_OUT_OF_DATE : null;
 }

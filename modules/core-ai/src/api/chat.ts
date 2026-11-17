@@ -10,20 +10,23 @@ import { EDITED_FROM_HEADER, encodeEditedFrom, type EditedFrom } from "@cobblr/p
 // ignores the field) degrade to the legacy one-JSON-move protocol below.
 
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
+import { theirDay } from "@cobblr/platform-contract/day";
 import { requireAPerson } from "@cobblr/platform-contract/person-door";
 import { Router, type Response } from "express";
 import { humanizeProviderError, type ProviderFailureDetail } from "./provider-error.js";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
-import { argsFromCallRecord, missingActionArgs, undeclaredActionArgs, reconcileActionArgs, recordTargetInArgs } from "./action-args-guard.js";
+import { argsFromCallRecord, missingActionArgs, undeclaredActionArgs, reconcileActionArgs, recordTargetInArgs, whoByName, type Person } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
 import { destinationLookedUp, destinationNotThere, movedItselfNotEmptied, movedNotCreated } from "./move-not-create.js";
 import { outsideChoices } from "./field-choices.js";
+import { dropUnsaidDates, saidButLeftOff } from "./said-on-create.js";
 import { workspaceAsList } from "./add-destination.js";
 import { missingOnCreate, missingRequired } from "./required-on-create.js";
 import { noneFromOneList } from "./none-from-one-list.js";
 import { answeredNotProposed } from "./answer-dont-propose.js";
 import { askDontRank } from "./ask-dont-rank.js";
 import { nothingToRepeat } from "./nothing-to-repeat.js";
+import { turnsForTheModel } from "./failed-turn-for-the-model.js";
 import { misreportedWrites } from "./reported-truthfully.js";
 import { chatModelMenu, type ReportedModels, type RoutedConnection } from "./chat-model-menu.js";
 import { describedInsteadOfActing } from "./act-dont-describe.js";
@@ -73,7 +76,7 @@ import type { PlanStepBefore } from "@cobblr/platform-contract";
 import { WHOLE, cardsOf, planTitle, withCards, type Card } from "./one-plan.js";
 import { forAPerson } from "./says-something.js";
 import { insteadList, listMadeBy, mayPassOnRetry, missingList, orderWrites, personReason, retryAfter, saidWhatFailed, stepSaid } from "./failed-steps.js";
-import { optionalUuid } from "@cobblr/platform-contract/optional-fields";
+import { optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
 /** The writes a tool call MEANS — one for a single write, many for a bulk one.
@@ -136,7 +139,7 @@ function writeRequestOf(call: ToolCall): WriteRequest | null {
       // is a change the ledger can undo; the rest always ask a person first.
       const step = typeof a.do === "string" ? a.do : "";
       if (!step) return null;
-      return { tool: ["edit", "discard", "restore", "rerun", "combine"].includes(step) ? "update" : "action", via: "change_scan", entity_kind: "", args: a };
+      return { tool: ["edit", "discard", "restore", "rerun", "combine", "attach"].includes(step) ? "update" : "action", via: "change_scan", entity_kind: "", args: a };
     }
     case "put_back_scan_item":
       return typeof a.id === "string" && a.id.trim()
@@ -695,6 +698,20 @@ export async function proposalOf(
         theme: `Give ${it} ${[typeof a.tag === "string" && a.tag ? `the tag ${a.tag}` : "", typeof a.category === "string" && a.category ? `the category ${a.category}` : ""].filter(Boolean).join(" and ")}`,
         photo: `Change the photo of ${it}`,
       };
+      if (step === "attach") {
+        const kind = String(a.kind ?? "");
+        const entity = String(a.entity_id ?? "");
+        if (!kind || !entity) return { error: "Say which record this inbox item is more of (kind and entity_id)." };
+        const onto = await labelOf(wsApi, kind, entity);
+        if (onto === entity) return { error: `There is no ${kind} with id ${entity}: read the record first and pass its real id.` };
+        const how = String(a.how ?? "add-qty");
+        said.attach =
+          how === "replace" ? `File ${it} as the replacement for “${onto}”`
+          : how === "link-barcode" ? `Teach “${onto}” the barcode of ${it}`
+          : how === "merge-fields" ? `Fill in what ${it} learned on “${onto}”`
+          : how === "move" ? `Move “${onto}” where ${it} was scanned`
+          : `Add ${it} to “${onto}”${typeof a.quantity === "number" ? ` (+${a.quantity})` : ""}, filing it`;
+      }
       if (!said[step]) return { error: "Say what to do with the inbox item." };
       return { summary: said[step]!, proposal: { kind: "change_scan", args: a, ...(name ? { label: name } : {}) } };
     }
@@ -774,7 +791,12 @@ export async function proposalOf(
       const plan = planned?.plan ?? null;
       // No planner: the card still lists what the action was handed, in the
       // action's own labels (#3658), never its name alone.
-      const argLines = plan ? [] : await actionArgValues({ args: argValues, schema: copy?.args_schema ?? null, said, titleOf });
+      const personOf = async (pid: string): Promise<string | null> => {
+        const r = await wsApi.request("GET", "/people").catch(() => null);
+        const hit = ((r && r.status < 400 ? (r.body.items as Array<{ id?: string; name?: string }> | undefined) : undefined) ?? []).find((p) => p.id === pid);
+        return typeof hit?.name === "string" && hit.name ? hit.name : null;
+      };
+      const argLines = plan ? [] : await actionArgValues({ args: argValues, schema: copy?.args_schema ?? null, said, titleOf, personOf, kindIds: kinds.map((k) => k.id) });
       const values = argLines.length ? { values: argLines } : {};
       if (!kind || !id) {
         if (!(await runsWithoutARecord(c, actionId))) {
@@ -820,7 +842,8 @@ const ChatBody = z.object({
   // "Bad request body" on every send once a conversation passed forty
   // messages (#3087).
   messages: z
-    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() }))
+    // `failed`: this assistant message is why a turn failed (#9510).
+    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string(), failed: z.boolean().nullish() }))
     .min(1)
     .transform((m) => m.slice(-CHAT_HISTORY_MESSAGES)),
   // What the user is looking at right now (route + a one-line view summary the
@@ -839,6 +862,10 @@ const ChatBody = z.object({
       text: z.string().max(2000).optional(), // none-refused-ok: it fills the prompt's typed selection, which takes text or nothing
     })
     .optional(),
+  // The person's own day and zone, from their browser's clock: the model has
+  // none, and "due back Friday" is worked out from what it is told (#9507).
+  today: optionalText(10),
+  time_zone: optionalText(64),
 });
 
 
@@ -956,6 +983,16 @@ async function answerTurn(
   // The kinds, read once per turn and only when a record write needs them.
   let kindsForWrites: Promise<KindRec[]> | null = null;
   const kindsOnce = () => (kindsForWrites ??= fetchKinds(wsApi).catch(() => [] as KindRec[]));
+  // The kinds a create was already handed back for a price or place the
+  // person said: asked once per turn, never argued with (said-on-create.ts).
+  const askedForSaid = new Set<string>();
+  // The People, read once per turn and only when a "who" argument needs them.
+  let peopleForWrites: Promise<Person[]> | null = null;
+  const peopleOnce = () =>
+    (peopleForWrites ??= wsApi
+      .request("GET", "/people")
+      .then((r) => (r.status < 400 ? ((r.body.items as Person[] | undefined) ?? []).filter((p) => typeof p?.id === "string" && typeof p?.name === "string") : []))
+      .catch(() => [] as Person[]));
   const askModel = async (capability: "chat" | "plan-changes", turns: ChatTurn[]) => {
     // FREE-TEXT: a chat turn: the answer is Cobb's own words or a tool call
     const r = await platform().ai.invoke({
@@ -1005,7 +1042,7 @@ async function answerTurn(
   };
   let outcome: AgentLoopOutcome;
   try {
-    outcome = await runAgentLoop(parsed.data.messages as ChatTurn[], {
+    outcome = await runAgentLoop(turnsForTheModel(parsed.data.messages) as ChatTurn[], {
       callModel: async (turns) => {
         // The chat model answers, unless this round plans a change: then the
         // fuller one does, asked again before anything is offered (plan-tier.ts).
@@ -1086,6 +1123,17 @@ async function answerTurn(
           if (off) return off;
           const missing = missingOnCreate(call, await kindsOnce());
           if (missing) return missing;
+          // A date nobody said is off the card; a price or place said and
+          // left off is asked for once (#9515). See said-on-create.ts.
+          dropUnsaidDates(call, await kindsOnce(), askedFor);
+          const kindOf = String(call.args?.kind ?? "");
+          if (!askedForSaid.has(kindOf)) {
+            const left = saidButLeftOff(call, await kindsOnce(), askedFor);
+            if (left) {
+              askedForSaid.add(kindOf);
+              return left;
+            }
+          }
         }
         if (call.name !== "invoke_action") return null;
         const a = call.args ?? {};
@@ -1133,6 +1181,11 @@ async function answerTurn(
         // takes its records as entity_kind and ids (platform:lend, #8738).
         const fromRecord = argsFromCallRecord(schema, a.args, { kind: a.entity_kind, id: a.entity_id });
         if (fromRecord) a.args = fromRecord;
+        // Sam by name for a "who" that takes someone on People (#9512).
+        const takesWho = Object.values(schema ?? {}).some((sp) => { const from = (sp as { choicesFrom?: string } | undefined)?.choicesFrom; return from === "people" || from === "recipients"; });
+        const who = takesWho ? whoByName(real ?? typed, schema, a.args, await peopleOnce()) : null;
+        if (who && "refusal" in who) return who.refusal;
+        if (who) a.args = who.args;
         const missing = missingActionArgs(real ?? typed, schema, a.args);
         if (missing) return missing;
         const extra = undeclaredActionArgs(real ?? typed, schema, a.args);
@@ -1178,7 +1231,7 @@ async function answerTurn(
       ...(onEvent
         ? {
             onEvent: (ev: Parameters<NonNullable<AgentLoopDeps["onEvent"]>>[0]) =>
-              onEvent(ev.kind === "tool-result" && !ev.ok ? { ...ev, summary: personReason(ev.summary) } : ev),
+              onEvent(ev.kind === "tool-result" && ev.handed_back ? { ...ev, summary: "" } : ev.kind === "tool-result" && !ev.ok ? { ...ev, summary: personReason(ev.summary) } : ev),
           }
         : {}),
       ...(prefs.write_mode === "auto"
@@ -1512,6 +1565,7 @@ chatRouter.post(
         }
       : undefined;
     const situational: PromptOptions = {
+      today: theirDay({ said: parsed.data.today, timeZone: parsed.data.time_zone ?? null }),
       consent: promptPrefs,
       ...(parsed.data.context ? { context: parsed.data.context } : {}),
       ...(parsed.data.selection ? { selection: parsed.data.selection } : {}),

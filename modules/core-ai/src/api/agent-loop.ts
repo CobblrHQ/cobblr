@@ -19,7 +19,8 @@
 // "✓ done — Undo" cards. Read results are clamped so a big list can't blow the
 // prompt; the round cap keeps a confused model from ping-ponging forever.
 
-import { claimedAfterHandBack, endsHonestly } from "./reported-truthfully.js";
+import { claimedAfterHandBack, endsHonestly, leftOffTheCard, claimedWithNoWrite } from "./reported-truthfully.js";
+import { yesNoAgrees } from "./yes-no-agrees.js";
 import { resultBudgetFor } from "@cobblr/workspace-tools";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { scrubIds, namesFromToolResults } from "./scrub-ids.js";
@@ -113,7 +114,11 @@ export interface AgentLoopDeps {
 export type AgentLoopEvent =
   | { kind: "thinking"; round: number }
   | { kind: "tool"; name: string; args: Record<string, unknown>; write: boolean }
-  | { kind: "tool-result"; name: string; ok: boolean; summary: string }
+  /** `handed_back`: a write sent back to the model to settle before any
+   *  card (a missing argument, a value its field cannot take). Its summary is
+   *  written for the model, and nothing failed: the person is shown neither
+   *  (#9516). */
+  | { kind: "tool-result"; name: string; ok: boolean; summary: string; handed_back?: true }
   | { kind: "applied"; name: string; summary: string }
   | { kind: "text-delta"; text: string };
 
@@ -258,6 +263,9 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   // question met the same nudge the day before (#3154). So after a
   // hand-back the reply guards that want a write stand down.
   let handedBack = false;
+  // Every write handed back or held this turn, to say which never reached
+  // the card (#9514).
+  const notProposed: ToolCall[] = [];
   let readsDone = 0;
   /** Which read tools ran this turn - the act guard treats "asked what it
    *  could do, then described it" as the same evidence as naming the action. */
@@ -280,6 +288,17 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
       if (spoken.trim()) {
         if (!nudgedForReport && applied.length === 0 && handedBack) {
           const claimed = claimedAfterHandBack(r.content);
+          if (claimed) {
+            nudgedForReport = true;
+            transcript.push({ role: "assistant", content: r.content });
+            transcript.push({ role: "user", content: claimed });
+            continue;
+          }
+        }
+        if (!nudgedForReport && applied.length === 0 && !handedBack) {
+          // No write ran and none was proposed: a tick or an "I've added"
+          // is a card the model drew itself (#9508).
+          const claimed = claimedWithNoWrite(r.content);
           if (claimed) {
             nudgedForReport = true;
             transcript.push({ role: "assistant", content: r.content });
@@ -315,7 +334,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
             continue;
           }
         }
-        return { kind: "reply", text: endsHonestly(spoken, handedBack, applied.length), applied, ...withFailed() };
+        return { kind: "reply", text: endsHonestly(yesNoAgrees(lastUserSaid, spoken), handedBack, applied.length), applied, ...withFailed() };
       }
       // No tool calls AND no words. Two different models arrive here for two
       // opposite reasons, and the nudge has to serve both:
@@ -395,10 +414,11 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
         if (bounce) {
           handedBack = true;
           writeFailedThisRound = true;
+          notProposed.push(call);
           // Handed back before it ran (which one? which arguments?): the turn
           // goes on to settle it, often with a question for the person, so it
           // is a step they see but not a write that failed.
-          emit({ kind: "tool-result", name: call.name, ok: false, summary: bounce.slice(0, 160) });
+          emit({ kind: "tool-result", name: call.name, ok: false, summary: bounce.slice(0, 160), handed_back: true });
           turnResults.push({ call, text: clampJson({ ok: false, error: bounce }, maxChars) });
           continue;
         }
@@ -484,8 +504,9 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
       transcript.push({ role: "assistant", content: r.content, tool_calls: calls });
       for (const tr of turnResults) transcript.push({ role: "tool", content: tr.text, tool_call_id: tr.call.id });
       for (const call of pendingProposals) {
+        notProposed.push(call);
         const held = "Not proposed: another write in this round was handed back (its result is beside this one). Settle that first, then propose again, all of it, in the order it has to happen; if a later step needs the result of an earlier one, the earlier one has to be confirmed by the person before you can propose the later one, so say so and propose only the first.";
-        emit({ kind: "tool-result", name: call.name, ok: false, summary: held.slice(0, 160) });
+        emit({ kind: "tool-result", name: call.name, ok: false, summary: held.slice(0, 160), handed_back: true });
         transcript.push({ role: "tool", content: clampJson({ ok: false, error: held }, maxChars), tool_call_id: call.id });
       }
       continue;
@@ -493,7 +514,14 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     if (pendingProposals.length > 0) {
       // Some write(s) still need the confirm gate — stop here. Anything already
       // applied this turn is reported alongside.
-      return { kind: "writes", calls: pendingProposals, text: r.content, applied, ...withFailed() };
+      // "Make Shop with a Workbench, Shelf A, Shelf B and a Parts drawer
+      // inside": the four were handed back, the model was told to propose
+      // only the first and say so, and it proposed Shop alone with nothing
+      // said (#9514). What it asked to make and the card does not carry is
+      // named under the card, whatever the model says.
+      const left = leftOffTheCard(notProposed, pendingProposals);
+      const text = left.length ? `${r.content.trim() ? `${r.content.trim()}\n\n` : ""}${left.length === 1 ? `Not on this card: ${left[0]}. Nothing was made for it yet; ask for it again once this is confirmed.` : `Not on this card: ${left.join(", ")}. Nothing was made for them yet; ask for them again once this is confirmed.`}` : r.content;
+      return { kind: "writes", calls: pendingProposals, text, applied, ...withFailed() };
     }
 
     // Everything executed — feed the results back and continue the loop.
@@ -517,7 +545,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   // happened, never a blank bubble.
   return {
     kind: "reply",
-    text: said ? endsHonestly(said, handedBack, applied.length) : "I couldn't finish that one: I ran out of steps before reaching an answer. Try asking again, or in a different way.",
+    text: said ? endsHonestly(yesNoAgrees(lastUserSaid, said), handedBack, applied.length) : "I couldn't finish that one: I ran out of steps before reaching an answer. Try asking again, or in a different way.",
     applied,
     ...withFailed(),
   };

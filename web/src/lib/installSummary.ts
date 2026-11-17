@@ -114,6 +114,12 @@ export function installChanges(s: BundleInstallSummary, names?: ModuleNames): In
  * Returns null when there is genuinely nothing to report, so a caller can stay
  * quiet rather than say "changed nothing".
  */
+/** Whether the install made the table the item went into, not found it there:
+ *  only then may a filing call that table new (#9484). */
+export function installMadeTheTable(s: BundleInstallSummary | null | undefined): boolean {
+  return !!s && s.kind === "instance" && !!s.instance && !s.instance_existed;
+}
+
 export function installToastLine(s: BundleInstallSummary): string | null {
   const bits: string[] = [];
   // What the install DID, never the plan: a table it found already there is

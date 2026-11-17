@@ -307,6 +307,10 @@ export function isOperatorOnlyAction(action: string): boolean {
 
 export interface ListParams {
   orgId: string;
+  /** Rows from this id on. A sandbox's feed starts at its hand-over: the seed
+   *  before it was the platform's, logged as the guest, and read as "You
+   *  updated 4 items · 5h ago" to a visitor who had just arrived (#9485). */
+  fromId?: number;
   /** Operator surfaces only. Member-facing lists leave this unset and never see
    *  OPERATOR_ONLY_ACTIONS. */
   includeOperatorOnly?: boolean;
@@ -347,6 +351,7 @@ export interface ActivityEntry {
  *  a page and its count can never select different rows. */
 function selected(p: ListParams) {
   let q = meta.selectFrom("activity_log").where("org_id", "=", p.orgId);
+  if (typeof p.fromId === "number") q = q.where("id", ">=", p.fromId);
   if (!p.includeOperatorOnly) {
     q = q.where("action", "not in", [...OPERATOR_ONLY_ACTIONS]).where("action", "not like", "impersonation\\_%");
   }

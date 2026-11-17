@@ -3,6 +3,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { CheckCircle, ScanLine, X } from "lucide-react";
 import { useJustFiled } from "../lib/justFiled";
+import { firstFilingLine } from "../lib/firstFilingLine";
 
 export function JustFiledNotice() {
   const { pathname } = useLocation();
@@ -17,7 +18,7 @@ export function JustFiledNotice() {
         <CheckCircle size={16} className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
         <div className="min-w-0 flex-1 text-sm text-content dark:text-mortar-100">
           <div className="font-medium">{note.headline ? `${note.headline}.` : `Filed in ${note.label}.`}</div>
-          {note.firstEver && <div className="text-[13px] text-muted dark:text-slate-400">{note.label} is new: find it any time in the menu.</div>}
+          {note.firstEver && <div className="text-[13px] text-muted dark:text-slate-400">{firstFilingLine(note.label, !!note.madeTheTable)}</div>}
           {note.installed && <div className="text-[12px] text-muted dark:text-slate-400">{note.installed}</div>}
         </div>
         <button title="Close" type="button" onClick={dismiss} aria-label="Close" className="shrink-0 p-0.5 text-faint hover:text-content">

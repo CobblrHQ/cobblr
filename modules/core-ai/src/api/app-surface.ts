@@ -23,6 +23,7 @@
 
 import { GENERATED_SURFACE } from "@cobblr/platform-contract/app-surface";
 import type { Capability } from "@cobblr/platform-contract/app-surface-types";
+import { appCatalog, type AppModuleLike } from "@cobblr/platform-contract/app-catalog";
 
 export type { Capability };
 
@@ -67,4 +68,23 @@ ${lines.join("\n")}
 That list is where a PERSON goes. It is not the limit of what YOU can do: call list_actions and if an action covers what they asked for, RUN it and say what you did. Offering to take someone to a screen, when you could have done the thing, is the least useful answer you have.
 
 If someone asks how to do something in the app and it is NOT in that list, say you are not sure and point them at Configuration. Never describe a mechanism you have not been told about here: inventing one sends a person looking for a screen that does not exist, which is worse than "I don't know".`;
+}
+
+/** The features this workspace has OFF, and the rule for a request that needs
+ *  one. "Add 2 spools of black PLA and a box of M3 nuts to my shopping list",
+ *  with Lists off, came back as a +2 stock change on the PLA and a new part
+ *  for the nuts: nothing on the rail fitted, so the model used the nearest
+ *  write it had (#9511). What each off feature is for is the only thing that
+ *  lets the model see the request belongs to one of them. */
+export function featuresOffPrompt(modules: readonly AppModuleLike[]): string {
+  const off = appCatalog(modules).filter((a) => a.state === "off");
+  if (!off.length) return "";
+  const lines = off.slice(0, 30).map((a) => {
+    const about = a.description.length > 110 ? `${a.description.slice(0, 107).trimEnd()}…` : a.description;
+    return `- ${a.label}${about ? `: ${about}` : ""}`;
+  });
+  return `FEATURES THAT ARE OFF in this workspace:
+${lines.join("\n")}
+
+A request that needs one of these (a shopping list needs Lists, a price paid needs Purchases) is answered by offering to turn it on: propose platform:enable-module with that feature, say what it adds, and do the rest once it is on. Never carry it out with another write instead: putting something on a shopping list is not a stock change and not a new record.`;
 }

@@ -10,6 +10,8 @@ import { useEffect, useState } from "react";
 export interface JustFiled {
   label: string;
   firstEver: boolean;
+  /** This filing set the table up, so a first filing may call it new. */
+  madeTheTable?: boolean;
   /** What an install on the way set up, when there was one. */
   installed: string | null;
   /** The record it made, for "Open it". */

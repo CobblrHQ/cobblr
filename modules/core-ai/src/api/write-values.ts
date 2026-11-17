@@ -195,11 +195,19 @@ export function cardLabel(label: string): string {
   return out || label.trim();
 }
 
+// ascii-only: an argument key or a kind id ("part_id", "inventory:part"), never words someone typed
+const keyWord = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const RAW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function actionArgValues(opts: {
   args: Record<string, unknown>;
-  schema?: Record<string, { label?: string; money?: boolean; address?: boolean }> | null;
+  schema?: Record<string, { label?: string; money?: boolean; address?: boolean; choicesFrom?: string }> | null;
   said: string;
   titleOf?: TitleOf;
+  /** Someone on the People list, by id: what a "who" argument holds. */
+  personOf?: (id: string) => Promise<string | null>;
+  /** The workspace's kinds, to name a `part_id` that comes with no kind. */
+  kindIds?: readonly string[];
 }): Promise<WriteValue[]> {
   const out: WriteValue[] = [];
   const amounts = new Map<WriteValue, string>();
@@ -211,6 +219,22 @@ export async function actionArgValues(opts: {
     const ref = field.match(/^(.+)_id$/)?.[1];
     const refKind = ref ? words(opts.args[`${ref}_kind`]) : null;
     if (refKind && opts.titleOf) value = (await opts.titleOf(refKind, value)) ?? value;
+    // A card never shows a raw id (#9516: "Who has it: ae7e2ab7-…", "Part:
+    // 08a7dc97-…"). A who argument is a person's name; an id named for its
+    // kind ("part_id") is that record's title; one nothing can name says so.
+    const from = opts.schema?.[field]?.choicesFrom;
+    if (RAW_ID.test(value) && (from === "people" || from === "recipients") && opts.personOf) value = (await opts.personOf(value)) ?? value;
+    if (RAW_ID.test(value) && ref && !refKind && opts.titleOf) {
+      const stem = keyWord(ref);
+      for (const k of (opts.kindIds ?? []).filter((id) => keyWord(id.split(":").pop() ?? "") === stem)) {
+        const t = await opts.titleOf(k, value);
+        if (t) {
+          value = t;
+          break;
+        }
+      }
+    }
+    if (RAW_ID.test(value)) value = "(one with no name here)";
     const declared = opts.schema?.[field]?.label ? cardLabel(opts.schema[field]!.label!).replace(/\s+id$/i, "") : undefined;
     // A money argument is an amount as a person says it: "$45.50" on the card.
     const c = opts.schema?.[field]?.money ? parseMoney(raw) : null;

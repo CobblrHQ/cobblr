@@ -93,6 +93,32 @@ export function claimedAfterHandBack(text: string): string | null {
   );
 }
 
+// It made nothing, and said it had.
+//
+//   asked:  "Add my Prusa MK4 printer, it sits on the Workbench."
+//   answer: "Create a machine: “Prusa MK4” ✓ Created Prusa MK4."
+//
+// No tool ran: the model wrote the card and its tick in its own words, and
+// the next turn said the Prusa "isn't recorded in the workspace yet" (#9508).
+// claimedAfterHandBack only reads a turn whose write was handed back; this one
+// tried nothing at all. Only a claim in the first person or under a tick is
+// read, since a turn with no write is often a question about what was done
+// ("you added the M4 bolts this week") and that is history, not a claim.
+const CLAIMED_DONE = new RegExp(
+  `(?:✓|✔|\\bI(?:['’]ve| have)?\\s+(?:just\\s+|now\\s+|also\\s+)?|\\bDone[:,!.]\\s*)[^.!?\\n]{0,40}?(?:${DONE.source}|\\b(?:lent|ordered|scheduled|recorded|set up)\\b)`,
+  "i",
+);
+
+/** The message to hand back when a turn that ran no write says it made one. */
+export function claimedWithNoWrite(text: string): string | null {
+  const claims = [...text.matchAll(new RegExp(CLAIMED_DONE.source, "gi"))].filter((m) => !/\b(?:not|never|nothing)\b|n['’]t\b/i.test(m[0]));
+  if (!text.trim() || claims.length === 0) return null;
+  return (
+    "Nothing was changed this turn: no write ran, and no change was proposed. Your answer says something was done. " +
+    "If they asked for a change, make it now with the tool for it (it becomes a card they confirm); otherwise say plainly that it has not been done."
+  );
+}
+
 // A turn whose every write was handed back, and that changed nothing, ends on
 // words that say so. "Lend the cordless drill to Sam until Friday" was refused
 // four rounds running and the turn ended "Lend cordless drill to Sam until
@@ -108,4 +134,40 @@ export function endsHonestly(text: string, handedBack: boolean, appliedCount: nu
   const said = text.trim();
   if (!said || said.endsWith("?") || SAYS_NOT_DONE.test(said)) return text;
   return `${said.replace(/[.!]*$/, ".")} Nothing was changed.`;
+}
+
+/** What a create in this call is called, by the kind's title field. */
+function namesMade(call: { name: string; args?: Record<string, unknown> | null }): string[] {
+  const titleOf = (f: unknown): string | null => {
+    if (!f || typeof f !== "object") return null;
+    const r = f as Record<string, unknown>;
+    const t = r.name ?? r.title;
+    return typeof t === "string" && t.trim() ? t.trim() : null;
+  };
+  const a = (call.args ?? {}) as Record<string, unknown>;
+  if (call.name === "create_record") {
+    const t = titleOf(a.fields);
+    return t ? [t] : [];
+  }
+  if (call.name === "create_records" && Array.isArray(a.records)) {
+    return a.records.map((r) => titleOf((r as { fields?: unknown } | null)?.fields ?? r)).filter((t): t is string => !!t);
+  }
+  return [];
+}
+
+/** The things a turn asked to make that the card it ends on does not carry:
+ *  each create handed back or held this turn, by name, unless a proposal on
+ *  the card makes one by the same name (#9514). */
+export function leftOffTheCard(
+  notProposed: ReadonlyArray<{ name: string; args?: Record<string, unknown> | null }>,
+  proposed: ReadonlyArray<{ name: string; args?: Record<string, unknown> | null }>,
+): string[] {
+  const onCard = new Set(proposed.flatMap(namesMade).map((n) => n.toLocaleLowerCase()));
+  const out: string[] = [];
+  for (const name of notProposed.flatMap(namesMade)) {
+    const k = name.toLocaleLowerCase();
+    if (onCard.has(k) || out.some((o) => o.toLocaleLowerCase() === k)) continue;
+    out.push(name);
+  }
+  return out;
 }

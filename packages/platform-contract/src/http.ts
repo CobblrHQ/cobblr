@@ -35,9 +35,11 @@ export interface PlatformHttp {
   /** The same judgement for a save that arrives as an action's args (#9446):
    *  `editedFrom` is the args' `edited_from` (EDITED_FROM_ARG), what the
    *  form's fields were when it opened; `current` the record now and `next`
-   *  what this save writes, by the same names. The sentence a refused save
-   *  answers (nothing written), or null when nothing changed since. */
-  staleSaveRefusal(orgId: string, recordId: string, editedFrom: unknown, current: Record<string, unknown>, next: Record<string, unknown>): Promise<string | null>;
+   *  what this save writes, by the same names. `fromPage` is the action's
+   *  ctx.fromPage: a page's form save with no `edited_from` is a page older
+   *  than the app, refused (#9448). The sentence a refused save answers
+   *  (nothing written; its code from staleRefusalCode), or null. */
+  staleSaveRefusal(orgId: string, recordId: string, editedFrom: unknown, current: Record<string, unknown>, next: Record<string, unknown>, fromPage?: boolean): Promise<string | null>;
   /** Hosted overlay registers a request guard (rate-limit / abuse). */
   registerRequestGuard(g: RequestGuard): void;
   /** Register a global, UNAUTHENTICATED webhook endpoint mounted at

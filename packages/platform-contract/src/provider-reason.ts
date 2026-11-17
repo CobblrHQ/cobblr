@@ -142,6 +142,18 @@ function whereToFix(door: CredentialDoor | undefined): string {
  * what to do. Never a status code, never a body. `door` says where the
  * credential lives, so the sentence points at the right screen.
  */
+/** "Try again in about 4 hours." A wait said in the unit a person uses:
+ *  "Try again in about 12794 seconds" was a free tier's day allowance, told
+ *  to a person as a stopwatch reading (#9518). */
+export function tryAgainIn(sec: number): string {
+  const s = Math.max(1, Math.round(sec));
+  if (s < 90) return `Try again in about ${s} seconds.`;
+  const min = Math.round(s / 60);
+  if (min < 90) return `Try again in about ${min} minutes.`;
+  const hours = Math.round(s / 3600);
+  return hours < 20 ? `Try again in about ${hours} hours.` : "Try again tomorrow.";
+}
+
 export function providerSentence(
   reason: ProviderReason,
   opts: { provider: string; door?: CredentialDoor; retryAfterSec?: number; status?: number; model?: string },
@@ -154,7 +166,7 @@ export function providerSentence(
     case "invalid_key":
       return `This ${who} key is not valid. Replace it under ${whereToFix(opts.door)}. Nothing was changed.`;
     case "quota": {
-      const wait = opts.retryAfterSec ? `Try again in about ${opts.retryAfterSec} seconds.` : "Try again in a minute, or tomorrow if the day's allowance is spent.";
+      const wait = opts.retryAfterSec ? tryAgainIn(opts.retryAfterSec) : "Try again in a minute, or tomorrow if the day's allowance is spent.";
       return `${who} has refused this call for its usage limit. ${wait} Nothing was changed.`;
     }
     case "model_unavailable":

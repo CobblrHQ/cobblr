@@ -10,10 +10,10 @@ const tool: WorkspaceTool = {
   name: "change_scan_item",
   module: "core-scan",
   description:
-    "Tidy scan inbox items before filing. do: edit (name, quantity, location_id, empty_box, reviewed, keep_separate), discard (to Recently deleted), restore, send_back (a filed scan returns to the inbox), rerun (hint, wrong, more_detail), combine (ids, keep_id; quantities add), uncombine (either row), theme (ids, tag, category), photo (rotate, add_file_id, main_file_id or remove_file_id).",
+    "Tidy scan inbox items before filing. do: edit (name, quantity, location_id, empty_box, reviewed, keep_separate), discard (to Recently deleted), restore, send_back (a filed scan returns to the inbox), rerun (hint, wrong, more_detail), combine (ids, keep_id; quantities add), uncombine (either row), theme (ids, tag, category), photo (rotate, add_file_id, main_file_id or remove_file_id), attach (to a record already kept: kind, entity_id, how; filing it never makes a second).",
   mode: "write",
   params: {
-    do: z.enum(["edit", "discard", "restore", "send_back", "rerun", "combine", "uncombine", "theme", "photo"]),
+    do: z.enum(["edit", "discard", "restore", "send_back", "rerun", "combine", "uncombine", "theme", "photo", "attach"]),
     id: z.string().optional().describe("An id from list_scan_inbox"),
     ids: z.array(z.string()).max(200).optional(),
     name: z.string().optional(),
@@ -32,6 +32,9 @@ const tool: WorkspaceTool = {
     add_file_id: z.string().optional(),
     main_file_id: z.string().optional(),
     remove_file_id: z.string().optional(),
+    kind: z.string().optional().describe("attach: the record's kind"),
+    entity_id: z.string().optional().describe("attach: the record it is more of"),
+    how: z.enum(["add-qty", "replace", "link-barcode", "merge-fields", "move"]).optional().describe("attach: add-qty more of the same (default), replace one that ran out"),
   },
   execute: async (api, args) => {
     const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
@@ -129,8 +132,25 @@ const tool: WorkspaceTool = {
         const r = await call(ops[0]![0], ops[0]![1], ops[0]![2], "couldn't change that photo");
         return r.fail ?? toolOk({ id, main_photo: r.body.image_file_id ?? null });
       }
+      case "attach": {
+        // "Add that PLA receipt line to my Black PLA" (#9513): the line is
+        // more of a record already kept. A stock change on the record beside
+        // it left the line waiting in the inbox, and filing it later counted
+        // the spool twice. Through the card's own door, the line is resolved
+        // as it adds, and send_back takes both back together.
+        const miss = needId(); if (miss) return miss;
+        const kind = str(args.kind);
+        const entity = str(args.entity_id);
+        if (!kind || !entity) return toolFail("attach needs kind and entity_id: the record this line is more of");
+        const how = typeof args.how === "string" && args.how ? args.how : "add-qty";
+        const body: Record<string, unknown> = { kind, entity_id: entity, mode: how };
+        if ((how === "add-qty" || how === "replace") && typeof args.quantity === "number") body.qty = args.quantity;
+        if (how === "move" && str(args.location_id)) body.location_id = str(args.location_id);
+        const r = await call("POST", `${at}/attach`, body, "couldn't add that to the record");
+        return r.fail ?? toolOk({ id, attached_to: { kind, entity_id: entity }, how, undo: { do: "send_back", id } });
+      }
       default:
-        return toolFail("do is one of edit, discard, restore, send_back, rerun, combine, uncombine, theme, photo");
+        return toolFail("do is one of edit, discard, restore, send_back, rerun, combine, uncombine, theme, photo, attach");
     }
   },
 };

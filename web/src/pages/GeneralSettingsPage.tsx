@@ -32,11 +32,13 @@ export function GeneralSettingsPage() {
         <dl className="text-sm">
           <div className="flex gap-3 py-1">
             <dt className="text-faint w-24 shrink-0">Name</dt>
-            <dd className="text-content dark:text-mortar-200">{activeOrg?.name ?? "—"}</dd>
+            {/* min-w-0 and a break anywhere: a name or an address with no
+                space in it pushed the page sideways at 200% text (#9499). */}
+            <dd className="min-w-0 break-words [overflow-wrap:anywhere] text-content dark:text-mortar-200">{activeOrg?.name ?? "—"}</dd>
           </div>
           <div className="flex gap-3 py-1">
             <dt className="text-faint w-24 shrink-0">Address</dt>
-            <dd className="font-mono text-xs text-content dark:text-mortar-200">
+            <dd className="min-w-0 [overflow-wrap:anywhere] font-mono text-xs text-content dark:text-mortar-200">
               /w/{displaySlug(activeSlug)}
             </dd>
           </div>

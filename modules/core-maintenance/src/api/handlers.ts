@@ -24,10 +24,10 @@ import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "../db.js";
 import { serviceTimeZone, completeEntry, rollForward, rolledFromOf, unrollIfCurrent } from "../schedules-store.js";
-import { createSchedule, refuseUnknownCounter, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule, removeSchedule } from "./schedules.js";
+import { createSchedule, refuseUnknownCounter, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, scheduleUndoArgs, updateSchedule, renewSchedule, removeSchedule } from "./schedules.js";
 import { NagBody, CadenceBody, changeNag } from "./reminders.js";
 import { moneyForStorage } from "@cobblr/platform-contract/money";
-import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
+import { EDITED_FROM_ARG, staleRefusalCode } from "@cobblr/platform-contract/edited-from";
 import { TermBody } from "../term-fields.js";
 import { updateTerm, endRenewal } from "../terms-store.js";
 
@@ -74,8 +74,8 @@ export function registerMaintenanceHandlers(): void {
     if (prior) {
       const now: Record<string, unknown> = {};
       for (const k of Object.keys(d.data)) now[k] = argValue(k, (prior as Record<string, unknown>)[k]);
-      const refused = await platform().http.staleSaveRefusal(ctx.orgId, id, args[EDITED_FROM_ARG], now, d.data as Record<string, unknown>);
-      if (refused) return { ok: false, error: refused, data: { code: "changed_since" } };
+      const refused = await platform().http.staleSaveRefusal(ctx.orgId, id, args[EDITED_FROM_ARG], now, d.data as Record<string, unknown>, ctx.fromPage);
+      if (refused) return { ok: false, error: refused, data: { code: staleRefusalCode(refused) } };
     }
     const result = await updateTerm(db, ctx.orgId, ctx.userId, id, d.data);
     // What Undo writes back: each field this edit set, as it was.
@@ -162,10 +162,11 @@ export function registerMaintenanceHandlers(): void {
     const was: Record<string, unknown> = { schedule_id: before.id };
     for (const k of Object.keys(parsed.data)) was[k] = argValue(k, (before as Record<string, unknown>)[k]);
     // A form that opened before a teammate's change never writes over it (#9446).
-    const refused = await platform().http.staleSaveRefusal(ctx.orgId, before.id, args[EDITED_FROM_ARG], was, parsed.data as Record<string, unknown>);
-    if (refused) return { ok: false, error: refused, data: { code: "changed_since" } };
+    const refused = await platform().http.staleSaveRefusal(ctx.orgId, before.id, args[EDITED_FROM_ARG], was, parsed.data as Record<string, unknown>, ctx.fromPage);
+    if (refused) return { ok: false, error: refused, data: { code: staleRefusalCode(refused) } };
+    const undo = await scheduleUndoArgs(ctx.orgId, before, parsed.data, was);
     const result = await updateSchedule(db, ctx.orgId, ctx.userId, before, parsed.data);
-    return { ok: true, result, before: was };
+    return { ok: true, result, ...(undo ? { before: undo } : {}) };
   });
   platform().actions.registerHandler("core-maintenance.renew", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;

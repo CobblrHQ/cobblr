@@ -2,7 +2,7 @@
 type: feature
 scope: sales
 date: 2026-11-17
-docs_target: docs/USER_GUIDE.md#3.26 Sales (outbound orders)
+docs_target: docs/user-guide/sales.md#3.26 Sales (outbound orders)
 ---
 An order can now be sent in several parcels: each one keeps its own tracking number, carrier and what is in it, and the order reads shipped once every line is in a parcel.
 

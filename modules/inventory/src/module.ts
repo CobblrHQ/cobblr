@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.23.1",
+  version: "0.23.4",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -83,6 +83,10 @@ export default defineModule({
           // a module matching a pattern's yarn sees what the stash page sees.
           { name: "assigned_qty", type: "number", readOnly: true },
           { name: "available_qty", type: "number", readOnly: true },
+          // What is on hand, open units included, and whether that is at or
+          // below the minimum: the parts list's own figures (on-hand.ts).
+          { name: "on_hand", type: "number", readOnly: true },
+          { name: "low_stock", type: "boolean", readOnly: true },
           // What of it is installed in an asset or machine (2 sticks in a
           // computer) and what is on hand, and in what: derived on read from
           // placement, so a view can hide what has nothing on hand and the
@@ -154,6 +158,10 @@ export default defineModule({
           // Where it lives, by name: the answer to "where is my lamp".
           "location_name",
           "assigned_qty",
+          // What is on hand (open units included) and whether that is low:
+          // the figures the parts list shows, read by Cobb and Search (#7921).
+          "on_hand",
+          "low_stock",
           "available_qty",
           "installed_qty",
           "spare_qty",

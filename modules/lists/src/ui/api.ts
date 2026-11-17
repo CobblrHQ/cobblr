@@ -2,6 +2,7 @@
 // Routes are mounted at /api/v1/orgs/:slug/modules/lists/...
 
 import { dayHere } from "@cobblr/platform-contract/day";
+import { EDITED_FROM_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
 import { describeUnreadableBody, noteWorkspaceWrite, waitingWritesToSend, workspaceFetch, type Edit } from "@cobblr/platform-web";
 import { dayLabel } from "@cobblr/platform-contract/day";
 import { parseLineAmount } from "../line-amount.js";
@@ -163,8 +164,11 @@ export class ListsApi {
   addItem(listId: string, body: { title: string; note?: string; qty?: string }) {
     return this.req<ListItem>("POST", "/items", { ...body, list_id: listId });
   }
+  /** Got it, or not: a tap whose value is the person's intent. With the
+   *  amount bought it is two fields, so it says what it turned from, or the
+   *  server takes it for an older page's form save and refuses it (#9448). */
   toggleItem(id: string, checked: boolean, quantity?: number) {
-    return this.req<ListItem>("PATCH", `/items/${id}`, { checked, ...(checked && quantity ? { quantity } : {}) });
+    return this.req<ListItem>("PATCH", `/items/${id}`, { checked, ...(checked && quantity ? { quantity } : {}) }, { [EDITED_FROM_HEADER]: encodeEditedFrom({ checked: !checked }) });
   }
   claimItem(id: string, claimed: boolean) {
     return this.req<ListItem>("PATCH", `/items/${id}`, { claimed });

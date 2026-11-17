@@ -62,6 +62,8 @@
   "sales_holds": "What stock a draft order holds for its customer: the owner's own bookkeeping, never carried when the order is shared.",
   "sales_order_documents": "The shop's numbered financial paperwork includes its customer's address. It stays with the shop when an order is shared; the owner distributes the PDF explicitly through download or email.",
   "sales_order_history": "The history of one of the owner's sales: their own dealings.",
+  "sales_order_parcel_lines": "What a parcel of the owner's sale carried: the owner's own dealings, never carried when the order is shared.",
+  "sales_order_parcels": "The boxes the owner sent a sale in, with their tracking numbers: the owner's own dealings, never carried when the order is shared.",
   "sales_order_items": "A sale's lines are records of their own kind (sales:order_item), which a share cannot hold yet (#5911).",
   "sales_payments": "What a customer paid the owner on a sale: the owner's own accounting, never carried when the order is shared.",
   "sales_returns": "What the owner took back and refunded on a sale: the owner's own accounting, never carried when the order is shared.",

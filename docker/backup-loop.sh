@@ -84,6 +84,12 @@
 #      next one, the loop. Every size is now read through size_of (0 for a file
 #      that is gone), and a --once that is cut short by any error stops
 #      before the loop.
+#  11. THE START-UP DUMP WAITS FOR A WORKSPACE (#9489). A brand-new install's
+#      first dump was taken while the api's first start was still making the
+#      databases, came out cut short and was kept as .failed, so the log's
+#      first word to a new self-hoster was FAILED. An instance with no
+#      workspace holds nothing a person made: its start-up dump waits (checked
+#      every 5 minutes) until one exists. A database it cannot ask is dumped.
 #
 # Env (every one has a default; a compose file overrides what it needs):
 #   BACKUP_AT               local HH:MM to dump at, or "interval" to keep the
@@ -361,10 +367,39 @@ if [ "$ONCE" = "1" ]; then
   exit 1
 fi
 
+# Does the instance hold any workspace yet? "some" or "none" when the database
+# answers, nothing when it cannot (no psql, refused, an error): a box we cannot
+# ask is dumped as before, never taken for empty.
+workspaces() {
+  local t
+  t=$(psql -XAtq -c "select to_regclass('public.orgs') is not null" 2>/dev/null) || return 0
+  [ "$t" = "f" ] && { echo none; return 0; }
+  [ "$t" = "t" ] || return 0
+  t=$(psql -XAtq -c "select exists (select 1 from orgs)" 2>/dev/null) || return 0
+  [ "$t" = "t" ] && echo some
+  [ "$t" = "f" ] && echo none
+  return 0
+}
+
 echo "[backup] dumping at ${AT} local (${ZONE}), prefix ${PREFIX}, floor ${MIN} bytes"
 [ "$ZONE" = "UTC" ] && [ "$AT" != "interval" ] && echo "[backup] note: ${AT} is read in UTC; set BACKUP_TZ to the zone your off-box copy runs in"
 fails=0
+# The start-up dump waits for a workspace (#9489). On a brand-new install it
+# was taken while the api's first start was still making the instance's
+# databases, came out cut short and was kept as .failed, so a new self-hoster's
+# first look at this log was a failure that meant nothing. An instance with no
+# workspace holds nothing a person made, so its first dump waits until one
+# exists (checked every 5 minutes), and then is taken at once.
+startup=1
+said_empty=0
 while true; do
+  if [ "$startup" = "1" ] && [ "$(workspaces)" = "none" ]; then
+    [ "$said_empty" = "0" ] && echo "[backup] no workspace on this instance yet: nothing a person made to dump, so the first dump waits for one; checking again in 300s"
+    said_empty=1
+    sleep 300
+    continue
+  fi
+  startup=0
   if take_turn; then
     if dump_once; then fails=0; else fails=$(( fails + 1 )); fi
     prune

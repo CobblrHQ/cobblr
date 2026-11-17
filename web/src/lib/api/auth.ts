@@ -68,6 +68,9 @@ export const authApi = {
       /** An Offline CA install's root certificate, on plain HTTP, for a phone to
        *  trust once before its camera works. Null on every other install. */
       phone_certificate_url?: string | null;
+      /** What becomes of a sign-in or reset link: emailed, shown on the page
+       *  (development), or reaching nobody (a box with no email sender). */
+      email_links?: "sent" | "inline" | "none";
     }>("GET", "/auth/config"),
   signup: (body: {
     email: string;

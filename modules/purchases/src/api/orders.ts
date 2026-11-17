@@ -745,12 +745,21 @@ ordersRouter.post(
     if (!body.success) return badBody(res, body.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const line = await db.selectFrom("purchases_order_items").select("id").where("id", "=", req.params.itemId ?? "").where("order_id", "=", req.params.id ?? "").executeTakeFirst();
+    const line = await db.selectFrom("purchases_order_items").select(["id", "description", "received_qty", "received_at", "qty"]).where("id", "=", req.params.itemId ?? "").where("order_id", "=", req.params.id ?? "").executeTakeFirst();
     if (!line) {
       res.status(404).json({ error: { code: "not_found", message: "order line not found" } });
       return;
     }
+    const was = line.received_qty != null ? Number(line.received_qty) : line.received_at ? Number(line.qty ?? 0) : 0;
     const r = await setReceivedCount(db, ctx.org.id, line.id, body.data.received, arrivedEverywhere(new Date()));
+    if (r && r.received !== was) {
+      // capability-except activity:a-change-and-its-history-line-commit-together: setReceivedCount owns the receipt transaction and flushes stock to inventory before it answers, as the package-scan receipt does (#9035)
+      await platform().activity.log({
+        orgId: ctx.org.id, userId: sessionUser(req).id, action: "order_item_received",
+        ref: { module: "purchases", entityType: "order", entityId: req.params.id ?? "" },
+        diff: { line: line.id, item: line.description, from: was, to: r.received, of: r.qty },
+      });
+    }
     res.json(r);
   }),
 );

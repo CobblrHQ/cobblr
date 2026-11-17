@@ -7,8 +7,13 @@
 // module.ts declares as updateEndpoint, and an instance's /items/{id}), the
 // one the server judges, is judged here by its body:
 //   - an Edit's `.body`, with the same Edit's `.headers` beside it: passes;
-//   - an object literal of named fields (`{ qty }`, `{ checked }`): passes, a
-//     named setter whose caller states the one value it means;
+//   - an object literal of one named field (`{ qty }`, `{ checked }`):
+//     passes, a named setter whose caller states the one value it means;
+//   - an object literal of two or more fields: a form's save, so it passes
+//     only with headers that name EDITED_FROM_HEADER beside it. The server
+//     refuses a page's save of two or more fields that does not say what it
+//     opened with as a page older than the app (#9448), so a literal without
+//     them would be refused on every press;
 //   - anything else (a parameter bag, a spread of one, a `metadata` bag):
 //     fails. A bag is a form's save, and a form's save says what it opened
 //     with, or an older tab's copy goes back over a newer save in silence.
@@ -19,7 +24,9 @@
 // THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. The named setters: a list
 // line's Got it (`{ checked }`) and a queued label's count (`{ qty }`) are
 // one-tap acts whose value is the person's intent, not a copy of what the
-// form opened with, so the rule stops at bags. The request helpers
+// form opened with, so the rule stops at bags. A Got it with the amount
+// bought (`{ checked, quantity }`) is two fields, and says what it turned
+// from in its headers (#9448). The request helpers
 // themselves (`request(method, path, body)`) take the method as a variable
 // and are not judged: their callers are. A PATCH to any other route (a
 // provider, a field def, a printer, a line inside an order) is not one the
@@ -73,16 +80,18 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-const WRITE = new Set(["PATCH"]);
+const WRITE = new Set(["PATCH", "PUT"]);
 const OPT_OUT = /\/\/ UNJUDGED-SAVE: \S/;
 
 const isLit = (n: ts.Node | undefined): n is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral =>
   !!n && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n));
 
-/** Is this body a bag of fields rather than an Edit or named fields? */
-function bag(body: ts.Expression): boolean {
-  if (ts.isParenthesizedExpression(body) || ts.isAsExpression(body)) return bag(body.expression);
+/** Is this body a bag of fields rather than an Edit or named fields? With
+ *  `saysOpened` false, a literal of two or more fields is one too. */
+function bag(body: ts.Expression, saysOpened = true): boolean {
+  if (ts.isParenthesizedExpression(body) || ts.isAsExpression(body)) return bag(body.expression, saysOpened);
   if (ts.isObjectLiteralExpression(body)) {
+    if (!saysOpened && body.properties.length >= 2) return true;
     return body.properties.some((p) => {
       if (ts.isSpreadAssignment(p)) return !literalSpread(p.expression);
       const name = p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? p.name.text : "";
@@ -176,6 +185,11 @@ function fromUpdateLookup(path: ts.Expression | undefined, names: Map<string, ts
   return parts.some((p) => through(p, 0));
 }
 
+/** Headers that say what the form opened with: they name EDITED_FROM_HEADER. */
+function saysWhatItOpened(headers: ts.Expression | undefined): boolean {
+  return !!headers && /\bEDITED_FROM_HEADER\b|x-cobblr-edited-from/.test(headers.getText());
+}
+
 /** `x.body` beside `x.headers`: an Edit handed on whole. */
 function anEdit(body: ts.Expression | undefined, headers: ts.Expression | undefined): boolean {
   if (!body || !ts.isPropertyAccessExpression(body) || body.name.text !== "body") return false;
@@ -207,7 +221,7 @@ export function check(file: string, src: string, kinds = kindRoutes()): Violatio
       const m = args.findIndex((a) => isLit(a) && WRITE.has(a.text));
       if (m >= 0 && args.length > m + 2 && (toAKind(file, args[m + 1], kinds) || fromUpdateLookup(args[m + 1], names))) {
         const body = args[m + 2]!;
-        if (!anEdit(body, args[m + 3]) && bag(body)) report(node, (args[m] as ts.StringLiteral).text);
+        if (!anEdit(body, args[m + 3]) && bag(body, saysWhatItOpened(args[m + 3]))) report(node, (args[m] as ts.StringLiteral).text);
       }
       for (const a of args) {
         if (!ts.isObjectLiteralExpression(a)) continue;
@@ -216,7 +230,7 @@ export function check(file: string, src: string, kinds = kindRoutes()): Violatio
         const sent = prop("body")?.initializer;
         if (!isLit(method) || !WRITE.has(method.text) || !sent || !toAKind(file, args[0], kinds)) continue;
         const inner = ts.isCallExpression(sent) && sent.expression.getText() === "JSON.stringify" ? sent.arguments[0] : sent;
-        if (inner && bag(inner)) report(node, method.text);
+        if (inner && bag(inner, saysWhatItOpened(prop("headers")?.initializer))) report(node, method.text);
       }
     }
     ts.forEachChild(node, visit);

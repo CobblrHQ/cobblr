@@ -65,7 +65,7 @@ import { dispatch } from "../platform/notifications.js";
 import { createAccount } from "../platform/accounts.js";
 import { isUndeliverableTestAddress } from "../platform/email-send.js";
 import * as activity from "../platform/activity.js";
-import { activeAuthEmailSender, fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
+import { activeAuthEmailSender, authEmailLinks, fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
 import { discordAppId } from "../platform/discord-oauth.js";
 import { communityLinks, discordInviteUrl, type CommunityLink } from "../platform/community.js";
 import { provisionAppWorkspace, ProvisionAppError } from "../platform/provision-app.js";
@@ -361,6 +361,9 @@ authRouter.get("/config", async (req, res) => {
     // (a hosted overlay's), or null (none: links show inline). A name only. A
     // staging that must never mail a person asserts its own here (2026-10-10).
     email_sender: activeAuthEmailSender(),
+    // Whether a sign-in or reset link reaches anyone (authEmailLinks): the page
+    // offers "Email me a sign-in link" and "Forgot password?" only when it does.
+    email_links: authEmailLinks(),
     // Captcha for the signup form. Null unless a provider + secret are configured
     // server-side (the trial tier). The site key is public; the secret never is.
     captcha: captchaEnabled()
@@ -1281,9 +1284,21 @@ const MagicRequest = z.object({
   display_name: readableNameField(120).optional(),
 });
 
+// A box that can send no email cannot send a link either (#9488): it says so,
+// rather than "a magic link has been issued" for a message that never leaves.
+// The answer is the server's, the same for every address, so it says nothing
+// about which accounts exist.
+const NO_EMAIL_LINKS = {
+  error: {
+    code: "no_email_sender",
+    message: "This server can't send email, so a link can't reach you. Ask an admin of your workspace to reset your password in Configuration, Users.",
+  },
+};
+
 // REPLAY: sends a sign-in link; asking again sends another, as asked
 authRouter.post("/magic/request", async (req, res, next) => {
   try {
+    if (authEmailLinks() === "none") return res.status(409).json(NO_EMAIL_LINKS);
     if (overLimit(magicRequestLimiter, req)) return rateLimited(res);
     // The operator turned password and email-link sign-in off: the
     // instance's own provider is the only way in (platform/oidc.ts).
@@ -1573,6 +1588,7 @@ const PasswordForgot = z.object({ email: z.string().email().max(255) });
 // REPLAY: sends a reset link; asking again sends another, as asked
 authRouter.post("/password/forgot", async (req, res, next) => {
   try {
+    if (authEmailLinks() === "none") return void res.status(409).json(NO_EMAIL_LINKS);
     if (!(await passwordSignInOn())) return void res.status(403).json(PASSWORD_SIGN_IN_OFF);
     if (overLimit(passwordForgotLimiter, req)) {
       rateLimited(res);

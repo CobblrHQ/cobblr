@@ -2,6 +2,11 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-17
+
+### Features
+- An order can now be sent in several parcels: each one keeps its own tracking number, carrier and what is in it, and the order reads shipped once every line is in a parcel.
+
 ## 2026-11-10
 
 ### Features

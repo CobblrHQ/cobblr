@@ -34,7 +34,7 @@ export { BulkGiveTo } from "./BulkGiveTo";
 export { RecordFaces, FaceSection, FacesOn, faceShows, useFaces, useFaceOn } from "./faces";
 export { useInvokeEntityAction } from "./use-invoke-action";
 export { useLater, type Later } from "./use-later";
-export { useFieldDraft, type FieldDraft } from "./use-field-draft";
+export { movedUnderSentence, useFieldDraft, type FieldDraft } from "./use-field-draft";
 export { useSentWords, type SentWords } from "./use-sent-words";
 export { useFieldPresentation, PresentationGate, type FieldPresentation } from "./field-presentation";
 export { stillAsking, useStillAsking } from "./still-asking";
@@ -119,7 +119,7 @@ export { MoneyInput, MoneyValueInput, type MoneyInputProps } from "./MoneyInput"
 export { AddressPicker, AddressView, type AddressPickerProps } from "./AddressPicker";
 export { packFields, fieldNeed, MIN_COL_PX, GAP_PX, type FieldNeed, type FieldSpace, type FieldPacking, type PackedCell, type PackOptions } from "./field-pack";
 export { FieldPack, fieldPackControlClass, type FieldPackItem } from "./FieldPack";
-export { EditField, EditSelect, FieldLabel, LabeledField, editFieldNeed, editFieldItem, editFieldText, moneyFieldItem, usedValueFieldItem, type EditFieldProps } from "./EditField";
+export { EditField, EditSelect, FieldLabel, LabeledField, MovedUnderNote, editFieldNeed, editFieldItem, editFieldText, moneyFieldItem, usedValueFieldItem, type EditFieldProps } from "./EditField";
 export { relativeTime } from "./relativeTime";
 export { FieldRenderer, boolLabel, boolTruthy, NoImage } from "./FieldRenderer";
 export {

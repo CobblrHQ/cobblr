@@ -461,7 +461,7 @@ export function registerPlatformActionHandlers(): void {
     if (!ctx.userId) return { ok: false, error: "Sign in to change a record." };
     const membership = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", ctx.orgId).where("user_id", "=", ctx.userId).executeTakeFirst();
     if (!membership) return { ok: false, error: "You are not a member of this workspace." };
-    const r = await updateRecordFields({ orgId: ctx.orgId, userId: ctx.userId, role: membership.role, ...parsed.data, editedFrom: (ctx.args as Record<string, unknown> | null)?.[EDITED_FROM_ARG] });
+    const r = await updateRecordFields({ orgId: ctx.orgId, userId: ctx.userId, role: membership.role, ...parsed.data, editedFrom: (ctx.args as Record<string, unknown> | null)?.[EDITED_FROM_ARG], fromPage: ctx.fromPage });
     if (!r.ok) return { ok: false, error: r.error, data: { code: r.code } };
     const withheld = r.withheld.length ? ` ${r.withheld.join(", ")} was left alone: you cannot see it.` : "";
     return { ok: true, summary: `${r.summary}${withheld}`, data: { kind: parsed.data.kind, id: parsed.data.id, changed: r.changed, withheld: r.withheld } };

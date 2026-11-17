@@ -236,3 +236,64 @@ export function argsFromCallRecord(
   }
   return filled ? out : null;
 }
+
+// A "who" argument, said by name.
+//
+//   "Lend the DeWalt drill to Sam, due back this Friday"  ->  assets:lend
+//     args {holder: "Sam", due_back: "2026-11-20"}
+//
+// assets:lend takes `to`, someone on the People list by id. The model said
+// Sam by name, under platform:lend's word for it, three calls running; each
+// was refused, it then made a TAG called Sam, and the drill was never lent
+// (#9512, round 6 walk). A name is what a person says, so the name is looked
+// up: one person by that name is that person's id, in place, as the id and
+// the argument's spelling are corrected above. Nobody by that name is said
+// so, with the action that adds a person; two are a question.
+
+export interface Person {
+  id: string;
+  name: string;
+}
+
+const WHO_WORDS = new Set(["holder", "person", "who", "borrower", "assignee", "to", "recipient", "lender", "owner"]);
+const sameName = (a: string, b: string): boolean => a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
+
+export function whoByName(
+  actionId: string,
+  schema: Record<string, ArgSpec> | null | undefined,
+  given: unknown,
+  people: readonly Person[],
+): { args: Record<string, unknown> } | { refusal: string } | null {
+  const whoArgs = Object.entries(schema ?? {}).filter(([, s]) => s?.choicesFrom === "people" || s?.choicesFrom === "recipients");
+  if (!whoArgs.length || !given || typeof given !== "object" || Array.isArray(given)) return null;
+  const out: Record<string, unknown> = { ...(given as Record<string, unknown>) };
+  let changed = false;
+  // The person said under another action's word for them (holder for to):
+  // one undeclared who-word, one who argument left empty.
+  const empty = whoArgs.filter(([n]) => out[n] === undefined || out[n] === "");
+  const strays = Object.keys(out).filter((k) => !(k in (schema ?? {})) && words(k).some((w) => WHO_WORDS.has(w)) && typeof out[k] === "string");
+  if (empty.length === 1 && strays.length === 1) {
+    out[empty[0]![0]] = out[strays[0]!];
+    delete out[strays[0]!];
+    changed = true;
+  }
+  for (const [name, spec] of whoArgs) {
+    const said = out[name];
+    if (typeof said !== "string" || !said.trim() || ID.test(said.trim()) || said.startsWith("@")) continue;
+    if (people.some((p) => p.id === said)) continue;
+    const hits = people.filter((p) => sameName(p.name, said));
+    if (hits.length === 1) {
+      out[name] = hits[0]!.id;
+      changed = true;
+      continue;
+    }
+    const label = spec?.label ?? name;
+    if (hits.length > 1) {
+      return { refusal: `${hits.length} people on the People list are called "${said}" (${hits.map((p) => p.id).join(", ")}), and ${actionId}'s ${name} (${label}) takes one. Ask the user which one they mean.` };
+    }
+    return {
+      refusal: `Nobody called "${said}" is on the People list, and ${actionId}'s ${name} (${label}) takes someone on it. Propose platform:add-person with name "${said}" (a person, never a tag), and say ${actionId} follows once they are added; or ask the user who they meant.`,
+    };
+  }
+  return changed ? { args: out } : null;
+}

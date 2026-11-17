@@ -62,10 +62,10 @@ export function MobileNav() {
   // it shows in Arrange, switched on in the menu's header or by holding a row.
   const [arranging, setArranging] = useState(false);
   const hold = useLongPress(() => setArranging(true));
-  // A table the person just got, pointed at once (navPointer.ts): a dot on the
-  // closed menu button, then "New" beside it in the open menu.
+  // The table a first filing went to, pointed at once (navPointer.ts): a dot on
+  // the closed menu button, then "New" (it made the table) or "Here" beside it.
   const pointer = useNavPointer(activeSlug);
-  const [pointed, setPointed] = useState<string | null>(null);
+  const [pointed, setPointed] = useState<{ label: string; isNew: boolean } | null>(null);
 
   // Unread notifications, cross-workspace — shares the header bell's query key
   // so the two stay in sync. The desktop bell polls this every 15s but is
@@ -138,7 +138,7 @@ export function MobileNav() {
     grouped: groupNavRows(visibleTops, doorNames, { homeRow: !appMode, placement }).grouped,
   });
   const loose = (m: (typeof visibleTops)[number]) => row(m.name, navTargetFor(m.name, appMode), m.displayName,
-    pointed === m.displayName ? <NewInNav /> : undefined,
+    pointed?.label === m.displayName ? <PointedInNav isNew={pointed.isNew} /> : undefined,
     m.name.startsWith(INSTANCE_PREFIX) ? arrangeMenu(m.displayName, [m]) : undefined);
   const block = (m: (typeof visibleTops)[number]) => {
     const group = m.name.startsWith(NAVGROUP_PREFIX) ? instanceGroups.get(m.name) : undefined;
@@ -186,7 +186,7 @@ export function MobileNav() {
         type="button"
         onClick={() => {
           if (!open && pointer.label) {
-            setPointed(pointer.label);
+            setPointed({ label: pointer.label, isNew: pointer.isNew });
             pointer.seen();
           }
           setOpen((o) => !o);
@@ -422,10 +422,10 @@ export function MobileNav() {
 }
 
 /** "New": the table the person just got, beside its entry, once. */
-function NewInNav() {
+function PointedInNav({ isNew }: { isNew: boolean }) {
   return (
     <span data-testid="nav-new" className="shrink-0 rounded-full bg-cobble-600 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
-      New
+      {isNew ? "New" : "Here"}
     </span>
   );
 }

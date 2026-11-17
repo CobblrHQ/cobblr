@@ -1,7 +1,7 @@
 // Registers its Home tile with platform-web's registerDashboardWidget seam when this UI bundle loads.
 import "./DashboardWidget";
 import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
-import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, useRecordEdits, subscribeWaitingWrites, browserOffline, useRecordAsOpened } from "@cobblr/platform-web";
+import { MovedUnderNote, downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, useRecordEdits, subscribeWaitingWrites, browserOffline, useRecordAsOpened } from "@cobblr/platform-web";
 // sales UI — the host mounts <SalesUI /> at /sales. A list of sales orders; the
 // detail modal carries the customer, line items (each an inventory part + qty +
 // price), a running total, and the **Fulfill** button that decrements the sold
@@ -823,6 +823,7 @@ function NumberCell({ label, value, min, allowEmpty, onSave }: { label: string; 
       setError(`Enter a quantity of at least ${min}.`);
       return;
     }
+    if (!f.mayWrite()) return;
     setError(null);
     setSaving(true);
     try {
@@ -852,6 +853,7 @@ function NumberCell({ label, value, min, allowEmpty, onSave }: { label: string; 
         className="w-16 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-xs text-right tabular-nums"
       />
       {error && <span id={errorId} role="alert" className="max-w-48 text-xs text-ember-700 dark:text-ember-300">{error}</span>}
+      <MovedUnderNote movedTo={f.movedTo} />
     </span>
   );
 }
@@ -866,6 +868,7 @@ function OrderDateField({ value, onSave, label = "Order date" }: { value: string
         value={f.draft}
         onChange={(e) => {
           f.setDraft(e.target.value);
+          // WRITES-ON-PICK: a date written the moment it is picked
           if (e.target.value !== value) {
             f.committed(e.target.value);
             onSave(e.target.value || null);
@@ -881,7 +884,7 @@ function ShipToField({ value, onSave }: { value: string; onSave: (v: string | nu
   const f = useFieldDraft(value);
   const save = () => {
     const next = f.draft.trim();
-    if (next === value.trim()) return;
+    if (next === value.trim() || !f.mayWrite()) return;
     f.committed(next);
     onSave(next || null);
   };
@@ -896,6 +899,7 @@ function ShipToField({ value, onSave }: { value: string; onSave: (v: string | nu
         onBlur={save}
         className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
       />
+      <MovedUnderNote movedTo={f.movedTo} />
     </label>
   );
 }
@@ -905,6 +909,7 @@ function OrderNumberField({ value, onSave }: { value: string; onSave: (v: string
   const save = () => {
     const next = f.draft.trim();
     if (!next || next === value) return f.reset();
+    if (!f.mayWrite()) return;
     f.committed(next);
     // A number the order did not take must not stay on screen reading as saved.
     onSave(next, () => { f.committed(value); f.setDraft(value); });
@@ -922,6 +927,7 @@ function OrderNumberField({ value, onSave }: { value: string; onSave: (v: string
         }}
         className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm font-mono"
       />
+      <MovedUnderNote movedTo={f.movedTo} />
     </label>
   );
 }

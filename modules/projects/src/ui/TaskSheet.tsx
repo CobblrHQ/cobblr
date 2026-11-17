@@ -1,4 +1,4 @@
-import { RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, MutationError, fieldNeed, useConfirm, useFieldDraft, useRecordEdits } from "@cobblr/platform-web";
+import { MovedUnderNote, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, MutationError, fieldNeed, useConfirm, useFieldDraft, useRecordEdits } from "@cobblr/platform-web";
 // One task, whole: everything a task has, settable in one place. The row on a
 // project shows a line of it; this sheet is where the due date, the details,
 // the priority, the status and what it waits on are read and changed, and
@@ -71,6 +71,7 @@ function DraftInput({
 }: { value: string; onCommit: (v: string) => void; children?: ReactNode; "aria-label": string; type?: "date" }) {
   const f = useFieldDraft(value);
   const commit = (v: string) => {
+    // WRITES-ON-PICK: a select or a date, written the moment it is picked
     f.setDraft(v);
     f.committed(v);
     onCommit(v);
@@ -87,11 +88,11 @@ function DraftInput({
 function TextCommit({ value, onCommit, multiline, ...rest }: { value: string; onCommit: (v: string) => void; multiline?: boolean; placeholder?: string; "aria-label"?: string }) {
   const f = useFieldDraft(value);
   const commit = (v: string) => {
-    if (v === value) return;
+    if (v === value || !f.mayWrite()) return;
     f.committed(v);
     onCommit(v);
   };
-  return multiline ? (
+  const field = multiline ? (
     <textarea
       {...rest}
       rows={4}
@@ -109,6 +110,12 @@ function TextCommit({ value, onCommit, multiline, ...rest }: { value: string; on
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
       className="input text-sm w-full"
     />
+  );
+  return (
+    <>
+      {field}
+      <MovedUnderNote movedTo={f.movedTo} />
+    </>
   );
 }
 

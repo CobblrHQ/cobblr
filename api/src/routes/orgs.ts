@@ -24,7 +24,7 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { meta } from "../db/meta.js";
 import { getManagedApp } from "../platform/managed-apps.js";
-import { isSandboxUser } from "../platform/try-sandbox.js";
+import { handedOverId, isSandboxUser, sandboxEnabled } from "../platform/try-sandbox.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
 import { deletionGraceDays } from "../platform/reap-deletions.js";
 import { convertDemoToKeep } from "../platform/provision-demo.js";
@@ -974,7 +974,9 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
     // entity_type with entity_id and no entity_kind: one thing the kernel logs
     // with no module (a wire's own firings, #6129).
     const ownId = entityType && entityId && !entityKind ? entityId : undefined;
-    const filters = { orgId: req.tenant!.org.id, limit, actions, authMethods, apiTokenId, entityType, ...(ownId ? { entityId: ownId } : {}), ...(entity ? { entity } : {}) };
+    // Only a box that hands out sandboxes has hand-over rows to look for.
+    const fromId = sandboxEnabled() ? await handedOverId(req.tenant!.org.id) : null;
+    const filters = { orgId: req.tenant!.org.id, ...(fromId != null ? { fromId } : {}), limit, actions, authMethods, apiTokenId, entityType, ...(ownId ? { entityId: ownId } : {}), ...(entity ? { entity } : {}) };
     const [items, total] = await Promise.all([
       activity.list({ ...filters, ...(Number.isSafeInteger(before) && before > 0 ? { cursorBeforeId: before } : {}) }),
       activity.count(filters),

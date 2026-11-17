@@ -10,8 +10,14 @@
 // Every update route of a kind passes here through observeModuleHistory, with
 // the record as it was read for its history. A route the kind registry does
 // not map (a line inside an order) calls refuseStaleEdit with its own read.
+//
+// A page's form save that says nothing about what it opened with is a page
+// older than its form's fix, and is refused, nothing written, asking for a
+// reload (#9448, pageSaveRefusal). The assistant, a token and a script still
+// write what they mean.
 import type { Request, Response } from "express";
-import { EDITED_FROM_HEADER, agoWords, decodeEditedFrom, staleFields } from "@cobblr/platform-contract/edited-from";
+import { EDITED_FROM_HEADER, PAGE_HEADER, agoWords, decodeEditedFrom, pageSaveRefusal, staleFields } from "@cobblr/platform-contract/edited-from";
+import { currentActor } from "../lib/request-context.js";
 import { changesIn } from "@cobblr/platform-contract/activity-changes";
 
 /** The platform's own keys in a record's bag, in a person's words. */
@@ -52,13 +58,26 @@ export function staleEditMessage(fields: readonly string[], last: { who: string;
   return `${by}, after you opened this, so nothing was saved. Look at it again and save what you still want.`;
 }
 
+/** A person's page sent this request (#9448): it says so, and no assistant
+ *  is acting through it (the in-app chat calls on the person's session). */
+export function fromAPage(req: Pick<Request, "get">): boolean {
+  return req.get(PAGE_HEADER) === "1" && !currentActor()?.assistant;
+}
+
 /** When this save would overwrite a field changed since its form opened,
  *  answer 409 and say so; true when it did. `current` is the record now, by
- *  the same field names the save sends. */
+ *  the same field names the save sends. A page's form save that says nothing
+ *  about what it opened with is answered 409 page_out_of_date. */
 export async function refuseStaleEdit(req: Request, res: Response, orgId: string, id: string, current: Record<string, unknown>): Promise<boolean> {
   const opened = decodeEditedFrom(req.get(EDITED_FROM_HEADER));
   const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? (req.body as Record<string, unknown>) : null;
-  if (!opened || !body) return false;
+  if (!body) return false;
+  const old = pageSaveRefusal(fromAPage(req), opened, body);
+  if (old) {
+    res.status(409).json({ error: { code: "page_out_of_date", message: old } });
+    return true;
+  }
+  if (!opened) return false;
   const stale = staleFields(current, opened, body);
   if (!stale.length) return false;
   const last = await lastChangeOf(orgId, id, stale);
@@ -68,8 +87,12 @@ export async function refuseStaleEdit(req: Request, res: Response, orgId: string
 
 /** A save through an action (#9446): what its form opened with rides in its
  *  args, and a field changed since to something else refuses it with who
- *  changed it. The sentence, or null when nothing changed since. */
-export async function staleSaveRefusal(orgId: string, id: string, editedFrom: unknown, current: Record<string, unknown>, next: Record<string, unknown>): Promise<string | null> {
+ *  changed it. `fromPage` (the action's ctx.fromPage) refuses a page's form
+ *  save that says nothing about what it opened with (#9448). The sentence,
+ *  or null when it may be written. */
+export async function staleSaveRefusal(orgId: string, id: string, editedFrom: unknown, current: Record<string, unknown>, next: Record<string, unknown>, fromPage = false): Promise<string | null> {
+  const old = pageSaveRefusal(fromPage, editedFrom, next);
+  if (old) return old;
   if (!editedFrom || typeof editedFrom !== "object" || Array.isArray(editedFrom)) return null;
   const stale = staleFields(current, editedFrom as Record<string, unknown>, next);
   if (!stale.length) return null;

@@ -59,6 +59,14 @@ export function registerAuthEmailSender(
 export function activeAuthEmailSender(): string | null {
   return authEmailSender ? authEmailSenderName : null;
 }
+/** What becomes of a sign-in or password-reset link this server mints: "sent"
+ *  by its email sender, shown "inline" on the page (a development server with
+ *  no sender), or "none": it reaches nobody (#9488). A box with no sender used
+ *  to offer both and answer "check your inbox" for a message never sent. */
+export function authEmailLinks(env: NodeJS.ProcessEnv = process.env): "sent" | "inline" | "none" {
+  if (authEmailSender) return "sent";
+  return env.NODE_ENV !== "production" ? "inline" : "none";
+}
 export function hasAuthEmailSender(): boolean {
   return authEmailSender !== null;
 }

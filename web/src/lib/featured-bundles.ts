@@ -2646,8 +2646,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.community.bookshelf",
       released_at: "2026-06-28",
       changelog: "Call them books or titles: pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: The shelf opens on its covers rather than the table, and remembers the view you pick. A book is not stock: the shelf no longer offers Use one, Used up or a reorder point, and the parts-category picker is gone from the book form. An ISBN scan fills author, year and ISBN, and a book you already have is offered instead of a second copy.",
-      version: "0.3.2",
-      releases: [{ version: "0.3.2", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.3.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.3.3",
+      releases: [{ version: "0.3.3", released_at: "2026-11-17", notes: "Add a book asks what a book has: no quantity or unit to fill in, and the publisher where Brand was. Existing shelves keep what they have chosen." }, { version: "0.3.2", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.3.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Bookshelf",
       description:
         "Your books as their own shelf: author + ISBN + year + read status, on a lean catalog that opens as a cover wall. Spine-label wire bundled.",
@@ -2694,8 +2694,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           faces: { stock: false, perishable: false },
           // Parts categories (Components, Materials, Tools) are the
           // workspace's, not a book's; hide the picker rather than seed book
-          // categories into a list every other collection shares.
-          field_overrides: [{ entity_kind: "inventory:part", name: "category", hidden: true }],
+          // categories into a list every other collection shares. The same for
+          // the parts words of the first form: nobody counts a book or gives it
+          // a unit, and the maker of a book is its publisher.
+          field_overrides: [
+            { entity_kind: "inventory:part", name: "category", hidden: true },
+            { entity_kind: "inventory:part", name: "qty", hidden: true },
+            { entity_kind: "inventory:part", name: "unit", hidden: true },
+            { entity_kind: "inventory:part", name: "manufacturer", display_label: "Publisher" },
+          ],
           field_defs: [
             // Roles, not names: the ISBN scan decodes { title, author, year, isbn }
             // and the fill lands by decode_role; the identifier role is what lets
