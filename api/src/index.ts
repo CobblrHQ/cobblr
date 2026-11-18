@@ -576,6 +576,7 @@ async function boot() {
       registerHandler: actions.registerHandler,
       registerPlanner: actions.registerPlanner,
       registerWireCheck: actions.registerWireCheck,
+      registerRecordCheck: actions.registerRecordCheck,
       registerUndo: actions.registerUndo,
       registerRequester: actions.registerRequester,
       listApplicable: actions.listApplicable,

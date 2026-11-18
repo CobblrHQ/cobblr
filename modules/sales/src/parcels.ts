@@ -27,6 +27,9 @@ export interface Parcel {
   tracking_number: string | null;
   carrier: string | null;
   shipped_at: string;
+  /** Where the carrier last said this box is, and when it landed (#9556). */
+  shipment_state: string | null;
+  delivered_at: string | null;
   lines: ParcelLine[];
 }
 
@@ -60,6 +63,8 @@ export async function listParcels(db: Kysely<SalesDB>, orderId: string): Promise
     tracking_number: p.tracking_number,
     carrier: p.carrier,
     shipped_at: new Date(p.shipped_at).toISOString(),
+    shipment_state: p.shipment_state ?? null,
+    delivered_at: p.delivered_at ? new Date(p.delivered_at).toISOString() : null,
     lines: lines.filter((l) => l.parcel_id === p.id).map((l) => ({ item_id: l.item_id, description: l.description, qty: num(l.qty) })),
   }));
 }

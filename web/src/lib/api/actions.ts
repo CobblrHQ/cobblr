@@ -162,6 +162,8 @@ export const actionsApi = {
       "GET",
       `/orgs/${slug}/actions?kind=${encodeURIComponent(kind)}`,
     ),
+  actionsOffOn: (slug: string, kind: string, id: string) =>
+    request<{ off: Record<string, string> }>("GET", `/orgs/${slug}/actions/off?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`),
   invokeAction: (
     slug: string,
     { label, document, ...body }: {

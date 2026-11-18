@@ -148,6 +148,11 @@ export interface SalesOrderParcelsTable {
   created_by: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
+  /** Where this box is, as core-shipments last said (#9556). */
+  shipment_state: string | null;
+  shipment_checked_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  shipment_next_poll_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  delivered_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
 }
 
 export interface SalesOrderParcelLinesTable {

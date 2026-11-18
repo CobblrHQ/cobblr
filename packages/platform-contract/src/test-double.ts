@@ -17,6 +17,86 @@ const DEFAULTS = {
   },
 };
 
+/** Every platform() namespace, as the contract's Platform interface lists
+ *  them; a-module-still-loads-in-a-test-double-after-a-new-registrar holds the
+ *  two equal. */
+export const PLATFORM_NAMESPACES = [
+  "vault",
+  "deletedRecords",
+  "dispositions",
+  "money",
+  "activity",
+  "events",
+  "tenants",
+  "orgs",
+  "resolvables",
+  "db",
+  "entities",
+  "actions",
+  "panels",
+  "parts",
+  "live",
+  "templates",
+  "wires",
+  "health",
+  "recurrence",
+  "calendar",
+  "addresses",
+  "queue",
+  "exclusive",
+  "sweeps",
+  "sharedCache",
+  "notifications",
+  "outboundEmail",
+  "integrations",
+  "ai",
+  "units",
+  "nav",
+  "edge",
+  "connections",
+  "services",
+  "egress",
+  "auth",
+  "pairings",
+  "placement",
+  "categoryAxis",
+  "tags",
+  "fields",
+  "catalogs",
+  "files",
+  "instances",
+  "scan",
+  "shares",
+  "devices",
+  "entitlements",
+  "tidy",
+  "metering",
+  "telemetry",
+  "accounts",
+  "http",
+  "hostedPanels",
+] as const;
+
+/** A namespace answers any register* member the test did not give with a
+ *  no-op (#9586). A module registers what it offers when it loads, so a test
+ *  that does not care about one registrar never names it, and the kernel's
+ *  next registrar does not break every double that predates it: inventory's
+ *  first registerRecordCheck failed a test whose double named three others,
+ *  and only a merge set said so. Anything else the test did not give stays
+ *  absent, as before, and so does a namespace it did not give. */
+function withRegistrars(own: Record<string, unknown>): Record<string, unknown> {
+  return new Proxy(own, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && key.startsWith("register") && !(key in target)) {
+        const noop = () => {};
+        target[key] = noop;
+        return noop;
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+}
+
 /** A platform() for a test: its own parts, over the stand-ins every test gets.
  *  A namespace the test gives keeps the stand-ins it did not name. The parts
  *  are filled in place and handed back, so a test that keeps its fake and
@@ -57,6 +137,13 @@ export function platformDouble<T extends object>(parts: T): T & Platform {
       for (const p of later) await (activity.log as (p: unknown) => Promise<void>)(p);
       return result;
     };
+  }
+  // A namespace the test did not give stays absent: code asks
+  // platform().orgs?.get(...) to mean "no workspace zone here", and an empty
+  // namespace would answer that with a throw.
+  for (const name of PLATFORM_NAMESPACES) {
+    const own = out[name];
+    if (own && typeof own === "object" && !Object.isFrozen(own)) out[name] = withRegistrars(own as Record<string, unknown>);
   }
   return parts as T & Platform;
 }

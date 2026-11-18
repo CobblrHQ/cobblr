@@ -842,8 +842,10 @@ export const scanApi = {
       /** Add this picture again although it was just added (#3852). */
       allow_duplicate?: boolean;
     },
+    /** A capture's own key, the same on every try (lib/scanCapture.ts). */
+    opts: { idempotencyKey?: string } = {},
   ) =>
-    request<ScanInboxItem & { duplicate_of_recent?: boolean; scanned_again?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/scan`, body),
+    request<ScanInboxItem & { duplicate_of_recent?: boolean; scanned_again?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/scan`, body, opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : undefined),
   // External QR resolver (the redirect table for foreign labels). The camera
   // reads the rules once to know whether to bother resolving; resolveExternal is
   // the synchronous "is this a known foreign QR? where does it go?" call on a

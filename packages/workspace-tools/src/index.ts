@@ -33,6 +33,7 @@ export {
   type KindRec,
 } from "./kinds.js";
 export { jsonSchemaOf, undescribedParams } from "./schema.js";
+export { addThingArgs } from "./tools/add-thing.js";
 export { offerableToAssistant, READ_TOOLS_THAT_POST, lookOnlyCanRun } from "./tools.js";
 export { pageWithTruth, resultBudgetFor } from "./tools.js";
 export { PLACED_IN, placementAsked } from "./tools.js";

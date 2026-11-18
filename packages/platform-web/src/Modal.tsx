@@ -28,6 +28,7 @@ import { modalPanelLayout, modalOverlayPadding } from "./modal-layout";
 import { useLayerStack } from "./layer-stack";
 import { useDialogFocus } from "./useDialogFocus";
 import { useEscapeToClose } from "./useEscapeToClose";
+import { useBackKeepsTyping } from "./useBackKeepsTyping";
 
 interface Props {
   open: boolean;
@@ -148,12 +149,17 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   // width: full-bleed would hide the thing the user is pointing at. Declared by
   // the surface, not by each modal - see live-surface.tsx.
   const overLive = useOverLiveSurface();
+  // A record form that has been typed into asks before Back throws it away
+  // (useBackKeepsTyping, #4115); its own ways of closing take that back off.
+  const typing = useBackKeepsTyping(open && recordForm && !inline, onClose);
+  const close = () => typing.close(onClose);
   const handleBackdrop = () => {
     if (!dismissOnBackdrop || dirtyRef.current) return;
-    onClose();
+    close();
   };
   const markDirty = () => {
     dirtyRef.current = true;
+    typing.arm();
   };
 
   // Prevent background scroll while open. Escape is ModalOverlay's: it knows
@@ -241,7 +247,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
             )}
             <button
               type="button"
-              onClick={onClose}
+              onClick={close}
               aria-label="Close"
               // Full 44×44 tap target: a bare 16px icon flush to the screen edge
               // was unhittable on mobile (it sits in the browser's edge-swipe
@@ -279,7 +285,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     );
   }
 
-  return createPortal(<ModalOverlay overLive={overLive} onBackdrop={handleBackdrop} onEscape={onClose} panel={panelRef} labelledBy={title ? titleId : undefined}>
+  return createPortal(<ModalOverlay overLive={overLive} onBackdrop={handleBackdrop} onEscape={close} panel={panelRef} labelledBy={title ? titleId : undefined}>
       {panel}
     </ModalOverlay>, document.body);
 }

@@ -42,6 +42,9 @@ export function ParcelsPanel({ api, order }: { api: SalesApi; order: SalesOrderD
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <span className="font-medium">Parcel {n + 1}</span>
                 <span className="text-xs text-muted">{p.carrier ? `${p.carrier}, ` : ""}{new Date(p.shipped_at).toLocaleDateString()}</span>
+                {p.delivered_at
+                  ? <span className="text-xs text-moss-700 dark:text-moss-300">delivered {new Date(p.delivered_at).toLocaleDateString()}</span>
+                  : p.shipment_state && <span className="text-xs text-muted">{p.shipment_state.replace(/_/g, " ")}</span>}
               </div>
               <div className="text-muted">{p.lines.map((l) => `${l.qty} ${l.description ?? "item"}`).join(", ")}</div>
               {p.tracking_number ? (

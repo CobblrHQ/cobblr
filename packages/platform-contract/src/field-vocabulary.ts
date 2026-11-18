@@ -127,6 +127,7 @@ export const FIELD_ROLE_VALUES = [
   "acquired-from",
   "acquired-on",
   "acquired-for",
+  "unit-cost",
   "seller",
   "location",
   "lot",
@@ -178,6 +179,11 @@ export const FIELD_ROLE_LABELS: Record<
   "acquired-from": { label: "Where it came from", pickable: true },
   "acquired-on": { label: "When it became yours", pickable: true },
   "acquired-for": { label: "What it cost", pickable: true },
+  // What EACH one cost, on a field that holds a price per unit (a part's
+  // Cost). Not acquired-for: that is what the thing cost as a whole, and a
+  // receipt line of six bolts at 6.35 is 6.35 for the line and 1.06 each.
+  // Written only from a line whose price is per unit or divides by its count.
+  "unit-cost": { label: "What each one cost", pickable: true, type: "number" },
   seller: { label: "Who sold it", pickable: true },
   location: { label: "Where it is kept", pickable: false, ownedBy: "core-locations" },
   // The batch printed on this one unit's label (a dye lot, a food lot, a

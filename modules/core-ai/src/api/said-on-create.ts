@@ -10,6 +10,7 @@
 // place. A price or a place said and missing from a kind that keeps one is
 // handed back once, naming the field, the way a missing required field is
 // (required-on-create.ts).
+import { MONEY_ROLES } from "@cobblr/platform-contract/money";
 import type { KindRec } from "@cobblr/workspace-tools";
 import type { ToolCall } from "../providers/tool-wire.js";
 
@@ -50,7 +51,7 @@ export function dropUnsaidDates(call: ToolCall, kinds: readonly KindRec[], said:
   return gone;
 }
 
-const isMoney = (f: Field): boolean => !!f.money || f.fieldRole === "acquired-for";
+const isMoney = (f: Field): boolean => !!f.money || (!!f.fieldRole && MONEY_ROLES.has(f.fieldRole));
 const isPlace = (f: Field): boolean => f.name === "location_id";
 
 /** The message to hand back when the person said a price or a place the

@@ -11,6 +11,11 @@
 // refused ("Nothing was changed"), then "undo that": the panel walked past
 // both and deleted the black PLA made two turns before. The person meant the
 // move, which never happened, so the answer is that there is nothing to undo.
+//
+// And so is a request that changed nothing (#9579). "Move the drill to Shelf
+// B." answered "I couldn't find a drill", then "undo that": the panel walked
+// back and deleted the Garage made three turns before. A request (not a
+// question) whose answer made no change is the newest thing, and "that" is it.
 import { NOTHING_DONE_YET, type BasicPrior } from "@cobblr/platform-contract/basics-limits";
 
 export interface UndoableMessage {
@@ -30,18 +35,36 @@ export interface UndoableMessage {
 export type UndoTarget =
   | { kind: "card"; index: number }
   | { kind: "change"; index: number; handles: string[]; said: string }
-  | { kind: "failed"; index: number };
+  | { kind: "failed"; index: number }
+  | { kind: "unchanged"; index: number };
 
 const openCard = (m: UndoableMessage) => m.role === "assistant" && !!(m.proposal || m.offerId) && !m.resolved && !m.offerState;
 
-/** The newest open card, failed turn or undoable change, whichever comes last. */
+// ascii-only: an English question mark and English undo words; another language's request is walked past as before #9579
+const ASKED = /\?\s*$/;
+// ascii-only: as above
+const UNDO_WORDS = /^\s*(undo|put (it|that) back|take (it|that) back|revert)\b/i;
+
+/** The newest open card, failed turn, request that changed nothing, or
+ *  undoable change, whichever comes last. */
 export function undoTarget(messages: readonly UndoableMessage[]): UndoTarget | null {
+  let answered = false;
+  let changed = false;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
+    if (m.role === "user") {
+      // A request answered with no change at all: "that" is this request.
+      if (answered && !changed && !ASKED.test(m.content) && !UNDO_WORDS.test(m.content)) return { kind: "unchanged", index: i };
+      answered = false;
+      changed = false;
+      continue;
+    }
+    answered = true;
     if (openCard(m)) return { kind: "card", index: i };
-    if (m.role === "assistant" && m.failed) return { kind: "failed", index: i };
-    if (m.undone) continue;
+    if (m.failed) return { kind: "failed", index: i };
     const handles = m.ledgerIds ?? (m.ledgerId ? [m.ledgerId] : []);
+    if (handles.length) changed = true;
+    if (m.undone) continue;
     if (handles.length) return { kind: "change", index: i, handles, said: m.content.replace(/^[✓✗]\s*/, "").trim() };
   }
   return null;
@@ -62,6 +85,9 @@ export function undoneSaid(said: string, ok: number, of: number, undoSaid: reado
 
 /** The answer to "undo that" when the newest thing is a turn that failed. */
 export const AFTER_A_FAILED_TURN = "Nothing to undo: that last request did not go through, so nothing was changed. What was done before it is still there, each with its own ↩ Undo.";
+
+/** The answer to "undo that" when the newest thing is a request that changed nothing. */
+export const AFTER_NOTHING_CHANGED = "Nothing to undo: that last request changed nothing. What was done before it is still there, each with its own ↩ Undo.";
 
 /** What the panel asks the no-AI rules with, to learn whether a message is an
  *  undo of the target: a change's own handles, or for an open card a handle

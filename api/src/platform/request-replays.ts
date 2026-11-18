@@ -7,8 +7,9 @@
 // may carry an Idempotency-Key, and the first answer to that key is kept for
 // a day, per person: a repeat with the same key and the same request is
 // answered with it and runs nothing; one still running is waited for; the
-// same key on a different request is refused. A write that failed on the
-// server (5xx) keeps nothing, so asking again runs it again.
+// same key on a different request is refused. An answer that does not end
+// the write (a 5xx, busy, too fast: write-answers.ts) keeps nothing, so
+// asking again runs it again.
 //
 // The clients send one key per write and keep it only while its outcome is
 // unknown (platform-web write-identity.ts), so a deliberate second create is
@@ -20,6 +21,7 @@
 import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import { platform } from "@cobblr/platform-contract";
+import { answerEndsTheWrite } from "@cobblr/platform-contract/write-answers";
 import { meta } from "../db/meta.js";
 
 export const REPLAY_KEPT_MS = 24 * 60 * 60 * 1000;
@@ -138,7 +140,21 @@ async function replayFrom(store: ReplayStore, req: Request, res: Response, next:
   }
 }
 
-/** Keep this response's status and body under its key once it is sent. */
+/** The refusal's code, when the answer is the kernel's JSON error shape. */
+function codeOf(chunks: Buffer[]): string | null {
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { error?: { code?: unknown } };
+    return typeof parsed?.error?.code === "string" ? parsed.error.code : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Keep this response's status and body under its key once it is sent. Only
+ *  an answer that ends the write is kept (write-answers.ts): a 5xx, a "busy"
+ *  or a "too fast, wait a minute" says nothing about the change, and the
+ *  device keeping it sends it again with this key, so asking again must run
+ *  it. Kept, a 429 was every later try's answer for a day. */
 function record(res: Response, store: ReplayStore, key: string): void {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -169,7 +185,7 @@ function record(res: Response, store: ReplayStore, key: string): void {
   }) as typeof res.end;
   function settle() {
     const done =
-      res.statusCode >= 500
+      !answerEndsTheWrite(res.statusCode, codeOf(chunks), !!res.getHeader("retry-after"))
         ? store.forget(key)
         : streamed || size > KEPT_BODY_MAX
           ? store.settle(key, { state: "unreplayable", status: res.statusCode })

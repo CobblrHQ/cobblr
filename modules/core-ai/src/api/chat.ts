@@ -42,6 +42,7 @@ import { withDeleteThisCard } from "./delete-this.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
+import { checkedAdd } from "./add-thing-checked.js";
 import { chosenModel, storedModel } from "./model-follows.js";
 import {
   WORKSPACE_TOOLS,
@@ -1088,6 +1089,9 @@ async function answerTurn(
       },
       isWrite: (name) => WRITE_NAMES.has(name),
       validateWrite: async (call, seenNames) => {
+        // An add tidied, or handed back with no name (add-thing-checked.ts).
+        const add = checkedAdd(call);
+        if (add) return add;
         const wrongList = await workspaceAsList(call, c.orgName, wsApi);
         if (wrongList) return wrongList;
         // Where the write puts the thing, by its name, as a read would (#8050).

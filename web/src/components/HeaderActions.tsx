@@ -68,16 +68,10 @@ export function footActionRows<T extends { name: string }>(actions: readonly T[]
   return rows;
 }
 
-export function HeaderActions({ asRows = false, trailing }: {
-  /** Full-width labelled rows for the sidebar foot (capture first), instead
-   *  of the top bar's icon buttons. */
-  asRows?: boolean;
-  /** Rows mode: a control that closes the FIRST row (Search's icon, so the
-   *  foot reads Scan | Build | 🔍 rather than spending a row of its own on
-   *  Search, #4374). `alone` is true when there is no action to share a row
-   *  with, and the control then takes the row itself, labelled. */
-  trailing?: (alone: boolean) => ReactNode;
-} = {}) {
+/** The header actions this person may use here, in the order they render.
+ *  One list for every place an action shows: the desktop bar, the sidebar's
+ *  foot, and on a phone the bar (capture tools) and the menu (builder tools). */
+export function useHeaderActions(capabilitiesFirst = false) {
   const { activeSlug, activeOrg } = useActiveOrg();
   // Builder chrome (the AI builder, the marketplace) is the platform. Focused
   // mode hides it; a locked managed app has no platform at all, so the same
@@ -108,7 +102,7 @@ export function HeaderActions({ asRows = false, trailing }: {
   }, [activeSlug]);
 
   const hiddenSet = new Set(hidden);
-  const actions = orderHeaderActions(
+  return orderHeaderActions(
     (modules.data?.items ?? []).filter(
       (m) =>
         m.enabled &&
@@ -118,8 +112,35 @@ export function HeaderActions({ asRows = false, trailing }: {
         // capability actions like Scan.
         !(focused && isBuilderRoute(m.headerAction.route)),
     ),
-    asRows,
+    capabilitiesFirst,
   );
+}
+
+/** Which of the actions a place shows. On a phone the bar keeps the capture
+ *  tools a person reaches for daily (Scan) and the menu takes the builder's
+ *  (Build, a few times a month): six icons left an owner's "Sam's Workshop"
+ *  reading "Sam's W..." at 390 px (#9278). */
+export type HeaderActionSet = "all" | "capture" | "builder";
+
+export function inHeaderActionSet(route: string, set: HeaderActionSet): boolean {
+  if (set === "all") return true;
+  return isBuilderRoute(route) === (set === "builder");
+}
+
+export function HeaderActions({ asRows = false, trailing, only = "all" }: {
+  /** Full-width labelled rows for the sidebar foot (capture first), instead
+   *  of the top bar's icon buttons. */
+  asRows?: boolean;
+  /** Rows mode: a control that closes the FIRST row (Search's icon, so the
+   *  foot reads Scan | Build | 🔍 rather than spending a row of its own on
+   *  Search, #4374). `alone` is true when there is no action to share a row
+   *  with, and the control then takes the row itself, labelled. */
+  trailing?: (alone: boolean) => ReactNode;
+  /** Which actions this place shows: the phone's bar shows "capture" and its
+   *  menu carries the rest (#9278). */
+  only?: HeaderActionSet;
+} = {}) {
+  const actions = useHeaderActions(asRows).filter((m) => inHeaderActionSet(m.headerAction!.route, only));
   // No count badge on the camera action: it opens the SCANNER, and a badge
   // reads as "this is the inbox" (the author). The pending count rides the
   // "Scan Inbox" nav row itself (useNavBadges), the door to the inbox.

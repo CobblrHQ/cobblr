@@ -151,6 +151,16 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "test:mocked-platform-double",
+    what: "a test that answers a mocked platform() with mockReturnValue or mockImplementation hands it platformDouble, like one that calls setPlatform",
+    why: "a third door past platformDouble: a platform() answered by vi.mocked(platform).mockReturnValue({ … }) is built by hand, so a registrar the kernel gains later is missing from it, the way registerRecordCheck was missing from a hand-named double and failed set 513 (#9586)",
+    owner: "packages/platform-contract/src/test-double.ts",
+    scope: ["api/**/*.test.ts", "modules/*/src/**/*.test.ts", "modules/*/tests/**/*.test.ts", "packages/*/src/**/*.test.ts", "web/src/**/*.test.ts", "web/src/**/*.test.tsx", "scripts/**/*.test.ts"],
+    detect: /^(?!\s*(\/\/|\*)).*\bmocked\(platform\)\.mock(?:ReturnValue|Implementation)(?:Once)?\((?!platformDouble\(|\(\)\s*=>\s*platformDouble\()/,
+    use: "vi.mocked(platform).mockReturnValue(platformDouble({ … }))",
+  },
+  {
+    kind: "owns",
     id: "box:backup-copy",
     what: "a backup beside a box file is made by backup_copy: declared for a week in the box's leftovers manifest, the newest three kept",
     why: "every install wrote a .bak beside its script and nothing removed one; thirty aged in /opt/ci-health and five paged the owner as undeclared leftovers (2026-10-20, core #3204)",

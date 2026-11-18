@@ -37,7 +37,15 @@ export async function writeTaskOrder(db: Kysely<ProjectsDB>, projectId: string, 
 
 const MOVES = ["first", "last", "up", "down"] as const;
 
+const NOT_IN_A_PROJECT = "This task is not in a project, so it has no list to move in.";
+
 export function registerOrderHandlers(): void {
+  // Off on a task with no project, with the sentence the move refuses with.
+  platform().actions.registerRecordCheck("projects:move-task", async ({ orgId, entity }) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<ProjectsDB>;
+    const row = await db.selectFrom("projects_tasks").select(["project_id"]).where("id", "=", entity.id).executeTakeFirst();
+    return row && !row.project_id ? NOT_IN_A_PROJECT : null;
+  });
   platform().actions.registerHandler("projects.move-task", async (ctx) => {
     const task = requireActionEntity(ctx);
     const args = (ctx.args ?? {}) as Record<string, unknown>;
@@ -45,7 +53,7 @@ export function registerOrderHandlers(): void {
     const row = await db.selectFrom("projects_tasks").select(["project_id"]).where("id", "=", task.id).executeTakeFirst();
     if (!row) return { ok: false, error: `no task with id ${task.id}` };
     const projectId = row.project_id;
-    if (!projectId) return { ok: false, error: "This task is not in a project, so it has no list to move in." };
+    if (!projectId) return { ok: false, error: NOT_IN_A_PROJECT };
     const ids = await taskOrder(db, projectId);
     const from = ids.indexOf(task.id);
     const to = typeof args.to === "string" ? args.to : "";

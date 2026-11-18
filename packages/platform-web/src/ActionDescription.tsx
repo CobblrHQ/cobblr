@@ -6,8 +6,10 @@ export function firstActionSentence(description: string) {
   return description.match(/^.*?[.!?](?:\s|$)/)?.[0].trim() || description;
 }
 
-export function ActionDescription({ description, children, listed = false }: { description: string; children: ReactElement<HTMLAttributes<HTMLElement>>; listed?: boolean }) {
-  const words = firstActionSentence(description);
+/** `off`: why the action is off on this record, said whole in place of the
+ *  description (what to do is often its second sentence). */
+export function ActionDescription({ description, children, listed = false, off }: { description: string; children: ReactElement<HTMLAttributes<HTMLElement>>; listed?: boolean; off?: string | null }) {
+  const words = off || firstActionSentence(description);
   const [open, setOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const held = useRef(false);

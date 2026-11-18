@@ -170,7 +170,7 @@ function InventoryTabs({ listLabel: named }: { listLabel?: string }) {
   // "Going off" only where something is dated: a box of screws has no tab
   // for a question it cannot have.
   const { api } = useInventory();
-  const dated = useQuery({ queryKey: ["inventory-expiring", 30], queryFn: () => api.stockExpiring(30), staleTime: 60_000 });
+  const dated = useQuery({ queryKey: ["inventory-expiring", 30], queryFn: () => api.stockExpiring(30), staleTime: 60_000, meta: { kinds: "*" } });
   const goingOff = (dated.data?.places ?? []).reduce((n, p) => n + p.lots.length, 0);
   const onExpiring = /\/expiring$/.test(pathname);
   // "Find a sheet" only where the workspace holds sheet stock: a set collection

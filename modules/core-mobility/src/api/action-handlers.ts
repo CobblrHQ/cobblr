@@ -47,6 +47,14 @@ async function entityMeta(
   return coerce((ent.fields as { metadata?: unknown }).metadata);
 }
 
+/** Why Return home would not run on a record with this metadata, or null:
+ *  the record bar shows the button off with it, and the run refuses with it. */
+export function returnHomeRefusal(meta: Record<string, unknown>): string | null {
+  if (meta.mobility !== "mobile") return "This stays where it is, so it has no home to go back to. Set Moves around to mobile first.";
+  if (!meta.home_location) return "This has no home set. Choose its Home first.";
+  return null;
+}
+
 let registered = false;
 
 export function registerActionHandlers(): void {
@@ -93,6 +101,8 @@ export function registerActionHandlers(): void {
     return { ok: true, changed: true, away_since: nextVal, was_away_since: wasAwaySince };
   });
 
+  platform().actions.registerRecordCheck("core-mobility:return-home", async ({ entity }) => returnHomeRefusal(coerce((entity.fields as { metadata?: unknown }).metadata)));
+
   // Return an item home: current location := home, stamp cleared.
   platform().actions.registerHandler("core-mobility.return-home", async (ctx) => {
     const kind = ctx.entity?.kind;
@@ -102,8 +112,8 @@ export function registerActionHandlers(): void {
     if (!meta) return { ok: false, reason: "not_found" };
 
     const home = meta.home_location as string | undefined;
-    if (meta.mobility !== "mobile") return { ok: false, reason: "not_mobile" };
-    if (!home) return { ok: false, reason: "no_home" };
+    const refused = returnHomeRefusal(meta);
+    if (refused || !home) return { ok: false, error: refused ?? "This has no home set. Choose its Home first." };
 
     const wasAwaySince = (meta.away_since ?? null) as string | null;
     const wasIn = await platform().placement.containerOf({ orgId: ctx.orgId, containee: { kind, id } }).catch(() => null);

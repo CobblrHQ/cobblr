@@ -97,6 +97,76 @@ interface TrackAnswer {
   nextPollAt?: string | null;
 }
 
+/** One thing to ask a carrier about: a parcel of an order, or an order that
+ *  shipped before orders kept parcels and carries its own tracking number. */
+interface Unit {
+  parcel_id: string | null;
+  order_id: string;
+  tracking_number: string | null;
+  shipment_state: string | null;
+  shipment_checked_at: Date | null;
+  delivered_at: Date | null;
+}
+
+const watchFromOf = (now: Date) => new Date(now.getTime() - WATCH_DAYS_AFTER_DELIVERY * 24 * HOUR_MS);
+
+/** The parcels (and unparcelled orders) due to be asked about, most overdue first. A box of an order still open is followed too:
+ *  the first boxes of a part-shipped order are on their way before the last one goes out (#9556). */
+async function dueUnits(db: Kysely<SalesDB>, now: Date): Promise<Unit[]> {
+  const watchFrom = watchFromOf(now);
+  const parcels = await db
+    .selectFrom("sales_order_parcels as p")
+    .innerJoin("sales_orders as o", "o.id", "p.order_id")
+    .select(["p.id as parcel_id", "p.order_id", "p.tracking_number", "p.shipment_state", "p.shipment_checked_at", "p.delivered_at"])
+    .where("o.status", "!=", "cancelled")
+    .where("p.tracking_number", "is not", null)
+    .where("p.tracking_number", "!=", "")
+    .where((eb) => eb.or([eb("p.delivered_at", "is", null), eb("p.delivered_at", ">", watchFrom)]))
+    .where((eb) => eb.or([eb("p.shipment_next_poll_at", "is", null), eb("p.shipment_next_poll_at", "<=", now)]))
+    .orderBy(sql`p.shipment_next_poll_at asc nulls first`)
+    .orderBy("p.shipped_at", "desc")
+    .limit(ROUND)
+    .execute();
+  if (parcels.length >= ROUND) return parcels;
+  const orders = await db
+    .selectFrom("sales_orders")
+    .select(["id as order_id", "tracking_number", "shipment_state", "shipment_checked_at", "delivered_at"])
+    .where("status", "in", ["shipped", "closed"])
+    .where("tracking_number", "is not", null)
+    .where("tracking_number", "!=", "")
+    .where(({ not, exists, selectFrom }) => not(exists(selectFrom("sales_order_parcels").select("sales_order_parcels.id").whereRef("sales_order_parcels.order_id", "=", "sales_orders.id"))))
+    .where((eb) => eb.or([eb("delivered_at", "is", null), eb("delivered_at", ">", watchFrom)]))
+    .where((eb) => eb.or([eb("shipment_next_poll_at", "is", null), eb("shipment_next_poll_at", "<=", now)]))
+    .orderBy(sql`shipment_next_poll_at asc nulls first`)
+    .orderBy("shipped_at", "desc")
+    .limit(ROUND - parcels.length)
+    .execute();
+  return [...parcels, ...orders.map((o) => ({ ...o, parcel_id: null }))];
+}
+
+/** How many boxes are being followed right now: not delivered, with a number to ask about. */
+export async function followingCount(db: Kysely<SalesDB>): Promise<number> {
+  const boxes = await db
+    .selectFrom("sales_order_parcels as p")
+    .innerJoin("sales_orders as o", "o.id", "p.order_id")
+    .select(({ fn }) => fn.countAll<number>().as("n"))
+    .where("o.status", "!=", "cancelled")
+    .where("p.tracking_number", "is not", null)
+    .where("p.tracking_number", "!=", "")
+    .where("p.delivered_at", "is", null)
+    .executeTakeFirst();
+  const alone = await db
+    .selectFrom("sales_orders")
+    .select(({ fn }) => fn.countAll<number>().as("n"))
+    .where("status", "in", ["shipped", "closed"])
+    .where("tracking_number", "is not", null)
+    .where("tracking_number", "!=", "")
+    .where("delivered_at", "is", null)
+    .where(({ not, exists, selectFrom }) => not(exists(selectFrom("sales_order_parcels").select("sales_order_parcels.id").whereRef("sales_order_parcels.order_id", "=", "sales_orders.id"))))
+    .executeTakeFirst();
+  return Number(boxes?.n ?? 0) + Number(alone?.n ?? 0);
+}
+
 /** One round for one workspace: every shipped order due to be asked about,
  *  in series, until one says the service is busy or full. `now` is the clock;
  *  `ignorePause` is a person pressing "Check now". */
@@ -111,19 +181,7 @@ export async function followRound(
   if (!opts.ignorePause && setting.paused_until && Date.parse(setting.paused_until) > now.getTime()) {
     return { asked: 0, delivered: 0, stopped: "paused" };
   }
-  const watchFrom = new Date(now.getTime() - WATCH_DAYS_AFTER_DELIVERY * 24 * HOUR_MS);
-  const due = await db
-    .selectFrom("sales_orders")
-    .select(["id", "tracking_number", "shipment_state", "shipment_checked_at", "delivered_at"])
-    .where("status", "in", ["shipped", "closed"])
-    .where("tracking_number", "is not", null)
-    .where("tracking_number", "!=", "")
-    .where((eb) => eb.or([eb("delivered_at", "is", null), eb("delivered_at", ">", watchFrom)]))
-    .where((eb) => eb.or([eb("shipment_next_poll_at", "is", null), eb("shipment_next_poll_at", "<=", now)]))
-    .orderBy(sql`shipment_next_poll_at asc nulls first`)
-    .orderBy("shipped_at", "desc")
-    .limit(ROUND)
-    .execute();
+  const due = await dueUnits(db, now);
 
   let asked = 0;
   let delivered = 0;
@@ -162,29 +220,51 @@ export async function followRound(
 
     const nextAt = res?.nextPollAt ? new Date(res.nextPollAt) : null;
     const state = res?.followed ? (res.status?.state ?? null) : o.shipment_state;
-    const landed = state === "delivered" && !o.delivered_at;
-    const deliveredAt = landed ? new Date(res?.status?.deliveredAt ?? now) : o.delivered_at;
+    const sawDelivered = state === "delivered" && !o.delivered_at;
+    const landedAt = sawDelivered ? new Date(res?.status?.deliveredAt ?? now) : o.delivered_at;
+    let landed = sawDelivered;
     const afterCommit: Array<() => Promise<void>> = [];
+    let orderDeliveredAt: Date | null = null;
+    let orderLanded = false;
     await platform().activity.transaction(orgId, db, async (trx, log) => {
-      await trx
-        .updateTable("sales_orders")
-        .set({ shipment_state: state, shipment_checked_at: now, shipment_next_poll_at: nextAt, delivered_at: deliveredAt, updated_at: new Date() })
-        .where("id", "=", o.id)
-        .execute();
+      const set = { shipment_state: state, shipment_checked_at: now, shipment_next_poll_at: nextAt, delivered_at: landedAt, updated_at: new Date() };
+      // Another round (the hourly pass, or a person's Check now) may have read
+      // this box as undelivered too and landed it first: only the round whose
+      // write flips delivered_at from null says it landed.
+      const table = o.parcel_id ? "sales_order_parcels" : "sales_orders";
+      let write = trx.updateTable(table).set(set).where("id", "=", o.parcel_id ?? o.order_id);
+      if (sawDelivered) write = write.where("delivered_at", "is", null);
+      const wrote = await write.returning("id").execute();
+      if (sawDelivered && wrote.length === 0) landed = false;
       if (landed) {
-        delivered++;
-        await orderHappened(trx, orgId, o.id, {
+        await orderHappened(trx, orgId, o.order_id, {
           kind: "delivered",
-          detail: { tracking_number: o.tracking_number, carrier: res?.status?.carrier ?? null, at: deliveredAt?.toISOString() ?? null },
+          detail: { tracking_number: o.tracking_number, carrier: res?.status?.carrier ?? null, at: landedAt?.toISOString() ?? null, ...(o.parcel_id ? { parcel_id: o.parcel_id } : {}) },
           by_user: null,
         }, afterCommit, log);
       }
+      if (!o.parcel_id) {
+        orderDeliveredAt = landedAt;
+        orderLanded = landed;
+        return;
+      }
+      // An order is delivered when every box of it is, and not before it has
+      // all gone out: an earlier box landing says nothing about the rest.
+      const order = await trx.selectFrom("sales_orders").select(["status", "delivered_at"]).where("id", "=", o.order_id).forUpdate().executeTakeFirst();
+      orderDeliveredAt = order?.delivered_at ?? null;
+      if (!order || orderDeliveredAt || (order.status !== "shipped" && order.status !== "closed")) return;
+      const boxes = await trx.selectFrom("sales_order_parcels").select("delivered_at").where("order_id", "=", o.order_id).execute();
+      if (boxes.length === 0 || boxes.some((b) => !b.delivered_at)) return;
+      orderDeliveredAt = new Date(Math.max(...boxes.map((b) => new Date(b.delivered_at as Date).getTime())));
+      orderLanded = true;
+      await trx.updateTable("sales_orders").set({ shipment_state: "delivered", delivered_at: orderDeliveredAt, updated_at: new Date() }).where("id", "=", o.order_id).execute();
     });
     for (const publish of afterCommit) await publish();
-    if (landed) {
-      await platform().events.emit("sales.order.delivered", { orgId, orderId: o.id, deliveredAt: deliveredAt?.toISOString() ?? null });
+    if (orderLanded) {
+      delivered++;
+      await platform().events.emit("sales.order.delivered", { orgId, orderId: o.order_id, deliveredAt: (orderDeliveredAt as Date | null)?.toISOString() ?? null });
     }
-    await closeDeliveredOrder(db, orgId, o.id);
+    if (orderDeliveredAt) await closeDeliveredOrder(db, orgId, o.order_id);
   }
   // A clean round lifts an old pause.
   if (setting.paused_reason) await writeFollowSetting(db, { ...setting, paused_until: null, paused_reason: null });
@@ -209,14 +289,21 @@ export function registerFollowSweep(): void {
 }
 
 export async function hasFollowWork({ db, now }: { db: unknown; now: Date }): Promise<boolean> {
-  return !!await (db as Kysely<SalesDB>).selectFrom("sales_orders").select("id")
+  const k = db as Kysely<SalesDB>;
+  const watchFrom = watchFromOf(now);
+  const on = await k.selectFrom("sales_settings").select("key")
+    .where("key", "=", SETTING).where(sql<boolean>`value->>'on' = 'true'`).executeTakeFirst();
+  if (!on) return false;
+  const box = await k.selectFrom("sales_order_parcels as p").innerJoin("sales_orders as o", "o.id", "p.order_id").select("p.id")
+    .where("o.status", "!=", "cancelled")
+    .where("p.tracking_number", "is not", null).where("p.tracking_number", "!=", "")
+    .where(eb => eb.or([eb("p.delivered_at", "is", null), eb("p.delivered_at", ">", watchFrom)]))
+    .limit(1).executeTakeFirst();
+  if (box) return true;
+  return !!await k.selectFrom("sales_orders").select("id")
     .where("status", "in", ["shipped", "closed"])
     .where("tracking_number", "is not", null).where("tracking_number", "!=", "")
-    .where(eb => eb.or([
-      eb("delivered_at", "is", null),
-      eb("delivered_at", ">", new Date(now.getTime() - WATCH_DAYS_AFTER_DELIVERY * 24 * HOUR_MS)),
-    ]))
-    .where(eb => eb.exists(eb.selectFrom("sales_settings").select("key")
-      .where("key", "=", SETTING).where(sql<boolean>`value->>'on' = 'true'`)))
+    .where(({ not, exists, selectFrom }) => not(exists(selectFrom("sales_order_parcels").select("sales_order_parcels.id").whereRef("sales_order_parcels.order_id", "=", "sales_orders.id"))))
+    .where(eb => eb.or([eb("delivered_at", "is", null), eb("delivered_at", ">", watchFrom)]))
     .limit(1).executeTakeFirst();
 }

@@ -20,13 +20,13 @@ async function parcelOf(db: Kysely<SalesDB>, orgId: string, orderId: string): Pr
   return withOrderLock(db, orgId, null, orderId, async () => {
     const has = await db.selectFrom("sales_order_parcels").select("id").where("order_id", "=", orderId).executeTakeFirst();
     if (has) return false;
-    const order = await db.selectFrom("sales_orders").select(["carrier", "tracking_number", "shipped_at", "updated_at"]).where("id", "=", orderId).executeTakeFirst();
+    const order = await db.selectFrom("sales_orders").select(["carrier", "tracking_number", "shipped_at", "updated_at", "shipment_state", "shipment_checked_at", "shipment_next_poll_at", "delivered_at"]).where("id", "=", orderId).executeTakeFirst();
     if (!order) return false;
     const lines = await db.selectFrom("sales_order_items").select(["id", "qty_fulfilled"]).where("order_id", "=", orderId).where("part_id", "is not", null).where("qty_fulfilled", ">", "0").execute();
     if (lines.length === 0) return false;
     const parcel = await db
       .insertInto("sales_order_parcels")
-      .values({ order_id: orderId, tracking_number: order.tracking_number, carrier: order.carrier, shipped_at: order.shipped_at ?? order.updated_at, created_by: null })
+      .values({ order_id: orderId, tracking_number: order.tracking_number, carrier: order.carrier, shipped_at: order.shipped_at ?? order.updated_at, created_by: null, shipment_state: order.shipment_state, shipment_checked_at: order.shipment_checked_at, shipment_next_poll_at: order.shipment_next_poll_at, delivered_at: order.delivered_at })
       .returning("id")
       .executeTakeFirstOrThrow();
     for (const l of lines) await db.insertInto("sales_order_parcel_lines").values({ parcel_id: parcel.id, item_id: l.id, qty: Number(l.qty_fulfilled) }).execute();

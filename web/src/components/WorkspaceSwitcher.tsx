@@ -149,13 +149,14 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
 
   // min-w-0 here AND on the button so the name actually truncates to the space
   // left after the icons — otherwise on a narrow (mobile) header the full
-  // workspace name renders and the action icons overlap it.
+  // workspace name renders and the action icons overlap it. A phone's sides
+  // are 4 px, not 8: those 8 px let "Sam's Workshop" fit at 375 (#9278).
   return (
     <div className="relative min-w-0">
       <button
         ref={btnRef}
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition min-w-0 max-w-full"
+        className="flex items-center gap-1.5 px-1 md:px-2 py-1 rounded text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition min-w-0 max-w-full"
         title={activeOrg ? `${activeOrg.name} · ${displaySlug(activeOrg.slug)}` : "Pick a workspace"}
       >
         {/* No hard max-width: show the full workspace name when the row has room.

@@ -88,6 +88,8 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
       setFlash("ok");
       later.after("flash", 1200, () => setFlash(null));
       void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+      // What a run changed may turn another action on or off on this record.
+      if (entityId) void qc.invalidateQueries({ queryKey: ["actions-off", orgSlug, entityKind, entityId] });
       // The verdict is the handler's own sentence when it wrote one ("Queued,
       // 3 in the queue"); it stays until the next press or a later step
       // replaces it with something the person must do.

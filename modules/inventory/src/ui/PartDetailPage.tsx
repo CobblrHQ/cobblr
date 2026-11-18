@@ -57,6 +57,7 @@ import { putPart, type PartPlace } from "./move-part";
 import { PART_FIELD_LABELS } from "../part-field-labels";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { PART_NAME_MAX } from "../part-limits";
+import { STOCK_MOVES } from "../stock-moves";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
@@ -190,21 +191,6 @@ const FACE_HELD: Record<string, { field: string; fallback: unknown }> = {
 };
 
 
-/** The actions that move a record's stock, offered nowhere on a record marked
- *  gone (#6153). The server holds the line at its stock writes; this keeps a
- *  press from ending in a refusal. */
-const STOCK_MOVES = [
-  "inventory:use-one",
-  "inventory:use-up",
-  "inventory:mark-spoiled",
-  "inventory:restock-one",
-  "inventory:receive-lot",
-  "inventory:receive-package",
-  "inventory:split-lot",
-  "inventory:consume-with-loss",
-  "inventory:consume-stock",
-  "inventory:adjust-stock",
-];
 /** The record's page. Once the record is deleted the whole page is dropped,
  *  not just hidden: every read it holds (detail, stock shape, holdings,
  *  placement, pairings) would otherwise refetch the removed record and come

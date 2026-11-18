@@ -5,7 +5,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { followRound, readFollowSetting, setFollowing } from "../follow-parcels.js";
+import { followingCount, followRound, readFollowSetting, setFollowing } from "../follow-parcels.js";
 
 import { readDeliveryCloseSetting, setDeliveryCloseSetting } from "../close-delivered.js";
 
@@ -17,14 +17,7 @@ followParcelsRouter.get(
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
     const setting = await readFollowSetting(db);
-    const following = await db
-      .selectFrom("sales_orders")
-      .select(({ fn }) => fn.countAll<number>().as("n"))
-      .where("status", "in", ["shipped", "closed"])
-      .where("tracking_number", "is not", null)
-      .where("delivered_at", "is", null)
-      .executeTakeFirst();
-    res.json({ ...setting, close_delivered_orders: await readDeliveryCloseSetting(db), following: Number(following?.n ?? 0) });
+    res.json({ ...setting, close_delivered_orders: await readDeliveryCloseSetting(db), following: await followingCount(db) });
   }),
 );
 

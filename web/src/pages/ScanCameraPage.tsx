@@ -90,6 +90,8 @@ import { setScanScope } from "../lib/scanScope";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { clearScanSession, isSessionFresh, readScanSession, writeScanSession, type ScanSession } from "../lib/scanSession";
 import { useOpenOwnRoute } from "../lib/openOwnRoute";
+import { newCapture, saveCapture, type Capture, type CaptureStamps } from "../lib/scanCapture";
+import { forgetShot, keepShot, keptShots } from "../lib/keptShots";
 
 // BarcodeDetector type — not in lib.dom.d.ts as of TS 5.7. Local shim.
 interface BarcodeDetectorCtor {
@@ -300,15 +302,10 @@ export function ScanCameraPage() {
   // A shutter capture whose SAVE failed — the framed photo survives for a
   // retry tap instead of vanishing into an error toast (garage corners and
   // elevators drop POSTs; the item was already put back on the shelf).
-  const [failedShot, setFailedShot] = useState<{
-    blob: Blob;
-    stamps: {
-      purpose: ScanPurpose;
-      areaName: string | null;
-      areaId: string | null;
-      container: { kind: string; id: string } | null;
-    };
-  } | null>(null);
+  // The capture itself is kept, not its picture: a retry is the same capture,
+  // so its writes carry the same keys and a try that had landed is not made
+  // again (lib/scanCapture.ts).
+  const [failedShot, setFailedShot] = useState<{ capture: Capture } | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
   const [undoBusy, setUndoBusy] = useState(false);
   // ＋Photo: the next shutter press APPENDS to this item instead of creating a
@@ -1906,21 +1903,11 @@ export function ScanCameraPage() {
   // Fire-and-forget: scanning never pauses, so the rhythm is
   // shoot → toast → keep walking.
   const saveShot = useCallback(
-    async (blob: Blob, stamps: NonNullable<typeof failedShot>["stamps"]) => {
-      const file = new File([blob], `scan-${Date.now()}.jpg`, { type: "image/jpeg" });
-      const [rec, batchId] = await Promise.all([
-        api.uploadFile(activeSlug, file),
-        ensureBatchId(),
-      ]);
-      const item = await api.scanBarcode(activeSlug, {
-        purpose: stamps.purpose,
-        source_kind: "photo",
-        image_file_id: rec.id,
-        scan_area: stamps.areaName ?? undefined,
-        target_location_id: stamps.areaId ?? undefined,
-        target_container_kind: stamps.container?.kind,
-        target_container_id: stamps.container?.id,
-        scan_batch_id: batchId ?? undefined,
+    async (capture: Capture) => {
+      const item = await saveCapture(capture, {
+        uploadFile: (file, opts) => api.uploadFile(activeSlug, file, opts),
+        ensureBatchId,
+        scanBarcode: (body, opts) => api.scanBarcode(activeSlug, body, opts),
       });
       onSaved(item);
       setDrawerItem(item);
@@ -1939,7 +1926,7 @@ export function ScanCameraPage() {
   // (lib/captureRoute.ts). The image door used to save its own shot here and
   // made a second draft while the camera was armed.
   const landCapture = useCallback(
-    async (blob: Blob, stamps: NonNullable<typeof failedShot>["stamps"], plan: DoorPlan | null) => {
+    async (blob: Blob, stamps: CaptureStamps, plan: DoorPlan | null) => {
       const armed = armRef.current;
       const route = captureRoute(!!armed, plan);
       if (route.kind === "route-qr") {
@@ -1957,6 +1944,8 @@ export function ScanCameraPage() {
         return;
       }
       setFrame(blob);
+      // A new shot is a capture from now on: its id is what keys every try.
+      const capture = armed ? null : newCapture(blob, stamps);
       try {
         if (armed) {
           // Every arm uploads the frame and attaches it to an EXISTING item;
@@ -2024,14 +2013,19 @@ export function ScanCameraPage() {
           );
           setArm(null);
           setFailedShot(null);
-        } else {
-          await saveShot(blob, stamps);
+        } else if (capture) {
+          await saveShot(capture);
           setFailedShot(null);
         }
       } catch (e) {
         // Only a NEW capture can be retried from the drawer; an arm's target
         // may be gone by then, so those surface as a frame note and keep the arm.
-        if (!armed) setFailedShot({ blob, stamps });
+        // Kept on the device too, so a reload or a second failed shot does not
+        // lose it (lib/keptShots.ts).
+        if (capture) {
+          setFailedShot({ capture });
+          void keepShot(activeSlug, capture);
+        }
         noteError(e);
       }
     },
@@ -2065,7 +2059,7 @@ export function ScanCameraPage() {
     // name never rebind it), and the ref is always the live binding.
     const areaIdNow = areaIdRef.current;
     const loc = (locsRef.current ?? []).find((l) => l.id === areaIdNow);
-    const stamps: NonNullable<typeof failedShot>["stamps"] = {
+    const stamps: CaptureStamps = {
       purpose: countMode ? "count" : sortMode ? "sort" : moveMode ? "move" : "arrival",
       areaName: loc ? (loc.short_name ?? loc.name) : null,
       areaId: areaIdNow,
@@ -2282,18 +2276,39 @@ export function ScanCameraPage() {
     [rearm, showFilingNote],
   );
 
+  // The oldest shot still kept on this device, offered for its retry: on
+  // opening the camera (a reload lost the page, not the shot), and after one
+  // lands or is let go (a second failed shot waited behind the first).
+  const offerNextKept = useCallback(async () => {
+    const [next] = await keptShots(activeSlug);
+    if (!next) return setFailedShot(null);
+    setFailedShot({ capture: next });
+    setFrame(next.file);
+  }, [activeSlug, setFrame]);
+  useEffect(() => {
+    void offerNextKept();
+  }, [offerNextKept]);
+
   const retryShot = useCallback(async () => {
     if (!failedShot || retryBusy) return;
     setRetryBusy(true);
     try {
-      await saveShot(failedShot.blob, failedShot.stamps);
-      setFailedShot(null);
+      await saveShot(failedShot.capture);
+      await forgetShot(failedShot.capture.id);
+      await offerNextKept();
     } catch (e) {
+      // What the try settled is kept with it, so the next try sends the same.
+      void keepShot(activeSlug, failedShot.capture);
       noteError(e);
     } finally {
       setRetryBusy(false);
     }
-  }, [failedShot, retryBusy, saveShot, noteError]);
+  }, [activeSlug, failedShot, retryBusy, saveShot, noteError, offerNextKept]);
+  const discardShot = useCallback(async () => {
+    if (!failedShot) return;
+    await forgetShot(failedShot.capture.id);
+    await offerNextKept();
+  }, [failedShot, offerNextKept]);
 
   // What the DRAWER is showing. Deliberately NOT recent[0]: a barcode result is
   // owned by ScanResultModal, which calls the same onSaved, so the drawer used
@@ -2854,7 +2869,7 @@ export function ScanCameraPage() {
             batchId={batchIdRef.current}
             failed={
               failedShot
-                ? { retry: () => void retryShot(), discard: () => setFailedShot(null), busy: retryBusy }
+                ? { retry: () => void retryShot(), discard: () => void discardShot(), busy: retryBusy }
                 : null
             }
             undoBusy={undoBusy}

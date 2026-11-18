@@ -158,6 +158,8 @@ export interface SalesParcelView {
   tracking_number: string | null;
   carrier: string | null;
   shipped_at: string;
+  shipment_state?: string | null;
+  delivered_at?: string | null;
   lines: Array<{ item_id: string; description: string | null; qty: number }>;
 }
 

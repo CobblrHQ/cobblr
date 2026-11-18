@@ -8,6 +8,7 @@ import { IDEMPOTENCY_KEY, asAPersonsWrite, browserOffline, sendWaitingWrites, ty
 import { ApiError, getToken } from "./api";
 import { request } from "./api/client";
 import { EDITED_FROM_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
+import { answerEndsTheWrite } from "@cobblr/platform-contract/write-answers";
 
 export const WAITING_MUTATIONS = {
   networkMode: "offlineFirst",
@@ -42,19 +43,14 @@ export class PersonsWritesCache extends MutationCache {
 /** Marks a waiting write being sent, so a send cut short is not kept twice. */
 export const SENDING_A_WAITING_WRITE = "x-cobblr-waited";
 
-/** The answers that refuse the change itself: its body, the record it names,
- *  the rule or the newer change it meets. Only these drop a waiting change. */
-const REFUSES_THE_CHANGE = new Set([400, 403, 404, 405, 409, 410, 412, 413, 415, 422]);
-/** Refusals of this session, not of the change: a read-only support session,
- *  a share's View as, a guest; the same create still running (#7923). */
-const ABOUT_THE_SESSION = new Set(["impersonation_read_only", "share_view_read_only", "guest_not_shared", "request_in_progress"]);
-
 /** Whether an answer refuses the change itself, so it is dropped and said.
  *  Anything else (busy, signed out, timed out, a server failing, an error that
  *  is no answer at all) leaves it waiting for the next try (#9366): dropped on
- *  a 429, a change the person was told would wait was thrown away. */
+ *  a 429, a change the person was told would wait was thrown away. The server
+ *  keeps an answer for a key by the same rule (write-answers.ts), so the next
+ *  try is asked again, never answered "wait" from memory. */
 export function refusesTheChange(e: unknown): e is ApiError {
-  return e instanceof ApiError && REFUSES_THE_CHANGE.has(e.status) && !ABOUT_THE_SESSION.has(e.code) && !(e.status === 409 && e.retryAfterSec !== null);
+  return e instanceof ApiError && e.status >= 400 && answerEndsTheWrite(e.status, e.code, e.retryAfterSec !== null);
 }
 
 /** Send what an earlier page left waiting, as the signed-in person. */

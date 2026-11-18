@@ -444,7 +444,7 @@ attachRouter.post(
       if (!row) return;
       const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
       const attached = meta.attached_to as
-        | { kind?: string; id?: string; instance?: string | null; mode?: string; qty_added?: number; qty_field?: string; qty_after?: number; undo?: unknown }
+        | { kind?: string; id?: string; instance?: string | null; mode?: string; qty_added?: number; qty_field?: string; qty_after?: number; undo?: unknown; photo?: { file_id?: string; image_path_before?: string | null; attachment_id?: string } }
         | undefined;
       let entityDeleted = false;
       let note: string | null = null;
@@ -520,6 +520,21 @@ attachRouter.post(
                     : `Took the ${took.qty} back off ${took.title}.`
                 : "The existing entry it attached to was left untouched — undo the quantity bump there if needed."
               : "The existing entry it attached to was left untouched.";
+        }
+        // The picture this attach gave the record goes back off it (#4115):
+        // the record's own picture before, and the gallery entry it made. Only
+        // while the record still shows this scan's picture: one changed since
+        // is the person's, and stays.
+        const photo = attached.photo;
+        if (photo?.file_id && attached.kind) {
+          const shows = await platform().entities.snapshot(ctx.org.id, attached.kind, attached.id).then((r) => String(r?.image_path ?? "")).catch(() => "");
+          if (shows.includes(photo.file_id)) {
+            const writer = await platform().entities.getWriter(ctx.org.id, attached.kind);
+            await writer?.update(ctx.org.id, attached.id, { image_path: photo.image_path_before ?? null }).catch(() => {
+              note = `${note ? `${note} ` : ""}Its picture from this scan couldn't be taken off; change it on the record.`;
+            });
+          }
+          if (photo.attachment_id) await platform().files.detach(ctx.org.id, photo.attachment_id).catch(() => null);
         }
       } else if (row.target_entity_id && row.target_module && row.target_kind) {
         const kindKey = row.target_kind.includes(":")
@@ -1159,6 +1174,9 @@ attachRouter.post(
     }
 
     const photoId = attachPhotoFileId(row, parsed.data.mode, entity.image_path);
+    /** The picture this attach gave the record, so Undo can take it back off
+     *  (#4115): the record's picture before, and the gallery entry it made. */
+    const given: { photo: { file_id: string; image_path_before: string | null; attachment_id?: string } | null } = { photo: null };
     if (photoId) {
       // Both halves from one split. This used to hand-roll it and pass the
       // WHOLE kind as source_type, so the row was written "inventory:part"
@@ -1174,15 +1192,23 @@ attachRouter.post(
           source_id: parsed.data.entity_id,
           role: "gallery",
         })
-        .then(() =>
-          apiFetch(entityPath, {
+        .then(async (made) => {
+          const r = await apiFetch(entityPath, {
             method: "PATCH",
             headers: authHeaders,
             body: JSON.stringify({
               image_path: `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${photoId}/raw`,
             }),
-          }),
-        )
+          });
+          // REFUSAL: the picture is a best-effort extra on an attach that already landed; a refused picture is simply not given, so Undo has none to take back.
+          if (r.ok) {
+            given.photo = {
+              file_id: photoId,
+              image_path_before: typeof entity.image_path === "string" && entity.image_path ? entity.image_path : null,
+              ...(made && !made.existed ? { attachment_id: made.attachmentId } : {}),
+            };
+          }
+        })
         .catch((err) => console.error("[core-scan] attach photo failed:", (err as Error).message));
     }
 
@@ -1219,6 +1245,7 @@ attachRouter.post(
             // The action's own inverse (the record as it was, lot and all),
             // run by unconfirm while the record still reads what this left.
             ...(undoSteps.length ? { undo: undoSteps } : {}),
+            ...(given.photo ? { photo: given.photo } : {}),
           },
           // Ran out's list line, which Undo takes back off.
           ...(ranOutDone ? { [RAN_OUT_KEY]: ranOutDone.stamp } : {}),

@@ -25,6 +25,7 @@ import { PhoneHeaderShortcuts } from "./PhoneHeaderShortcuts";
 import { DriveProvider } from "./DriveContext";
 import { LiveBox } from "./LiveBox";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { usePhoneNameRow } from "../hooks/usePhoneNameRow";
 import { ModuleNav } from "./ModuleNav";
 import { SidebarNav } from "./SidebarNav";
 import { isFullSidebar } from "../lib/nav-layout";
@@ -74,7 +75,7 @@ const GuidedTour = lazyShellHost(() => import("../tour/GuidedTour").then((m) => 
 import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
-import { FloatingChrome, PageHoldsStill, useScrollToHash, useToast } from "@cobblr/platform-web";
+import { FloatingChrome, PageHoldsStill, installFocusRescue, useScrollToHash, useToast } from "@cobblr/platform-web";
 // Loaded with the shell: a ⌘K or an Add pressed before the palette or the
 // sheet has arrived is held for it from the start.
 import "./palette-events";
@@ -109,6 +110,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   // what keeps a conversation alive across close and reopen.
   const [panelsWanted, setPanelsWanted] = useState(chatOpen);
   if (chatOpen && !panelsWanted) setPanelsWanted(true);
+  // A focused control removed with its row hands focus to the row in its place (#4115).
+  useEffect(() => installFocusRescue(), []);
   useEffect(() => {
     if (panelsWanted) return;
     const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
@@ -189,6 +192,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const [barHidden, setBarHidden] = useState(false);
   const barHiddenRef = useRef(false);
   const [barH, setBarH] = useState(56);
+  const [barRow, setBarRow] = useState<HTMLDivElement | null>(null);
+  const [nameBox, setNameBox] = useState<HTMLDivElement | null>(null);
+  const nameOwnRow = usePhoneNameRow(barRow, nameBox);
   useEffect(() => {
     const el = headerRef.current;
     if (!el) return;
@@ -651,7 +657,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             moves all three together. */}
         {/* A phone on its side has the Dynamic Island or the notch at one side
             and rounded corners at both: the row keeps clear of them (#6782). */}
-        <div className="desktop-topnav-pad pl-[max(20px,var(--inset-left))] pr-[max(20px,var(--inset-right))] pt-1 pb-3 md:py-3 flex items-center gap-[8px] sm:gap-[12px] min-w-0">
+        <div ref={setBarRow} className="desktop-topnav-pad pl-[max(20px,var(--inset-left))] pr-[max(20px,var(--inset-right))] pt-1 pb-3 md:py-3 flex max-md:flex-wrap items-center gap-[6px] sm:gap-[12px] min-w-0">
           {/* Nav-placement flip (desktop): top bar ⇄ left sidebar. Sits LEFT
               of the wordmark, à la Vivaldi's panel toggle. Icon shows the
               layout you'd switch TO. */}
@@ -716,7 +722,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               switch to. */}
           {!appMode && (
             <>
-              <span aria-hidden className="text-faint dark:text-slate-500 shrink-0">/</span>
+              {/* Not on a phone: the mark and the name read as two things without
+                  it, and its 14 px are the name's (#9278). */}
+              <span aria-hidden className="hidden md:inline text-faint dark:text-slate-500 shrink-0">/</span>
               {/* Workspace logo — the builder's brand, alongside the Cobblr mark. */}
               {wsLogo && (
                 <img
@@ -727,8 +735,16 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               )}
               {/* min-w-0 (not shrink-0): if the row is still too tight, the
                   workspace name truncates here FIRST, keeping the right-side menu
-                  button on-screen instead of clipping it. */}
-              <div data-tour="workspace" className="min-w-0">
+                  button on-screen instead of clipping it. On a phone where that
+                  would leave it under six characters' room (text at 200%, a
+                  320 px screen), it takes a row of its own under the bar
+                  instead, and reads whole there (#9502). */}
+              <div
+                ref={setNameBox}
+                data-tour="workspace"
+                data-own-row={nameOwnRow ? "" : undefined}
+                className={`min-w-0 ${nameOwnRow ? "max-md:order-last max-md:basis-full" : ""}`}
+              >
                 <WorkspaceSwitcher />
               </div>
             </>
@@ -769,8 +785,13 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               bar's sides and gaps: in rem the six of them doubled with the
               phone's text at 200%, ran the menu 15 px off the screen (18 on a
               320 px phone) and left the workspace name no room (#8423). */}
-          <div className="shrink-0 md:hidden flex items-center gap-0.5">
-            <HeaderActions />
+          {/* No gap between them: each icon's own 6 px padding already keeps
+              the glyphs 12 px apart, and the 8 px the gaps took are the name's.
+              Only the capture actions sit here; the builder's (Build) are rows
+              in the menu, so an owner's workspace name is whole beside the
+              rest (#9278). */}
+          <div className="shrink-0 md:hidden flex items-center">
+            <HeaderActions only="capture" />
             {/* An app-mode workspace keeps its menu to the app, the same way
                 the menu leaves search out there. */}
             <PhoneHeaderShortcuts search={!appMode} />

@@ -59,7 +59,7 @@ export default defineModule({
           { name: "state", type: "text", readOnly: true },
           { name: "qty", type: "number", label: PART_FIELD_LABELS.qty, role: "quantity", trait: "fungible" },
           { name: "unit", type: "text", role: "unit", trait: "fungible" },
-          { name: "cost", type: "number", money: "amount", aggregate: "per_unit", trait: "fungible" },
+          { name: "cost", type: "number", money: "amount", aggregate: "per_unit", trait: "fungible", fieldRole: "unit-cost" }, // VOCAB-ENUMERATION OK: declares what this field means
           { name: "min_qty", type: "number", label: PART_FIELD_LABELS.min_qty, aggregate: "none", trait: "fungible" },
           // An ESTIMATE, deliberately not role:"quantity" — that role means a
           // counted amount, and a face reading it as one would render a guess

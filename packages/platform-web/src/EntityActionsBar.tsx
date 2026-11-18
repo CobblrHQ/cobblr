@@ -19,7 +19,8 @@ import { AskCobbAbout } from "./AskCobbAbout";
 import { HEADER_ACTION_IDS } from "./RecordHeaderChips";
 import { DormantActionButton } from "./DormantActionButton";
 import { RecordDisposition } from "./RecordDisposition";
-import { RecordLoan, useOffWhileLent } from "./RecordLoan";
+import { RecordLoan } from "./RecordLoan";
+import { useActionOff } from "./RecordActionOff";
 import { RecordSharing } from "./RecordSharing";
 import { RecordPublic } from "./RecordPublic";
 import { SendRecords } from "./SendRecords";
@@ -196,12 +197,12 @@ function ActionButton({
   // on: the same arguments either way.
   const go = () => run({ actionId: action.id, label: action.label, argsSchema: action.args_schema, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler });
   useRunOnce(runNow, go, onRan);
-  const off = useOffWhileLent(entityKind, entityId, action.id);
+  const off = useActionOff(entityKind, entityId, action.id);
   const inMenu = useShownInMenu(action.id);
 
   return (
     <>
-      <RecordActionItem id={action.id} group={action.group ?? "more"} primary={action.primary} label={action.label} description={action.description ?? ""} outcome={<ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={null} />}><ActionDescription description={action.description || action.label}><button
+      <RecordActionItem id={action.id} group={action.group ?? "more"} primary={action.primary} label={action.label} description={action.description ?? ""} outcome={<ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={null} />}><ActionDescription description={action.description || action.label} off={off}><button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
@@ -244,11 +245,11 @@ function BindingButton({
   const { run, flash, note, failure, asking, dismissFailure, pending } = useInvokeEntityAction({ entityKind, entityId });
   const go = () => run({ actionId: binding.action_id, argsSchema: binding.args_schema, binding });
   useRunOnce(runNow, go, onRan);
-  const off = useOffWhileLent(entityKind, entityId, binding.action_id);
+  const off = useActionOff(entityKind, entityId, binding.action_id);
   const inMenu = useShownInMenu(binding.action_id);
   return (
     <>
-      <RecordActionItem id={binding.action_id} group={binding.group ?? "more"} primary={binding.primary} label={binding.label} description={binding.description ?? ""} outcome={<ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={null} />}><ActionDescription description={binding.description || binding.label}><button
+      <RecordActionItem id={binding.action_id} group={binding.group ?? "more"} primary={binding.primary} label={binding.label} description={binding.description ?? ""} outcome={<ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={null} />}><ActionDescription description={binding.description || binding.label} off={off}><button
         type="button"
         onClick={(e) => {
           e.stopPropagation();

@@ -22,7 +22,7 @@ function fmt(n: number): string {
 export function ExpiringPage() {
   const { api, instance } = useInventory();
   const [within, setWithin] = useState<number>(30);
-  const q = useQuery({ queryKey: ["inventory-expiring", instance ?? "inventory", within], queryFn: () => api.stockExpiring(within) });
+  const q = useQuery({ queryKey: ["inventory-expiring", instance ?? "inventory", within], queryFn: () => api.stockExpiring(within), meta: { kinds: "*" } });
   const run = useRunWithUndo();
   const qc = useQueryClient();
   // One at a time, as the record's own buttons do, but off the lot this row

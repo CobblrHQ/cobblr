@@ -95,7 +95,7 @@ export function parseMoneyAmount(input: unknown): number | null {
 export type MoneyStorage = "cents" | "amount";
 
 /** The record roles whose value is money. */
-export const MONEY_ROLES: ReadonlySet<string> = new Set(["acquired-for"]);
+export const MONEY_ROLES: ReadonlySet<string> = new Set(["acquired-for", "unit-cost"]);
 
 const CURRENCY_UNITS = new Set(["$", "€", "£", "¥", "USD", "EUR", "GBP", "CAD", "AUD", "NZD", "JPY", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "MXN", "BRL", "INR", "CNY", "HKD", "SGD", "ZAR"]);
 

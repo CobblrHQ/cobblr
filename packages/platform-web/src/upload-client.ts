@@ -19,6 +19,7 @@ import type { PersonalDocumentRead } from "@cobblr/platform-contract/personal-do
 import { noteWorkspaceWrite } from "./workspace-writes";
 import { CONNECTION_LOST_MESSAGE, megabytes } from "@cobblr/platform-contract/upload";
 import { makesBackgroundWrites } from "./acting-role";
+import { beginWrite, outcomeOf } from "./write-identity";
 
 export class UploadError extends Error {
   constructor(
@@ -38,6 +39,10 @@ export interface SendUploadOptions {
   file?: File | Blob | null;
   /** Stops the upload, for a person who took it back (#9271). */
   signal?: AbortSignal;
+  /** The key for a caller that knows the upload's identity better than its
+   *  form does: a capture retried as a rebuilt File is still that capture
+   *  (web/src/lib/scanCapture.ts). Omitted, the form's identity keys it. */
+  idempotencyKey?: string;
 }
 
 /** The api path an upload was for, and the workspace it names. */
@@ -65,12 +70,32 @@ function opensPersonalCard(body: { error?: { code?: string; details?: unknown } 
   return body?.error?.code === "personal_document" && read?.privacy === "personal" && !!read.fields && !!read.sources && Array.isArray(read.missing) && typeof read.message === "string";
 }
 
+/** What an upload is, for its Idempotency-Key: each field in order, and a
+ *  file by its name, size, type and time. Two sends of the same file with the
+ *  same choices are one upload; another file, or another choice, is not. */
+export function uploadIdentity(form: FormData): string {
+  const parts: string[] = [];
+  form.forEach((v, k) => {
+    parts.push(typeof v === "string" ? `${k}=${v}` : `${k}=file:${(v as File).name ?? ""}:${v.size}:${v.type}:${(v as File).lastModified ?? ""}`);
+  });
+  return parts.join("\n");
+}
+
 /** POST a multipart form. Resolves with the response for ANY answer (a
  *  refusal included: read it with uploadErrorOf); throws an UploadError with
  *  CONNECTION_LOST_MESSAGE when no answer came. An abort is rethrown as is. */
 export async function sendUpload(url: string, form: FormData, opts: SendUploadOptions = {}, method: "POST" | "PUT" = "POST"): Promise<Response> {
+  // An upload sent again while its outcome is unknown is the same upload, and
+  // the server answers it as it answered the first (#9583, write-identity.ts).
+  // Never kept on the device for a reload: the file is not.
+  const path = url.replace(/^[a-z]+:\/\/[^/]+/i, "").replace(/^\/api\/v1(?=\/)/, "");
+  const write = beginWrite(method, path, uploadIdentity(form));
   try {
-    const res = await fetch(url, { method, headers: opts.token ? { Authorization: `Bearer ${opts.token}` } : {}, body: form, ...(opts.signal ? { signal: opts.signal } : {}) });
+    const headers: Record<string, string> = opts.token ? { Authorization: `Bearer ${opts.token}` } : {};
+    if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
+    else if (write) headers["Idempotency-Key"] = write.key;
+    const res = await fetch(url, { method, headers, body: form, ...(opts.signal ? { signal: opts.signal } : {}) });
+    write?.settle(outcomeOf(res.status, res.headers.get("retry-after")));
     // Every upload is a write: told at the one door, like any other.
     if (res.ok) noteWorkspaceWrite(url);
     if (res.status === 409) {
@@ -84,6 +109,9 @@ export async function sendUpload(url: string, form: FormData, opts: SendUploadOp
     }
     return res;
   } catch (err) {
+    // No answer: whether it ran is unknown, so sending it again keeps the key.
+    // A person who took it back starts a new one.
+    write?.settle((err as Error)?.name === "AbortError" ? "answered" : "unknown");
     if ((err as Error)?.name === "AbortError") throw err;
     reportConnectionLost(url, opts);
     throw new UploadError(0, "connection_lost", CONNECTION_LOST_MESSAGE);

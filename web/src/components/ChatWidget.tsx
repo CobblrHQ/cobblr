@@ -4,7 +4,7 @@
 // messages render markdown; the input auto-grows. Portals to <body> so the
 // header's backdrop-blur can't trap its position:fixed (CLAUDE.md modal note).
 
-import { AFTER_A_FAILED_TURN, undoAsk, undoTarget, undoneSaid } from "../lib/undo-target";
+import { AFTER_A_FAILED_TURN, AFTER_NOTHING_CHANGED, undoAsk, undoTarget, undoneSaid } from "../lib/undo-target";
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { mayRead } from "../lib/acting-role";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -63,7 +63,7 @@ import { ContextChip, PopoverLayer, useEscapeToClose, useMenuFocus, useCloseOnPa
 import { ServiceJobCard } from "./ServiceJobCard";
 
 import { countOf } from "@cobblr/platform-contract/plural";
-import { personalKeptOff, receiptReadSaid, type ReceiptReadResult } from "../lib/attachment-said";
+import { fileAttachment, type ReceiptReadResult } from "../lib/attachment-said";
 
 // Chat history is cached per-workspace in localStorage so a page refresh doesn't
 // wipe the conversation: every message as it was shown, cards and their state
@@ -1071,24 +1071,21 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       try {
         const read = await api.readPersonalDocument(activeSlug, file);
         if (generation !== documentGeneration.current) return;
-        if (read.kind === "registration" || read.renewalType) {
+        const done = await fileAttachment(file.name, read, {
+          upload: () => api.uploadFile(activeSlug, file),
+          scan: (id) => api.scanReceipt(activeSlug, id, { origin: "upload" }) as Promise<ReceiptReadResult>,
+        });
+        if (generation !== documentGeneration.current) return;
+        if ("card" in done) {
           raisePersonalDocument({ orgSlug: activeSlug, read, file });
           setDocumentFile(null); setInput("");
           return;
         }
-        // Anything else is not refused: "This attachment is not a
-        // registration renewal" met a receipt, and the typed "File that
-        // receipt." sat unsent beside it (#9517). An ordinary document is
-        // read as a receipt into the scan inbox, the scanner's own door; a
-        // personal one is kept off the shared files and said so.
+        // Anything else is not refused (#9517): the shared upload door judges
+        // whether it is personal, and what it takes is read as a receipt into
+        // the scan inbox. See fileAttachment.
         setDocumentFile(null);
-        if (read.privacy === "personal") {
-          attached.push({ role: "assistant", content: personalKeptOff(file.name) });
-        } else {
-          const stored = await api.uploadFile(activeSlug, file);
-          const r = await api.scanReceipt(activeSlug, stored.id, { origin: "upload" });
-          attached.push({ role: "assistant", content: receiptReadSaid(file.name, r as ReceiptReadResult) });
-        }
+        attached.push({ role: "assistant", content: done.said });
       } catch (error) {
         if (generation === documentGeneration.current) setError(error instanceof Error ? error.message : "The document could not be read.");
         return;
@@ -1246,10 +1243,11 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           setBusy(false);
           return;
         }
-        if (undoAct && target.kind === "failed") {
-          // The newest thing is a turn that did not go through: "that" is it,
-          // never an older change behind it (#9509).
-          setMessages((prev) => [...prev, { role: "assistant", content: AFTER_A_FAILED_TURN }]);
+        if (undoAct && (target.kind === "failed" || target.kind === "unchanged")) {
+          // The newest thing is a turn that did not go through (#9509) or a
+          // request that changed nothing (#9579): "that" is it, never an
+          // older change behind it.
+          setMessages((prev) => [...prev, { role: "assistant", content: target.kind === "failed" ? AFTER_A_FAILED_TURN : AFTER_NOTHING_CHANGED }]);
           setBusy(false);
           return;
         }

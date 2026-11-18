@@ -222,6 +222,9 @@ export interface PlatformWebApi {
      *  whether it runs for this viewer: the door's own answer (#7922). */
     runs?: Partial<Record<string, boolean>>;
   }>;
+  /** The actions this record, as it is now, would refuse, each with its
+   *  sentence (GET /:slug/actions/off): the bar draws them off with it. */
+  actionsOffOn?(slug: string, kind: string, id: string): Promise<{ off: Record<string, string> }>;
   setRecordActionPin?(slug: string, kind: string, action: string, pinned: boolean): Promise<unknown>;
   /** Turn a module on for the workspace (an owner's or admin's act). Optional:
    *  a host without it offers the ask instead. */

@@ -130,7 +130,7 @@ export async function agentFieldsFor(orgId: string, kind: string, fallback: read
   const rec = (await platform().entities.listKindsForOrg(orgId).catch(() => [])).find((k) => k.id === kind);
   for (const f of rec?.fields ?? []) {
     if (f.readOnly || f.type === "image-path" || f.type === "object") continue;
-    out.set(f.name, { name: f.name, ...(f.label ? { label: f.label } : {}), type: f.type, ...(f.choices ? { choices: [...f.choices] } : {}), ...(f.fieldRole ? { field_role: f.fieldRole } : {}) });
+    out.set(f.name, { name: f.name, ...(f.label ? { label: f.label } : {}), type: f.type, ...(f.choices ? { choices: [...f.choices] } : {}), ...(f.fieldRole ? { field_role: f.fieldRole } : {}), ...(f.money ? { money: f.money } : {}) });
   }
   for (const f of fallback) if (!out.has(f.name)) out.set(f.name, f);
   for (const f of await platform().entities.fieldsFor(orgId, kind).catch(() => [])) {
@@ -142,6 +142,7 @@ export async function agentFieldsFor(orgId: string, kind: string, fallback: read
       ...(f.choices?.length ? { choices: [...f.choices] } : {}),
       ...(f.field_role ? { field_role: f.field_role } : {}),
       ...(f.learns ? { learns: true } : {}),
+      ...(f.unit ? { unit: f.unit } : {}),
     });
   }
   return [...out.values()];

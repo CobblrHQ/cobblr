@@ -155,16 +155,41 @@ function namesMade(call: { name: string; args?: Record<string, unknown> | null }
   return [];
 }
 
+// ascii-only: the English shapes of "a place with these inside it"; a request in another language still gets the handed-back names below
+const WITH_INSIDE = /\bwith\s+(.+?)\s+(?:inside|within|in)\s+(?:it|them)\b/i;
+// ascii-only: as above
+const CONTAINING = /\bcontaining\s+(.+?)\s*(?:[.?!]|$)/i;
+// ascii-only: as above
+const ARTICLE = /^(?:a|an|the|some|my)\s+/i;
+
+/** The things a request names as going inside what it makes: "Make Shop,
+ *  with a Workbench, Shelf A and a Parts drawer inside it" names three. A
+ *  model can propose Shop alone without trying the rest, so nothing was
+ *  handed back for them and only the request still says they were asked
+ *  for (re-walk of #9514). */
+export function namedInside(said: string): string[] {
+  const list = WITH_INSIDE.exec(said)?.[1] ?? CONTAINING.exec(said)?.[1];
+  if (!list) return [];
+  return list
+    .split(/\s*,\s*(?:and\s+)?|\s+and\s+/i)
+    .map((item) => item.trim().replace(ARTICLE, "").trim())
+    .filter((item) => item && item.split(/\s+/).length <= 5);
+}
+
 /** The things a turn asked to make that the card it ends on does not carry:
- *  each create handed back or held this turn, by name, unless a proposal on
- *  the card makes one by the same name (#9514). */
+ *  each create handed back or held this turn, by name, and each thing the
+ *  request named as going inside, unless a proposal on the card makes one
+ *  by the same name (#9514). Only a card that makes something is asked. */
 export function leftOffTheCard(
   notProposed: ReadonlyArray<{ name: string; args?: Record<string, unknown> | null }>,
   proposed: ReadonlyArray<{ name: string; args?: Record<string, unknown> | null }>,
+  askedInside: readonly string[] = [],
 ): string[] {
-  const onCard = new Set(proposed.flatMap(namesMade).map((n) => n.toLocaleLowerCase()));
+  const made = proposed.flatMap(namesMade);
+  const onCard = new Set(made.map((n) => n.toLocaleLowerCase()));
   const out: string[] = [];
-  for (const name of notProposed.flatMap(namesMade)) {
+  const asked = made.length ? askedInside : [];
+  for (const name of [...notProposed.flatMap(namesMade), ...asked]) {
     const k = name.toLocaleLowerCase();
     if (onCard.has(k) || out.some((o) => o.toLocaleLowerCase() === k)) continue;
     out.push(name);

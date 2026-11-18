@@ -27,6 +27,7 @@
 // left behind, something else has touched it since, and the revert says so.
 // An undo is itself a ledger row (undo_of) — undoing an undo works.
 
+import { addedSaid, type AddFound } from "./added-said.js";
 import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
 import { actionSaid } from "./action-summary.js";
@@ -522,12 +523,13 @@ export async function performWrite(
   if (tool === "create" && req.via === "add_thing") {
     const r = await getTool("add_thing")!.execute(wsApi, req.args ?? {});
     if (!r.ok) return { ok: false, message: r.error ?? "The add did not go through." };
-    const found = r.data as { item_id?: string; name?: string | null; next?: string; filed?: { entity_id: string | null; entity_kind: string | null } | null };
+    const found = r.data as AddFound & { item_id?: string; filed?: { entity_id: string | null; entity_kind: string | null } | null };
     const label = String(found.name ?? (req.args?.name as string | undefined) ?? "the thing");
     const filed = found.filed?.entity_id && found.filed.entity_kind ? { id: found.filed.entity_id, kind: found.filed.entity_kind } : null;
     // Left in the inbox, nothing in the workspace's records changed: the
     // inbox row is the person's to file or discard, so there is no undo here.
-    if (!filed) return { ok: true, message: found.next ?? `Added ${label} to the scan inbox.` };
+    const said = addedSaid(found, label, req.args?.file === true);
+    if (!filed) return { ok: true, message: said };
     const after = await stateOf(wsApi, opts.orgId, filed.kind, filed.id);
     const row = await db
       .insertInto("core_ai_chat_writes")
@@ -551,7 +553,7 @@ export async function performWrite(
       .executeTakeFirst();
     return {
       ok: true,
-      message: found.next ?? `Added ${label}.`,
+      message: said,
       entity: { kind: filed.kind, id: filed.id, label },
       ledger_id: row?.id,
       undoable: true,

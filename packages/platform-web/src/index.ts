@@ -367,6 +367,7 @@ export { acceptsFile, clipboardFiles, clipboardImageFiles, imageUrlFrom, payload
 export { usePasteImage, pasteTargetFor, type PasteImageHandlers } from "./usePasteImage";
 export { useEscapeToClose } from "./useEscapeToClose";
 export { menuChoices, useMenuFocus } from "./useMenuFocus";
+export { installFocusRescue } from "./focus-rescue";
 export { QueryError } from "./QueryError";
 export { missingRequired, type RequiredLike } from "./required-fields";
 export type { PlatformWire, PlatformWireInput } from "./types";

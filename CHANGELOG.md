@@ -2,6 +2,11 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-18
+
+### Fixes
+- Following the parcels you send now follows every parcel of an order, not only the last one: the first boxes of an order sent in parts are watched too, each shows when it was delivered, and the order is delivered only when all of them are.
+
 ## 2026-11-17
 
 ### Features

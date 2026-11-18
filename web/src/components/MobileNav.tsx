@@ -40,6 +40,7 @@ import { NavRowMenu, type RowCollection } from "./NavSplitRow";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { OverlayLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
+import { inHeaderActionSet, useHeaderActions } from "./HeaderActions";
 
 export function MobileNav() {
   const { activeOrg, activeSlug } = useActiveOrg();
@@ -53,6 +54,11 @@ export function MobileNav() {
   const visibleTops = surfaceTops(tops, appMode);
   const rowCandidates = visibleTops.flatMap((t) => instanceGroups.get(t.name)?.members ?? (t.name.startsWith("__instance__") ? [t] : []));
   const badges = useNavBadges(activeSlug);
+  // The builder's header actions (Build): on a phone they are rows here, not
+  // icons in the bar, which keeps the capture tools and the workspace's name
+  // (#9278). The same list and the same rules as the bar's, so a person who
+  // may not build sees no row either.
+  const builderActions = useHeaderActions().filter((m) => inHeaderActionSet(m.headerAction!.route, "builder"));
   const { apps } = useAppCatalog(!appMode);
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
   const { logout, user } = useAuth();
@@ -171,6 +177,9 @@ export function MobileNav() {
   // themselves, not a lone "More apps" to find them behind (#6334).
   if (!appMode && entries.every((entry) => ALWAYS_THERE.has(entry.key))) {
     for (const app of apps) if (app.state !== "off") entries.push(row(app.key, app.route, app.label));
+  }
+  for (const m of builderActions) {
+    if (!entries.some((entry) => entry.key === m.name)) entries.push(row(m.name, m.headerAction!.route, m.headerAction!.label));
   }
   if (!appMode) entries.push({ key: "more-apps", fullWidth: true, content: <MoreAppsDoor plain onNavigate={close} className={linkClass} /> });
   // One cell of the pinned account footer. min-w-0 + flex-1 so five of them

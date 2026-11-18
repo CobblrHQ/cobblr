@@ -66,15 +66,42 @@ export function gtinCases(raw: string): string[] {
   });
 }
 
+/** A product code typed short: the item codes it could be. A length no
+ *  GTIN has (11 or 7 digits) is a UPC-A or an EAN-8 with one digit left
+ *  off, either its leading zero ("70177154820" for 070177154820) or its check
+ *  digit ("07017715482"). Both readings are kept: the record decides which,
+ *  and a workspace holding both is asked, never guessed (#4115). A code of a
+ *  real GTIN length is never read as one with a digit missing: a 12-digit
+ *  code that fails its check is how a misread looks, and reading it as an
+ *  EAN-13 short of its check digit would name another product. */
+export function gtinShortReadings(raw: string): string[] {
+  const c = clean(raw);
+  if (!/^\d+$/.test(c) || (c.length !== 11 && c.length !== 7)) return [];
+  const out = new Set<string>();
+  const zeroLed = `0${c}`;
+  if (gtinValid(zeroLed)) out.add(zeroLed);
+  out.add(c + gtinCheck(c));
+  return [...out].map((code) => gtinItem(code) ?? code);
+}
+
 /** The canonical form used for equality. */
 export function identifierCanonical(v: unknown): string {
   const c = clean(v);
   return isbn10to13(c) ?? gtinItem(c) ?? c;
 }
 
+/** Every canonical form a value could be: its own, and for a product code
+ *  typed short, each item code it could be (gtinShortReadings). */
+function identifierCanonicals(v: unknown): string[] {
+  const own = identifierCanonical(v);
+  return own ? [own, ...gtinShortReadings(clean(v))] : [];
+}
+
 export function identifierEquals(a: unknown, b: unknown): boolean {
-  const ca = identifierCanonical(a);
-  return ca !== "" && ca === identifierCanonical(b);
+  const ca = identifierCanonicals(a);
+  if (!ca.length) return false;
+  const cb = new Set(identifierCanonicals(b));
+  return ca.some((x) => cb.has(x));
 }
 
 /** Every spelling worth PROBING a list filter with for a code: the code as
@@ -94,6 +121,12 @@ export function identifierForms(code: string): string[] {
   if (item) {
     out.add(item);
     if (item.startsWith("0")) out.add(item.slice(1));
+  }
+  // A product code typed short: each item code it could be, in the spellings
+  // a record may carry.
+  for (const short of gtinShortReadings(c)) {
+    out.add(short);
+    if (short.startsWith("0")) out.add(short.slice(1));
   }
   if (/^978\d{10}$/.test(c)) {
     const body = c.slice(3, 12);

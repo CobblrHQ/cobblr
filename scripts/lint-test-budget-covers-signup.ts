@@ -31,6 +31,17 @@
 // FRESH_ORG_BUDGET_MS * 2 (worn() on top is fine), as the vault restore test
 // already did. Proven red on that test as it was.
 //
+// AND WHEREVER THE TEST GIVES ITS BUDGET (#9553). Every rule read the budget
+// from the closing `}, X);` and the body from the second argument, so a test
+// that gives `{ timeout: X }` up front, or none at all, was never judged, and
+// a restore made through the file's own helper was not seen as a restore. A
+// held-restore test signed up and restored on one workspace's 60 s and timed
+// out on a loaded runner, passing on its retry. The rules now read the body
+// and the budget in either form (testCall), follow the file's helpers, and
+// judge the signup rule only where the test's own body signs up. Proven red
+// with a 52 s signup forced into that test: "Test timed out in 60000ms" on
+// the old budget, green on worn(FRESH_ORG_BUDGET_MS * 2).
+//
 // A parity check also waits for the pooled workspace's heals and inspects
 // both shapes. Those stages and fresh signup need three separate budgets,
 // worn at load even when the quiet budget is a named constant.
@@ -50,14 +61,79 @@ const BUDGET = (() => {
   if (!m) throw new Error(`${HELPERS} no longer exports FRESH_ORG_BUDGET_MS; this lint reads the budget from there`);
   return Number(m[1]!.replace(/_/g, ""));
 })();
-/** The closing of an it()/test() body with a numeric timeout: `}, 30_000);` */
-const CLOSE_WITH_BUDGET = /^\s*\}\s*,\s*([0-9][0-9_]*)\s*\)\s*;/;
 
 /** One offending place. `line` is 1-based for a clickable path:line. */
 interface Violation {
   file: string;
   line: number;
   what: string;
+}
+
+/** An it()/test() call's body and budget, in either form vitest takes:
+ *  `it(name, body, budget)` or `it(name, { timeout: budget }, body)`. Read
+ *  only the first, every rule here was blind to the second: a file closing
+ *  with `});` and its timeout up front was never judged, and two restore
+ *  tests in it ran two workspaces' work on one workspace's clock (#9553). */
+export function testCall(node: ts.Node, tree: ts.SourceFile): { body: ts.ArrowFunction | ts.FunctionExpression; budget: ts.Expression | undefined; end: number } | null {
+  if (!ts.isCallExpression(node) || !/^(?:it|test)(?:\.\w+)*$/.test(node.expression.getText(tree))) return null;
+  const isFn = (n: ts.Node | undefined): n is ts.ArrowFunction | ts.FunctionExpression => !!n && (ts.isArrowFunction(n) || ts.isFunctionExpression(n));
+  const [, second, third] = node.arguments;
+  const end = tree.getLineAndCharacterOfPosition(node.getEnd()).line;
+  if (isFn(second)) return { body: second, budget: third && ts.isObjectLiteralExpression(third) ? timeoutOf(third) : third, end };
+  if (second && ts.isObjectLiteralExpression(second) && isFn(third)) return { body: third, budget: timeoutOf(second), end };
+  return null;
+}
+
+function timeoutOf(options: ts.ObjectLiteralExpression): ts.Expression | undefined {
+  for (const p of options.properties) if (ts.isPropertyAssignment(p) && p.name.getText() === "timeout") return p.initializer;
+  return undefined;
+}
+
+/** Every it()/test() call in a file, with its body and budget. */
+function testCalls(file: string, src: string): Array<{ node: ts.CallExpression; tree: ts.SourceFile; body: ts.ArrowFunction | ts.FunctionExpression; budget: ts.Expression | undefined; end: number }> {
+  const tree = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
+  const out: Array<{ node: ts.CallExpression; tree: ts.SourceFile; body: ts.ArrowFunction | ts.FunctionExpression; budget: ts.Expression | undefined; end: number }> = [];
+  const visit = (node: ts.Node): void => {
+    const t = testCall(node, tree);
+    if (t) out.push({ node: node as ts.CallExpression, tree, ...t });
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  return out;
+}
+
+/** A `// budget: <reason>` on the line the test closes on, or the line its budget is on. */
+function saysWhy(lines: string[], tree: ts.SourceFile, end: number, budget: ts.Expression | undefined): boolean {
+  const at = budget ? tree.getLineAndCharacterOfPosition(budget.getStart(tree)).line : end;
+  return [lines[end], lines[at]].some((l) => /\/\/ budget: \S/.test(l ?? ""));
+}
+
+/** Whether a test body does what `pattern` names, itself or through a
+ *  helper the file declares (`const restore = (s, zip) => fetch(".../backup/restore")`). */
+function reaches(body: ts.Node, tree: ts.SourceFile, pattern: RegExp): boolean {
+  const helpers = new Map<string, ts.Node>();
+  for (const st of tree.statements) {
+    if (ts.isFunctionDeclaration(st) && st.name && st.body) helpers.set(st.name.text, st.body);
+    if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) {
+      if (ts.isIdentifier(d.name) && d.initializer && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) helpers.set(d.name.text, d.initializer.body);
+    }
+  }
+  const seen = new Set<string>();
+  const does = (node: ts.Node): boolean => {
+    if (pattern.test(node.getText(tree))) return true;
+    let found = false;
+    const visit = (n: ts.Node): void => {
+      if (found) return;
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && helpers.has(n.expression.text) && !seen.has(n.expression.text)) {
+        seen.add(n.expression.text);
+        if (does(helpers.get(n.expression.text)!)) { found = true; return; }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(node);
+    return found;
+  };
+  return does(body);
 }
 
 function* walk(dir: string): Generator<string> {
@@ -76,10 +152,6 @@ function* walk(dir: string): Generator<string> {
 }
 
 /** The check. Return every violation in one file; an empty array is a pass. */
-/** The opening of an it()/test() body. */
-const OPEN_TEST = /^\s*(?:it|test)(?:\.\w+)?\(/;
-/** The closing of an it()/test() body, whatever its budget expression. */
-const CLOSE_ANY = /^\s*\}\s*,\s*(.+?)\s*\)\s*;/;
 const SIGNS_UP = /\bsignup(?:FreshOrg|BlankOrg)\s*\(/;
 const RESTORES = /\/backup\/restore\b/;
 
@@ -93,22 +165,17 @@ function coversWorkspaces(expr: string, count: number): boolean {
 
 /** Bodies that sign up a workspace and restore into it close with two
  *  workspaces' budget. */
-function checkRestores(file: string, lines: string[]): Violation[] {
+function checkRestores(file: string, src: string): Violation[] {
+  const lines = src.split("\n");
   const out: Violation[] = [];
-  let start = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (OPEN_TEST.test(line)) start = i;
-    const close = start >= 0 ? line.match(CLOSE_ANY) : null;
-    if (!close) continue;
-    const body = lines.slice(start, i + 1).join("\n");
-    start = -1;
-    if (!SIGNS_UP.test(body) || !RESTORES.test(body)) continue;
-    if (coversWorkspaces(close[1]!, 2) || /\/\/ budget: \S/.test(line)) continue;
+  for (const t of testCalls(file, src)) {
+    if (!reaches(t.body, t.tree, SIGNS_UP) || !reaches(t.body, t.tree, RESTORES)) continue;
+    const expr = t.budget?.getText(t.tree) ?? "the default timeout";
+    if ((t.budget && coversWorkspaces(expr, 2)) || saysWhy(lines, t.tree, t.end, t.budget)) continue;
     out.push({
       file,
-      line: i + 1,
-      what: `a test that signs up a workspace and restores a backup into it closes with ${close[1]}, one workspace's budget for two workspaces' work; close with worn(FRESH_ORG_BUDGET_MS * 2), or say why: // budget: <reason>`,
+      line: t.end + 1,
+      what: `a test that signs up a workspace and restores a backup into it closes with ${expr}, one workspace's budget for two workspaces' work; close with worn(FRESH_ORG_BUDGET_MS * 2), or say why: // budget: <reason>`,
     });
   }
   return out;
@@ -121,11 +188,10 @@ function checkHealedSignup(file: string, src: string): Violation[] {
   const tree = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
   const out: Violation[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && /^(?:it|test)(?:\.\w+)*$/.test(node.expression.getText(tree))) {
-      const body = node.arguments[1];
-      const budget = node.arguments[2];
-      if (body && (ts.isArrowFunction(body) || ts.isFunctionExpression(body))
-        && body.getText(tree).includes("run-all-sweeps") && SIGNS_UP.test(body.getText(tree))
+    const call = testCall(node, tree);
+    if (call) {
+      const { body, budget } = call;
+      if (body.getText(tree).includes("run-all-sweeps") && SIGNS_UP.test(body.getText(tree))
         && /\bshapeOf\b|workspace-shape/.test(body.getText(tree))) {
         const expr = budget?.getText(tree) ?? "the default timeout";
         if (!/^worn\(/.test(expr) || !coversWorkspaces(expr, 3)) out.push({
@@ -174,9 +240,10 @@ function checkDeclaredReadBudgets(file: string, src: string): Violation[] {
   };
   const out: Violation[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && /^(?:it|test)(?:\.\w+)*$/.test(node.expression.getText(tree))) {
-      const body = node.arguments[1];
-      if (body && (ts.isArrowFunction(body) || ts.isFunctionExpression(body)) && SIGNS_UP.test(body.getText(tree))) {
+    const call = testCall(node, tree);
+    if (call) {
+      const body = call.body;
+      if (SIGNS_UP.test(body.getText(tree))) {
         const values = new Map(globals);
         if (ts.isBlock(body.body)) body.body.statements.forEach((statement) => bind(statement, values));
         let readBudget = 0;
@@ -195,7 +262,7 @@ function checkDeclaredReadBudgets(file: string, src: string): Violation[] {
           ts.forEachChild(child, reads);
         };
         reads(body.body);
-        const budget = node.arguments[2];
+        const budget = call.budget;
         const total = budget ? valueOf(budget, values) : BUDGET;
         if (readBudget > 0 && (total === undefined || total < BUDGET + readBudget)) out.push({
           file,
@@ -250,11 +317,11 @@ function checkRepeatedSignups(file: string, src: string): Violation[] {
   };
   const out: Violation[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && /^(?:it|test)(?:\.\w+)*$/.test(node.expression.getText(tree))) {
-      const body = node.arguments[1];
-      if (body && (ts.isArrowFunction(body) || ts.isFunctionExpression(body))) {
-        const signups = count(body.body);
-        const budget = node.arguments[2];
+    const call = testCall(node, tree);
+    if (call) {
+      {
+        const signups = count(call.body.body);
+        const budget = call.budget;
         const expr = budget?.getText(tree) ?? "the default timeout";
         if (signups > 1 && !coversWorkspaces(expr, signups)) out.push({
           file,
@@ -271,18 +338,18 @@ function checkRepeatedSignups(file: string, src: string): Violation[] {
 
 export function check(file: string, src: string): Violation[] {
   const lines = src.split("\n");
-  const out: Violation[] = [...checkRestores(file, lines), ...checkHealedSignup(file, src), ...checkDeclaredReadBudgets(file, src), ...checkRepeatedSignups(file, src)];
+  const out: Violation[] = [...checkRestores(file, src), ...checkHealedSignup(file, src), ...checkDeclaredReadBudgets(file, src), ...checkRepeatedSignups(file, src)];
   if (!/\bsignupFreshOrg\b/.test(src)) return out;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    const m = line.match(CLOSE_WITH_BUDGET);
+  for (const t of testCalls(file, src)) {
+    // A signup in a hook spends the hook's clock, not this test's.
+    if (!reaches(t.body, t.tree, SIGNS_UP)) continue;
+    const m = t.budget?.getText(t.tree).match(/^(?:worn\()?([0-9][0-9_]*)\)?$/);
     if (!m) continue;
     const ms = Number(m[1]!.replace(/_/g, ""));
-    if (ms >= BUDGET) continue;
-    if (/\/\/ budget: \S/.test(line)) continue;
+    if (ms >= BUDGET || saysWhy(lines, t.tree, t.end, t.budget)) continue;
     out.push({
       file,
-      line: i + 1,
+      line: t.end + 1,
       what: `a per-test budget of ${ms} ms in a file that signs up a workspace, below the helper's worst case (${BUDGET} ms); close with FRESH_ORG_BUDGET_MS from ./helpers, or say why the clock is tighter: // budget: <reason>`,
     });
   }

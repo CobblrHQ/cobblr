@@ -11,6 +11,7 @@
 // See docs/design-decisions/arrivals.md.
 
 import { FIELD_ROLE_VALUES, type FieldRole, type RoledFacts } from "@cobblr/platform-contract";
+import { lineUnitCost } from "./receipt-order.js";
 
 /** The receipt keys `materializeReceiptLines` stamps on an inbox item. */
 export interface ReceiptMeta {
@@ -21,6 +22,11 @@ export interface ReceiptMeta {
   receipt_line_count?: unknown;
   line_net?: unknown;
   line_total?: unknown;
+  /** The line's price each, when the receipt printed one. */
+  unit_price?: unknown;
+  /** The coupon printed under the line: its price each is no longer what
+   *  was paid, so the unit cost comes from the net amount instead. */
+  line_discount?: unknown;
   /** Facts a document reader established about this one thing, already
    *  keyed by role (a bill of sale's VIN, year and odometer). */
   line_facts?: unknown;
@@ -33,9 +39,9 @@ export interface ReceiptMeta {
  *  (scan-triage CHECK_FIELD_WORDS) to the roles their values fill. */
 const DOUBT_TAKES: Record<string, readonly FieldRole[]> = {
   seller: ["acquired-from", "seller"],
-  price: ["acquired-for"],
-  total: ["acquired-for"],
-  deposit: ["acquired-for"],
+  price: ["acquired-for", "unit-cost"],
+  total: ["acquired-for", "unit-cost"],
+  deposit: ["acquired-for", "unit-cost"],
   vin: ["identifier"],
   year: ["year-made"],
 };
@@ -75,16 +81,16 @@ const str = (v: unknown): string | null => {
  * The caller hands the result to the generic matcher, which decides where each
  * one lands based on what the workspace declared.
  */
-export function receiptFacts(meta: ReceiptMeta | null | undefined): RoledFacts {
-  return splitDoubtedFacts(meta).facts;
+export function receiptFacts(meta: ReceiptMeta | null | undefined, qty?: number | null): RoledFacts {
+  return splitDoubtedFacts(meta, qty).facts;
 }
 
 /** The facts, and the ones a failed check held back: shown under "Please
  *  check" with what was read, and written nowhere (#4633). The dealer's
  *  "sells/leases this vehicle 'as is' and hereby" failed the seller check
  *  and still became Bought from on the merge. */
-export function splitDoubtedFacts(meta: ReceiptMeta | null | undefined): { facts: RoledFacts; held: RoledFacts } {
-  const all = allReceiptFacts(meta);
+export function splitDoubtedFacts(meta: ReceiptMeta | null | undefined, qty?: number | null): { facts: RoledFacts; held: RoledFacts } {
+  const all = allReceiptFacts(meta, qty);
   const doubted = doubtedChecks(meta);
   const facts: RoledFacts = {};
   const held: RoledFacts = {};
@@ -93,7 +99,7 @@ export function splitDoubtedFacts(meta: ReceiptMeta | null | undefined): { facts
   return { facts, held };
 }
 
-function allReceiptFacts(meta: ReceiptMeta | null | undefined): RoledFacts {
+function allReceiptFacts(meta: ReceiptMeta | null | undefined, qty?: number | null): RoledFacts {
   const facts: RoledFacts = {};
   if (!meta) return facts;
 
@@ -125,6 +131,22 @@ function allReceiptFacts(meta: ReceiptMeta | null | undefined): RoledFacts {
     money(meta.line_total) ??
     (lineCount === 1 ? money(meta.net_price) : null);
   if (price !== null) facts["acquired-for"] = price;
+
+  // What EACH one cost, the way the purchase's order line works it out
+  // (lineUnitCost): the printed price each, unless a coupon came off the
+  // line, and then the line's net over its count. Only from this line's own
+  // numbers and only when the caller says how many the line was for, so a
+  // basket total never becomes a price each (#9554).
+  const lineAmount = money(meta.line_net) ?? money(meta.line_total);
+  const couponed = (money(meta.line_discount) ?? 0) > 0;
+  if (typeof qty === "number" && Number.isFinite(qty) && qty > 0) {
+    // A weighed line prints its price per pound, not per item: when the
+    // price each does not make the line's amount, the amount is the answer.
+    const printed = money(meta.unit_price);
+    const agrees = printed !== null && (lineAmount === null || Math.abs(printed * qty - lineAmount) <= 0.01 * qty);
+    const each = lineUnitCost(couponed || !agrees ? null : printed, lineAmount, qty);
+    if (each !== null) facts["unit-cost"] = each;
+  }
 
   // What a document reader said about the thing itself. Only roles the
   // vocabulary knows, only plain values; the receipt-level facts above

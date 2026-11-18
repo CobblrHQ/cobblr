@@ -342,7 +342,7 @@ export function PlanLayoutPage() {
             {d.applied_at ? " (applied)" : ""}
           </button>
         ))}
-        <button type="button" onClick={() => create.mutate(undefined)} className="inline-flex items-center gap-1 rounded-full border border-dashed border-line dark:border-slate-600 px-3 py-1 text-sm text-content dark:text-slate-200 hover:border-accent">
+        <button type="button" onClick={() => create.mutate(undefined)} disabled={create.isPending} className="inline-flex items-center gap-1 rounded-full border border-dashed border-line dark:border-slate-600 px-3 py-1 text-sm text-content dark:text-slate-200 hover:border-accent disabled:opacity-50">
           <Plus size={14} /> {list.length ? "New option" : "Start a layout"}
         </button>
         </>}
@@ -391,7 +391,7 @@ export function PlanLayoutPage() {
                 <input aria-label="Layout name" autoFocus value={naming} onChange={(e) => setNaming(e.target.value)} onBlur={() => setNaming(null)} className="w-36 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-0.5 text-sm" />
               </form>
             )}
-            <button type="button" onClick={() => create.mutate(draft.id)} className="inline-flex items-center gap-1 text-sm text-accent hover:underline">
+            <button type="button" onClick={() => create.mutate(draft.id)} disabled={create.isPending} className="inline-flex items-center gap-1 text-sm text-accent hover:underline disabled:opacity-50">
               <Copy size={13} /> Copy
             </button>
             <a href={`/print/${slug}/locations/${roomId}/layout/${draft.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-accent hover:underline">

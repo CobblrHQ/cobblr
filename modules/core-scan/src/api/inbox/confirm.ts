@@ -43,6 +43,7 @@ import { downloadCatalogImage } from "../../services/enrich.js";
 import { committedImagePath, commitThumbPath, itemPhotos, uncutGroupShot } from "../../services/committed-image.js";
 import { clampEntityName } from "../../services/item-name.js";
 import { mergeMeta } from "../../services/metadata.js";
+import { type NativeColumn, personValuesOnColumns } from "../../services/person-values-on-columns.js";
 import { assembleMergedMenu } from "../../services/matchmaker.js";
 import { unevidencedIdentifiers } from "@cobblr/platform-contract/scan-evidence";
 import { FILED_BY_KEY, scanFilingRefusal } from "@cobblr/platform-contract/scan-recovery";
@@ -249,6 +250,20 @@ confirmRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
+    // No table named: file where the card says it goes (filingDestination,
+    // the one answer every door reads), never the identify's asset/part
+    // default. A person told Cobb "goes to Assets", the card said Assets, and
+    // File selected, which names no table, made an inventory part (#9587).
+    // An offered app not yet installed keeps the old path: installing it is
+    // the door's to ask (file-through-confirm.ts).
+    if (!parsed.data.target_module && !parsed.data.target_kind && !parsed.data.instance) {
+      const goes = filingDestination(row as never, await destinationTablesFor(req), await liveTablesFor(req));
+      if (goes?.module && goes.kind && !goes.bundle_external_id) {
+        parsed.data.target_module = goes.module;
+        parsed.data.target_kind = goes.kind;
+        if (goes.instance) parsed.data.instance = goes.instance;
+      }
+    }
     // A picked catalog entry must still be there: checked before anything is
     // filed, so a stale pick refuses instead of making a record bound to
     // nothing (#6888).
@@ -443,9 +458,12 @@ confirmRouter.post(
     // or bundle names; a registry hiccup falls back to today's behavior.
     const effectiveKindId = instance ? `${instance}:item` : kindKey;
     let targetIsUnique = false;
+    /** The kind's own columns, for a person's value that names one. */
+    let targetColumns: NativeColumn[] = [];
     try {
       const kinds = await platform().entities.listKindsForOrg(ctx.org.id);
       const targetKind = kinds.find((k) => k.id === effectiveKindId);
+      targetColumns = (targetKind?.fields ?? []).map((f) => ({ name: f.name, type: f.type, readOnly: f.readOnly ?? false }));
       targetIsUnique =
         traitAxisValue(targetKind?.traits as Record<string, unknown> | null, "identity") ===
         "unique";
@@ -504,7 +522,8 @@ confirmRouter.post(
       // translation), landed on whatever this workspace named its fields. A
       // workspace declaring no roles gets an empty patch, which is the current
       // behaviour and stays correct: nothing invented, no field created.
-      const facts = receiptFacts(meta as ReceiptMeta);
+      // The line's own count, which its amount covers: what each one cost.
+      const facts = receiptFacts(meta as ReceiptMeta, Number(row.quantity) || null);
       if (Object.keys(facts).length > 0) {
         const roled = await platform().entities.roledFieldsFor(ctx.org.id, effectiveKindId);
         const mapped = mapRoledFacts(facts, roled);
@@ -787,6 +806,24 @@ confirmRouter.post(
       ...provenanceNative,
       ...restExtras,
     };
+
+    // A person's value for one of the kind's own columns (an asset's Paid,
+    // told to Cobb) goes to that column; in metadata the column never read it
+    // (person-values-on-columns.ts, #9576).
+    {
+      const bag = body.metadata as Record<string, unknown>;
+      const custom = new Set((await platform().entities.fieldsFor(ctx.org.id, effectiveKindId).catch(() => [])).map((f) => f.name));
+      const onColumns = personValuesOnColumns(
+        body,
+        bag,
+        new Set([...Object.keys(personValues), ...Object.keys(typedMetadata)]),
+        targetColumns.filter((c) => !custom.has(c.name)),
+      );
+      for (const [k, v] of Object.entries(onColumns)) {
+        body[k] = v;
+        delete bag[k];
+      }
+    }
 
     // WHERE it goes, when nothing above said: the place the route read off
     // the item and took out of a field because it names a Location

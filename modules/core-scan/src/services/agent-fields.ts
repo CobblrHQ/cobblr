@@ -23,6 +23,7 @@
 
 import { FIELD_NOTE_SUFFIX } from "@cobblr/platform-contract";
 import { isAcquiredFromField, isAcquiredOnField, isSellerField } from "@cobblr/platform-contract/acquisition-source";
+import { moneyForStorage, moneyStorageOf } from "@cobblr/platform-contract/money";
 
 export type AgentValue = string | number | boolean;
 
@@ -33,6 +34,10 @@ export interface AgentField {
   choices?: string[];
   field_role?: string;
   learns?: boolean;
+  /** How a money field holds its amount: an asset's Paid is in cents. */
+  money?: "cents" | "amount";
+  /** A number field's unit; a currency makes it money. */
+  unit?: string;
 }
 
 /** The roles an agent may say a value by (arrivals.md §2). */
@@ -77,10 +82,10 @@ function nearMiss(said: string, fields: readonly AgentField[]): AgentField | nul
 function fieldForRole(role: AgentRole, fields: readonly AgentField[]): AgentField | null {
   const plays = (f: AgentField) => {
     const like = { name: f.name, field_role: f.field_role ?? null };
-    if (role === "acquired-from") return isAcquiredFromField(like);
-    if (role === "seller") return isSellerField(like);
-    if (role === "acquired-on") return isAcquiredOnField(like);
-    return f.field_role === "acquired-for" || /^(acquired_for|purchase_price|price_paid|paid)$/i.test(f.name);
+    if (role === "acquired-from") return isAcquiredFromField(like); // VOCAB-ENUMERATION OK: each role the door takes (AGENT_ROLES) has its own home rule
+    if (role === "seller") return isSellerField(like); // VOCAB-ENUMERATION OK: each role the door takes (AGENT_ROLES) has its own home rule
+    if (role === "acquired-on") return isAcquiredOnField(like); // VOCAB-ENUMERATION OK: each role the door takes (AGENT_ROLES) has its own home rule
+    return f.field_role === "acquired-for" || /^(acquired_for|purchase_price|price_paid|paid)$/i.test(f.name); // VOCAB-ENUMERATION OK: each role the door takes (AGENT_ROLES) has its own home rule
   };
   return fields.find((f) => f.field_role === role) ?? fields.find(plays) ?? null;
 }
@@ -88,6 +93,15 @@ function fieldForRole(role: AgentRole, fields: readonly AgentField[]): AgentFiel
 /** The value as the field takes it, or the reason it cannot. */
 function fit(f: AgentField, v: AgentValue): { value: AgentValue } | { refused: string } {
   const type = (f.type ?? "text").toLowerCase();
+  // Money is said the way a person says it ("$99", 99: dollars) and stored
+  // the way its field holds it, cents on an asset's Paid. "$99" put on that
+  // field as 99 meant $0.99 (#9576). Every money field, by its declaration.
+  const storage = moneyStorageOf({ type: f.type ?? null, money: f.money ?? null, unit: f.unit ?? null, field_role: f.field_role ?? null });
+  if (storage) {
+    const n = typeof v === "boolean" ? null : moneyForStorage(v, storage);
+    if (n === null) return { refused: `${label(f)} takes an amount of money` };
+    return { value: n };
+  }
   if (type === "number" || type === "integer" || type === "currency" || type === "money") {
     const n = typeof v === "number" ? v : Number(String(v).replace(/[^0-9.\-]/g, ""));
     if (typeof v === "boolean" || !Number.isFinite(n) || String(v).trim() === "") return { refused: `${label(f)} takes a number` };

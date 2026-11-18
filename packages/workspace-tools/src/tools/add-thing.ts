@@ -2,6 +2,38 @@ import { z } from "zod";
 import { apiErrorMessage, toolFail, toolOk } from "../api.js";
 import { ROLES_SAID, type WorkspaceTool } from "../tool-kit.js";
 
+const unsaid = (v: unknown) =>
+  v === null || v === undefined || (typeof v === "string" && !v.trim()) || (typeof v === "object" && Object.keys(v as object).length === 0);
+
+/** An add as the intake can take it. A model marks a role nobody said with
+ *  null or {} ("acquired-for": {} for a printer with no price, walk #9477),
+ *  which the intake refuses as a value, so the card confirmed into
+ *  "Roles acquired for: Invalid input". Unsaid is absent. A name put in
+ *  fields is the thing's name. */
+export function addThingArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (unsaid(v)) continue;
+    if ((k === "roles" || k === "fields") && typeof v === "object" && !Array.isArray(v)) {
+      const kept = Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => !unsaid(x)));
+      if (Object.keys(kept).length) out[k] = kept;
+      continue;
+    }
+    out[k] = v;
+  }
+  const fields = out.fields as Record<string, unknown> | undefined;
+  if (typeof out.name !== "string" || !out.name.trim()) {
+    const named = fields?.name ?? fields?.title;
+    if (typeof named === "string" && named.trim()) {
+      out.name = named.trim();
+      const { name: _n, title: _t, ...rest } = fields!;
+      if (Object.keys(rest).length) out.fields = rest;
+      else delete out.fields;
+    } else delete out.name;
+  }
+  return out;
+}
+
 const tool: WorkspaceTool = {
   name: "add_thing",
   description:
@@ -22,7 +54,9 @@ const tool: WorkspaceTool = {
     allow_duplicate: z.boolean().optional(),
   },
   execute: async (api, args) => {
-    const res = await api.request("POST", "/modules/core-scan/scan/assistant", args as Record<string, unknown>);
+    const body = addThingArgs(args as Record<string, unknown>);
+    if (!body.name) return toolFail("name is required: the thing as your person called it");
+    const res = await api.request("POST", "/modules/core-scan/scan/assistant", body);
     if (res.status >= 400) return toolFail(apiErrorMessage(res, "the add did not go through"));
     return toolOk(res.body);
   },

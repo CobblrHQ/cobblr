@@ -16,7 +16,7 @@
 // same job; two doors to one label queue, one of them a module reaching into
 // another (audit, 2026-09-08).
 
-import { useOffWhileLent } from "./RecordLoan";
+import { useActionOff } from "./RecordActionOff";
 import { useQuery } from "@tanstack/react-query";
 import { Printer, QrCode } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -110,10 +110,10 @@ function PrintChip({
   binding?: RunArgs["binding"];
 }) {
   const { run, flash, failure, asking, dismissFailure, note, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
-  const off = useOffWhileLent(kind, id, action.id);
+  const off = useActionOff(kind, id, action.id);
   return (
     <>
-    <ActionDescription description={action.description || action.label}>
+    <ActionDescription description={action.description || action.label} off={off}>
     <button
       type="button"
       disabled={pending || !!off}

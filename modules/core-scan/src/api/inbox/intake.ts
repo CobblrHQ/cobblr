@@ -635,7 +635,11 @@ async function addThingFor(req: Request, token: string, body: z.infer<typeof Ass
         delete body.fields[key];
       }
     }
-    const early = (body.fields && Object.keys(body.fields).length) ? await givenValuesTable(ctx.org.id, menu, body.fields, body.roles) : null;
+    // Said by role counts the same as said by name: a drill with "$99 paid"
+    // and no list went to a list with nowhere for a price, and the price was
+    // refused (#9588). A list the person named still wins: goes_to below.
+    const given = (body.fields && Object.keys(body.fields).length) || (body.roles && Object.keys(body.roles).length);
+    const early = given ? await givenValuesTable(ctx.org.id, menu, body.fields ?? {}, body.roles) : null;
     // A place the agent named is a place, never part of the name. It used to
     // ride in the text ("Cordless drill in Garage") for the note door to split
     // off, and where no Garage existed yet the split failed: the record was

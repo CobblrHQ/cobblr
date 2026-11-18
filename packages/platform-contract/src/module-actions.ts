@@ -224,6 +224,9 @@ export function readJsonArg<T = unknown>(
   }
 }
 
+/** A record's own answer to whether an action runs on it (registerRecordCheck). */
+export type RecordCheck = (ctx: { orgId: string; entity: { kind: string; id: string; fields: Record<string, unknown> } }) => Promise<string | null>;
+
 export interface PlatformActions {
   registerHandler(handlerKey: string, handler: ActionHandler): void;
   /** What the action behind `handlerKey` would touch, from its arguments, or
@@ -236,6 +239,13 @@ export interface PlatformActions {
    *  created or changed, so a wire that could never do its job is refused
    *  with the reason instead of failing at every firing (#6070). */
   registerWireCheck(actionId: string, check: (ctx: { orgId: string; args: Record<string, unknown> }) => Promise<string | null>): void;
+  /** Why the action (by id) would not run on this record as it is now, in a
+   *  sentence, or null. Asked before a record's bar draws the button (the
+   *  button is off, with this sentence) and again by the run (refused with
+   *  the same sentence), so an action is never offered on a record and then
+   *  refused on it (#7921 class 2). Register it beside the handler for any
+   *  refusal that depends on the record's state rather than its kind. */
+  registerRecordCheck(actionId: string, check: RecordCheck): void;
   /** How the action behind `handlerKey` is undone, from its result. Register
    *  it beside the handler; an action declared `undoable` must have one (a
    *  guard test holds the two together), and the card after a run offers

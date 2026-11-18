@@ -52,6 +52,7 @@ import { STALE_DAYS, dayIn, daysUntil } from "@cobblr/platform-contract/day";
 import { stillGoodPatch } from "../still-good.js";
 import { stateWrite, type StateFieldDef } from "../state-write.js";
 import { EDITED_FROM_ARG, staleRefusalCode } from "@cobblr/platform-contract/edited-from";
+import { STOCK_MOVES } from "../stock-moves.js";
 
 /** The day it is for the person doing this: the zone their client sent, else
  *  what the platform knows of them (accounts.dayFor: the zone they told us,
@@ -796,6 +797,12 @@ export async function withBatchesIn(
 export function registerInventoryActionHandlers(): void {
   if (registered) return;
   registered = true;
+
+  // A record marked gone has nothing on hand: every stock move is off on it,
+  // in the bar and at the run, with one sentence (#6153, #7921 class 2).
+  for (const actionId of STOCK_MOVES) {
+    platform().actions.registerRecordCheck(actionId, async ({ entity }) => (isGone(entity.fields.metadata) ? goneStockRefusal(typeof entity.fields.name === "string" ? entity.fields.name : null) : null));
+  }
 
   // Parts are editable through platform:update-fields (an app's edit form, the
   // API, Cobb), with the same grant the part page asks for.

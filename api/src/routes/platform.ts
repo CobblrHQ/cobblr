@@ -35,6 +35,7 @@ import { randomBytes } from "node:crypto";
 import { requireAuth } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
+import { actionsOffRouter } from "./platform/actions-off.js";
 import { meta } from "../db/meta.js";
 import { labelVia } from "./label-via.js";
 import { getTenantDb } from "../db/tenant.js";
@@ -107,6 +108,8 @@ function readsAsAssistant(req: { session?: { ai_door?: string | null }; headers:
 }
 
 export const platformOrgRouter = Router({ mergeParams: true });
+// What a record, as it is now, would refuse (#7921 class 2).
+platformOrgRouter.use(actionsOffRouter);
 const allowSecretRead = makeSlidingWindowLimiter(60_000, 20);
 
 // ROLE: any member (revealSecretField checks the field grant before decrypting or auditing).

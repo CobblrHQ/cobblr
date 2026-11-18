@@ -19,7 +19,7 @@
 // "✓ done — Undo" cards. Read results are clamped so a big list can't blow the
 // prompt; the round cap keeps a confused model from ping-ponging forever.
 
-import { claimedAfterHandBack, endsHonestly, leftOffTheCard, claimedWithNoWrite } from "./reported-truthfully.js";
+import { claimedAfterHandBack, endsHonestly, leftOffTheCard, claimedWithNoWrite, namedInside } from "./reported-truthfully.js";
 import { yesNoAgrees } from "./yes-no-agrees.js";
 import { resultBudgetFor } from "@cobblr/workspace-tools";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
@@ -519,7 +519,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
       // only the first and say so, and it proposed Shop alone with nothing
       // said (#9514). What it asked to make and the card does not carry is
       // named under the card, whatever the model says.
-      const left = leftOffTheCard(notProposed, pendingProposals);
+      const left = leftOffTheCard(notProposed, pendingProposals, namedInside(lastUserSaid));
       const text = left.length ? `${r.content.trim() ? `${r.content.trim()}\n\n` : ""}${left.length === 1 ? `Not on this card: ${left[0]}. Nothing was made for it yet; ask for it again once this is confirmed.` : `Not on this card: ${left.join(", ")}. Nothing was made for them yet; ask for them again once this is confirmed.`}` : r.content;
       return { kind: "writes", calls: pendingProposals, text, applied, ...withFailed() };
     }

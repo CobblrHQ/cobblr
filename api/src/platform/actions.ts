@@ -10,6 +10,7 @@ import type {
   ActionHandler,
   ActionInvokeContext,
   EntityActionRecord,
+  RecordCheck,
 } from "@cobblr/platform-contract";
 import { axisOfTrait, PLATFORM_OWNER, type ActionRequester, type AnyAxisName } from "@cobblr/platform-contract";
 import { requiredArgsRefusal, typedArgs } from "@cobblr/platform-contract/action-args";
@@ -209,6 +210,48 @@ export async function missingRecordRefusal(ctx: ActionInvokeContext, scope: "ent
   return `No ${ctx.entity.kind} with id ${ctx.entity.id} here. Read the record first and pass its real id.`;
 }
 
+/** Each action's answer for a record as it is now (registerRecordCheck):
+ *  asked by GET /actions/off before a record's bar draws a button, and by
+ *  the run, so the two can never disagree (#7921 class 2). */
+const recordChecks = new Map<string, RecordCheck>();
+
+export function registerRecordCheck(actionId: string, check: RecordCheck): void {
+  recordChecks.set(actionId, check);
+}
+
+/** Why `actionId` would not run on this record now, or null. The record is
+ *  read when the caller has not. */
+export async function recordCheckRefusal(actionId: string, orgId: string, entity: { kind: string; id: string; fields?: Record<string, unknown> | null }): Promise<string | null> {
+  const check = recordChecks.get(actionId);
+  if (!check) return null;
+  const fields = entity.fields ?? (await lookup(orgId, entity.kind, entity.id))?.fields;
+  if (!fields) return null;
+  return check({ orgId, entity: { kind: entity.kind, id: entity.id, fields: fields as Record<string, unknown> } });
+}
+
+/** Every action with a record check that this record would refuse, by id,
+ *  with its sentence: what a record's bar shows as off. */
+export async function offOnRecord(orgId: string, kind: string, id: string): Promise<Record<string, string>> {
+  if (!recordChecks.size) return {};
+  // A kind this workspace cannot read, or an id that is not one, has no record to ask about.
+  const found = await lookup(orgId, kind, id).catch(() => null);
+  if (!found) return {};
+  const applicable = new Set((await listApplicable(kind, orgId)).map((a) => a.id));
+  const off: Record<string, string> = {};
+  for (const actionId of recordChecks.keys()) {
+    if (!applicable.has(actionId)) continue;
+    const why = await recordCheckRefusal(actionId, orgId, { kind, id, fields: found.fields as Record<string, unknown> });
+    if (why) off[actionId] = why;
+  }
+  return off;
+}
+
+/** The record's own refusal at run time, from the record the run was handed. */
+async function recordRefusal(actionId: string, ctx: ActionInvokeContext): Promise<string | null> {
+  if (!ctx.entity?.kind || !ctx.entity.id) return null;
+  return recordCheckRefusal(actionId, ctx.orgId, { kind: ctx.entity.kind, id: ctx.entity.id, fields: ctx.entity.fields as Record<string, unknown> | undefined });
+}
+
 /** A thing lent out cannot be moved or labelled until it is back
  *  (OFF_WHILE_LENT, record-loans.md): "Lent to Sam Lee." */
 async function lentRefusal(actionId: string, ctx: ActionInvokeContext): Promise<string | null> {
@@ -234,6 +277,8 @@ export async function planFor(
   if (gone) return { error: gone };
   const lent = await lentRefusal(actionId, ctx);
   if (lent) return { error: lent };
+  const onRecord = await recordRefusal(actionId, ctx);
+  if (onRecord) return { error: onRecord };
   // A boolean argument is a boolean whichever door sent it (#6130).
   if (row) ctx = { ...ctx, args: typedArgs(row.args_schema as ArgsSchema, ctx.args) };
   const refused = row ? requiredArgsRefusal(actionId, row.args_schema as ArgsSchema, ctx.args) : null;
@@ -550,6 +595,8 @@ export async function invoke(
   if (gone) return { ok: false, error: gone };
   const lent = await lentRefusal(actionId, ctx);
   if (lent) return { ok: false, code: "lent_out", error: lent };
+  const onRecord = await recordRefusal(actionId, ctx);
+  if (onRecord) return { ok: false, code: "not_on_this_record", error: onRecord };
   // A boolean argument is a boolean whichever door sent it: a wire's saved
   // "true", a form's text box, the assistant (#6130).
   ctx = { ...ctx, args: typedArgs(row.args_schema as ArgsSchema, ctx.args) };

@@ -121,6 +121,7 @@ function Grip({ onTap, label }: { onTap?: () => void; label?: string }) {
       type="button"
       onClick={onTap}
       aria-label={label ?? "Collapse"}
+      title={label ?? "Collapse"}
       className="block w-full pt-2 pb-1"
     >
       {bar}
