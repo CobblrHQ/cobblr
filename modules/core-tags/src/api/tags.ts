@@ -1,10 +1,10 @@
 // /tags — tag CRUD. /assignments — polymorphic attach/detach + list.
 
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { z } from "zod";
-import { sql } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { tenantContext, tenantDb, sessionUser } from "../db.js";
+import { tenantContext, tenantDb, sessionUser, type CoreTagsDB } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { TagRestoreRefused, deleteTagKept, mergeTagKept, restoreTag } from "../tag-writes.js";
 import { isQuiet, quietReason, rankTags, type TagUsage } from "../relevance.js";
@@ -17,6 +17,25 @@ const writer = (req: Parameters<typeof tenantContext>[0]): Writer => ({ orgId: t
 /** A name another tag already has: 409 with that tag, never a 500. */
 function nameTaken(res: import("express").Response, err: TagNameTaken): void {
   res.status(409).json({ error: { code: "tag_exists", message: `A tag called "${err.existing.name}" already exists.` }, tag: err.existing });
+}
+
+/** A tag moved under one of its own descendants: refused, never saved. */
+class TagLoop extends Error {}
+const tagLoop = (res: Response) => res.status(400).json({ error: { code: "invalid_parent", message: "That would create a tag loop." } });
+
+/** Whether making `parent` the parent of `id` puts the tag inside itself:
+ *  walking up from the new parent reaches it. */
+async function tagWouldLoop(db: Kysely<CoreTagsDB>, id: string, parent: string): Promise<boolean> {
+  let cursor: string | null = parent;
+  const seen = new Set<string>();
+  while (cursor) {
+    if (cursor === id) return true;
+    if (seen.has(cursor)) return false;
+    seen.add(cursor);
+    const anc: { parent_id: string | null } | undefined = await db.selectFrom("core_tags_tags").select("parent_id").where("id", "=", cursor).executeTakeFirst();
+    cursor = anc?.parent_id ?? null;
+  }
+  return false;
 }
 
 export const tagsRouter = Router({ mergeParams: true });
@@ -159,27 +178,24 @@ tagsRouter.patch(
         return;
       }
       if (!(await parentIsThere(req, res, newParent))) return;
-      let cursor: string | null = newParent;
-      const seen = new Set<string>();
-      while (cursor) {
-        if (cursor === id) {
-          res.status(400).json({ error: { code: "invalid_parent", message: "That would create a tag loop." } });
-          return;
-        }
-        if (seen.has(cursor)) break;
-        seen.add(cursor);
-        const anc: { parent_id: string | null } | undefined = await db
-          .selectFrom("core_tags_tags").select("parent_id").where("id", "=", cursor).executeTakeFirst();
-        cursor = anc?.parent_id ?? null;
-      }
+      if (newParent && (await tagWouldLoop(db, id, newParent))) return void tagLoop(res);
       patch.parent_id = newParent;
     }
     delete patch.updated_at;
     let row;
     try {
-      row = await updateTag(db, writer(req), id, patch);
+      // A new parent is asked again under the tag tree's lock, in the write's
+      // own transaction: two people moving tag A under B and B under A at
+      // once each passed the walk above (the other had not landed), and both
+      // were saved, each tag the other's parent (#4115).
+      const newParent = typeof patch.parent_id === "string" ? patch.parent_id : null;
+      row = await updateTag(db, writer(req), id, patch, newParent ? async (trx) => {
+        await sql`select pg_advisory_xact_lock(hashtext('core_tags_tags.parent_id'))`.execute(trx);
+        if (await tagWouldLoop(trx, id, newParent)) throw new TagLoop();
+      } : undefined);
     } catch (err) {
       if (err instanceof TagNameTaken) return nameTaken(res, err);
+      if (err instanceof TagLoop) return void tagLoop(res);
       throw err;
     }
     if (!row) {

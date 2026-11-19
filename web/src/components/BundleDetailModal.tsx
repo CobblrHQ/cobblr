@@ -278,7 +278,7 @@ export function BundleDetailModal(props: Props) {
       if (isUpdate) toast.success(`Updated ${r.bundle.name}.`);
       else {
         const added = [...(r.applied.instances_created ?? []), ...(r.applied.auto_enabled_modules ?? []).map((m) => moduleNames[m] ?? m)];
-        toast.action(`Installed ${r.bundle.name}${added.length ? `: added ${added.join(", ")}` : ""}.`, {
+        toast.action(`${r.bundle.name} is set up.${added.length ? ` In your menu now: ${added.join(", ")}.` : ""}`, {
           actionLabel: "Undo",
           // Ten seconds, like Remove's: with no time it sat over every later screen.
           duration: 10000,

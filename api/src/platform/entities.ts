@@ -825,6 +825,13 @@ export async function guestMayReadRecord(orgId: string, kind: string, id: string
 }
 
 export async function list(orgId: string, kind: string, query: EntityListQuery = {}, viewer?: EntityViewer): Promise<EntityListResult> {
+  // Asked again by near words (#9624): request-local, so the resolver's own
+  // textSearchWhere widens the words with nothing passed along.
+  if (query.near) {
+    const { near: _near, ...exact } = query;
+    const { withNearWords } = await import("./near-words.js");
+    return withNearWords(() => list(orgId, kind, exact, viewer));
+  }
   const allowed = await guestRecordIds(orgId, kind, viewer);
   if (!allowed) return listUnscoped(orgId, kind, query, viewer);
   if (!allowed.size) return { items: [], total: 0 };

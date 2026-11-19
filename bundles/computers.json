@@ -3,8 +3,13 @@
     "id": "cobblr.community.computers",
     "released_at": "2026-10-02",
     "changelog": "A computer's Contents are called Parts: install what it is built from, and rename the word if you call them something else.",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "releases": [
+      {
+        "version": "0.2.3",
+        "released_at": "2026-11-19",
+        "notes": "Field help says your list is grouped by this, in plain words, instead of naming a table."
+      },
       {
         "version": "0.2.2",
         "released_at": "2026-10-07",
@@ -72,7 +77,7 @@
             ],
             "field_role": "category",
             "position": 1,
-            "help": "What shape of computer. The table groups by this."
+            "help": "What shape of computer. Your list is grouped by this."
           },
           {
             "entity_kind": "assets:asset",

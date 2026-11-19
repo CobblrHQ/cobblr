@@ -18,7 +18,7 @@ import { api, ApiError, type FileRecord } from "../lib/api";
 import { deleteFileMessage, folderPaths, formatBytes } from "../features/core-files/fileFormat";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImageLightbox } from "../components/ImageLightbox";
-import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto, SearchInput, usePasteImage, editOf } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto, SearchInput, usePasteImage, editOf, QueryError } from "@cobblr/platform-web";
 
 const TOP = "top";
 
@@ -291,7 +291,7 @@ export function FilesPage() {
               <button type="button" title="Rename" aria-label={`Rename ${f.name}`} onClick={() => setRenaming({ kind: "folder", id: f.id, value: f.name, was: f.name })} className="text-faint hover:text-accent p-1">
                 <Pencil size={13} />
               </button>
-              <button type="button" title="Delete" aria-label={`Delete ${f.name}`} onClick={() => deleteFolder.mutate(f.id)} className="text-faint hover:text-ember-500 p-1">
+              <button disabled={deleteFolder.isPending} type="button" title="Delete" aria-label={`Delete ${f.name}`} onClick={() => deleteFolder.mutate(f.id)} className="text-faint hover:text-ember-500 p-1">
                 <Trash2 size={13} />
               </button>
             </div>
@@ -300,7 +300,8 @@ export function FilesPage() {
       )}
 
       {list.isLoading && <div className="text-sm text-muted dark:text-slate-400">Loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="files" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
           {searching ? "No file has that in its name." : folder === TOP ? "No files here yet. Upload one, or make a folder to start sorting." : "This folder is empty. Upload into it, or move files here."}
         </div>
@@ -410,14 +411,14 @@ export function FilesPage() {
                     <FileIcon size={16} className="text-faint shrink-0" />
                     <span className="flex-1 min-w-0 basis-40 truncate">{f.filename}</span>
                     <span className="text-xs text-muted tabular-nums">{daysLeft(f.purge_after)}</span>
-                    <button
+                    <button disabled={restoreFile.isPending}
                       type="button"
                       onClick={() => restoreFile.mutate({ id: f.id, filename: f.filename })}
                       className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 px-2 py-1 text-xs hover:text-accent"
                     >
                       <RotateCcw size={12} /> Restore
                     </button>
-                    <button
+                    <button disabled={purgeFile.isPending}
                       type="button"
                       onClick={async () => {
                         const ok = await confirm({

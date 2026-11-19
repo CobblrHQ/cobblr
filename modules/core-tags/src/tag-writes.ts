@@ -106,7 +106,9 @@ export async function ensureTag(db: Db, w: Writer, name: string, color?: string 
 
 /** Change a tag. Null when there is no such tag; throws TagNameTaken when
  *  the new name belongs to another tag. The log says what each field was. */
-export async function updateTag(db: Db, w: Writer, id: string, patch: Record<string, unknown>) {
+/** `beforeWrite` runs first inside the write's own transaction: a check that
+ *  must hold a lock across the write (a new parent's loop walk) asks there. */
+export async function updateTag(db: Db, w: Writer, id: string, patch: Record<string, unknown>, beforeWrite?: (trx: Db) => Promise<void>) {
   const before = await db.selectFrom("core_tags_tags").selectAll().where("id", "=", id).executeTakeFirst();
   if (!before) return null;
   const set: Record<string, unknown> = { ...patch, updated_at: new Date() };
@@ -117,6 +119,7 @@ export async function updateTag(db: Db, w: Writer, id: string, patch: Record<str
   let changed: Record<string, { from: unknown; to: unknown }> = {};
   try {
     row = await platform().activity.transaction(w.orgId, db, async (trx, log) => {
+      if (beforeWrite) await beforeWrite(trx as Db);
       const row = await trx.updateTable("core_tags_tags").set(set).where("id", "=", id).returningAll().executeTakeFirst();
       if (!row) return row;
       changed = {};

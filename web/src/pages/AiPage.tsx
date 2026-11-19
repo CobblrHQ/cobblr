@@ -56,6 +56,7 @@ import { promptCacheWords } from "../lib/ai-prompt-cache";
 import { ModelChoiceOptions } from "../components/ModelChoiceOptions";
 import { PayloadView, usageLine } from "../components/PayloadView";
 import { FEED_SCROLL, FEED_SCROLL_INNER } from "../lib/feed";
+import { NO_AI_HERE } from "@cobblr/platform-contract/no-ai-words";
 
 export function AiPage() {
   usePageTitle("AI");
@@ -413,7 +414,7 @@ function ProviderRow({
           >
             {provider.enabled ? "Disable" : "Enable"}
           </button>
-          <button
+          <button disabled={delM.isPending}
             aria-label="Remove"
             type="button"
             onClick={async () => {
@@ -1000,7 +1001,7 @@ function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
       : status.reason === "operator_disabled"
         ? "An operator has turned AI off for this whole server."
         : status.reason === "not_entitled"
-          ? "This workspace's plan doesn't include AI."
+          ? `${NO_AI_HERE}.`
           : status.reason === "not_shared"
             ? `AI here is ${status.kept_by ?? "someone else"}'s own connection, and answers only their calls. They can share it with the workspace from their account, or you can connect your own.`
           : "Everything else still works: scanning files things by keyword, and nothing " +
@@ -1404,7 +1405,7 @@ function SharedAiRows({ slug, items }: { slug: string; items: WorkspaceAiOffer[]
       ))}
 
       {isOwner && approved.some((o) => o.active) && (
-        <button
+        <button disabled={activate.isPending}
           type="button"
           onClick={() => activate.mutate(null)}
           className="text-[11px] text-faint hover:text-ember-500"

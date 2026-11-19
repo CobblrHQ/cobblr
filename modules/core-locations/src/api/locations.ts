@@ -329,6 +329,7 @@ locationsRouter.patch(
     if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
     if (parsed.data.image_path !== undefined) patch.image_path = parsed.data.image_path;
 
+    // LOOP-SAFE: a place naming itself, no walk; a move's walk runs under lockTree in place-move.ts.
     if (parsed.data.parent_id === id) {
       res.status(400).json({ error: { code: "cycle", message: "A place cannot go inside itself." } });
       return;

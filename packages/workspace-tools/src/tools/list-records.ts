@@ -100,6 +100,23 @@ const tool: WorkspaceTool = {
     // The kind's own search matched nothing by name. Before the model tells
     // the user "you have none", look at every text field ourselves.
     const scan = await scanByText(api, kind, qText, limit, { includeRetired }, st?.s ? offset : 0);
+    // Still nothing, as typed: ask once more by near words, the matcher every
+    // search shares ("drills" finds the Cordless drill, "screwdriver" the
+    // Screw driver, #9624), so "you have none" is never said about a thing
+    // the person named their own way (#4115).
+    const scannedNone = !scan || !Array.isArray(scan.body.items) || scan.body.items.length === 0;
+    if (scannedNone && !st?.s) {
+      const near = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${limit}&offset=0&q=${encodeURIComponent(qText)}&near=1${includeRetired ? "&include_retired=1" : ""}`);
+      const items = near.status < 400 && Array.isArray((near.body as { items?: unknown[] }).items) ? ((near.body as { items: unknown[] }).items) : [];
+      if (items.length > 0) {
+        return toolOk({
+          ...(explainRecords({ ...(near.body as Record<string, unknown>), items: labelMatches(items, qText) }, await kinds()) as Record<string, unknown>),
+          matched_by: `a near spelling of "${qText}": nothing held the words exactly as typed, so say what you found by its own name and check it is the one meant`,
+          ...severalMatch(items, qText),
+          ...pageEnd("list_records", null),
+        });
+      }
+    }
     if (!scan) return toolOk({ ...(explainRecords({ shown: 0, total: 0, partial: false, items: [] }, await kinds()) as Record<string, unknown>), ...pageEnd("list_records", null) });
     const scanned = Array.isArray(scan.body.items) ? { ...scan.body, items: labelMatches(scan.body.items as unknown[], qText) } : scan.body;
     return toolOk({

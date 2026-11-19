@@ -22,7 +22,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { WORKSPACE_TOOLS, mcpToolName } from "@cobblr/workspace-tools";
+import { WORKSPACE_TOOLS, mcpParamsOf, mcpToolName } from "@cobblr/workspace-tools";
 import { CobblrApiError, type CobblrClient } from "./client.js";
 import { FULL_GRANT, offersOwnTool, offersWorkspaceTool, type TokenGrant } from "./offers.js";
 
@@ -466,7 +466,7 @@ export function registerTools(server: McpServer, client: CobblrClient, grant: To
       {
         title: tool.name.replace(/_/g, " "),
         description: tool.description,
-        inputSchema: { ...workspaceArg, ...tool.params },
+        inputSchema: { ...workspaceArg, ...mcpParamsOf(tool) },
       },
       async (args: Record<string, unknown>) => {
         try {

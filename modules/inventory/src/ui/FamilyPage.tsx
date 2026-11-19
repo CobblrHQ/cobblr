@@ -114,7 +114,7 @@ function ThingRow({ t, childInstance, childPath, place, highlighted, named, noun
               >
                 Mark empty
               </button>
-              <button
+              <button disabled={remove.isPending}
                 type="button"
                 role="menuitem"
                 className={`${item} text-ember-700 dark:text-ember-300`}

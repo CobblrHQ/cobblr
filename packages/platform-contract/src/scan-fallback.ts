@@ -11,6 +11,7 @@
 // comes from the router's code (ai-refusal.ts), never from its prose.
 // Buildless subpath: no runtime import of a sibling (a type is not one).
 import type { ProviderReason } from "./provider-reason.js";
+import { NO_AI_HERE } from "@cobblr/platform-contract/no-ai-words";
 
 export type AiFallback =
   /** No provider anywhere for this workspace: connecting one is the remedy. */
@@ -60,7 +61,7 @@ export function fallbackHint(why: AiFallback, reason?: ProviderErrorReason): str
     case "background":
       return "Routed without your personal AI. Retry with AI to use it.";
     case "not-entitled":
-      return "Matched by keywords: this workspace's plan doesn't include AI.";
+      return `Matched by keywords: ${NO_AI_HERE}.`;
     case "not-shared":
       return "Matched by keywords: the AI here answers only its owner.";
     case "provider-error":
@@ -108,7 +109,7 @@ export function fallbackChip(why: AiFallback | null | undefined, reason?: Provid
     // workspace was told its allowance was used up, beside a banner saying
     // its plan has none (#8875). A person's own model is the remedy.
     case "not-entitled":
-      return { text: "Matched by keywords: this workspace's plan doesn't include AI.", retry: false, connect: true };
+      return { text: `Matched by keywords: ${NO_AI_HERE}.`, retry: false, connect: true };
     // Someone connected AI "Just me" (#8855). Not the plan, not an allowance:
     // they can share it with the workspace, or this person brings their own.
     case "not-shared":
@@ -191,7 +192,7 @@ export function identifyFailureWords(f: IdentifyFailure): { sentence: string; de
     case "background":
       return { sentence: "Couldn't identify this photo: it ran without your personal AI.", detail: "Identify it again to use it.", retry: true, connect: false };
     case "not-entitled":
-      return { sentence: "Couldn't identify this photo: the plan doesn't include AI.", detail: "Connect your own AI under Account to read photos, or name it yourself.", retry: false, connect: true };
+      return { sentence: `Couldn't identify this photo: ${NO_AI_HERE}.`, detail: "Connect your own AI under Account to read photos, or name it yourself.", retry: false, connect: true };
     case "not-shared":
       return { sentence: "Couldn't identify this photo: the AI here answers only its owner.", detail: "Ask them to share it with the workspace, or connect your own under Account.", retry: false, connect: true };
     case "provider-error":

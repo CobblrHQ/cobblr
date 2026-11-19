@@ -103,7 +103,7 @@ export function reasonFromResponse(status: number, body: string): ProviderReason
 /** The reason for a call that never got an answer. */
 export function reasonFromTransportError(err: unknown): ProviderReason {
   const msg = err instanceof Error ? `${err.name} ${err.message}` : String(err ?? "");
-  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up|aborted|timeout|timed out|network/i.test(msg)) return "unreachable";
+  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up|aborted|timeout|timed out|did not answer within|network/i.test(msg)) return "unreachable";
   return "unknown";
 }
 

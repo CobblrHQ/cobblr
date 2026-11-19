@@ -9,7 +9,7 @@ import { EntityAttachments } from "../components/EntityAttachments";
 import { ContributedDetailPanels } from "../panels/registry";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Download, Library, Upload } from "lucide-react";
-import { BackToTop, CustomFieldsPanel, Modal, useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { BackToTop, CustomFieldsPanel, Modal, useToast, usePageTitle, SearchInput, QueryError } from "@cobblr/platform-web";
 import { ApiError, api, type CatalogEntry, type CatalogSchema } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { CatalogFieldValue, NoImage } from "../components/CatalogFieldValue";
@@ -181,7 +181,8 @@ export function CatalogDetailPage() {
         <SearchInput value={search} onChange={setSearch} placeholder={`Search entries by ${titleCol}…`} aria-label="Search entries" wrapperClassName="flex-1" />
       </div>
 
-      {entries.length === 0 && !entriesQ.isLoading && (
+      {entriesQ.isError && <QueryError what="this catalog's entries" onRetry={() => void entriesQ.refetch()} />}
+      {entries.length === 0 && entriesQ.isSuccess && (
         <div className="text-sm italic text-muted dark:text-slate-400">
           {entriesQ.data?.pages[0]?.browsable === false ? (
             // Hosted but not browsable here (the ~5M-row set bill-of-materials).

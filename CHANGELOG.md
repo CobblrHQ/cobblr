@@ -2,6 +2,22 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-19
+
+### Security
+- What you say to Cobb stays yours: the list of changes Cobb made in a workspace no longer shows another person the words they asked with.
+
+### Features
+- Every field you save on a record's page now offers Undo, which puts back what it held before, even from another page
+
+### Fixes
+- An assistant's write sent again after a timeout applies once: every MCP write tool takes a request_id, and the same call with the same request_id is answered as the first was.
+- An assistant never writes over a change you made after it looked: if you changed a value since Cobb or a connected assistant read it, its change to that value is refused, nothing is written, and it reads the record again.
+- Cobb finds a thing by what you call it inside one list too: "any drills?" finds your Cordless drill instead of telling you there are none.
+- Cobb's built-in answers name your own lists: asked how to add something in a new workspace, Cobb no longer sends you to Parts, Printers or Orders you don't have, and names the list you asked about first.
+- Cobb never gives a count, total or amount it did not read: a figure no tool returned and you did not say is sent back to be counted, or left out, before the answer reaches you.
+- Undoing a place Cobb made leaves it alone when you have put things in it since, and says what is there, instead of deleting it and losing where those things are.
+
 ## 2026-11-18
 
 ### Fixes

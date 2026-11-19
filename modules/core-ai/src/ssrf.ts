@@ -174,14 +174,14 @@ export function pinnedFetch(
     // and then goes quiet is the case that hangs, and a connect timeout would
     // not see it. destroy() makes the pending 'error' fire, which `finish`
     // swallows since we have already rejected with the clearer reason.
+    // Named a TimeoutError so reasonFromTransportError reads it as a provider
+    // that could not be reached, never "check the connection" (walk #9477).
     const timer = setTimeout(() => {
-      finish(() =>
-        reject(
-          new Error(
-            `the AI provider did not answer within ${Math.round(timeoutMs / 1000)}s (${new URL(url).host})`,
-          ),
-        ),
-      );
+      finish(() => {
+        const timedOut = new Error(`the AI provider did not answer within ${Math.round(timeoutMs / 1000)}s (${new URL(url).host})`);
+        timedOut.name = "TimeoutError";
+        reject(timedOut);
+      });
       req.destroy();
     }, timeoutMs);
     req.on("error", (e) => finish(() => reject(e)));

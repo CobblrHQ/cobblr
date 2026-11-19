@@ -7,6 +7,7 @@
 //
 // See docs/design-decisions/no-ai-chat-training.md.
 
+import { LISTS_TOKEN, addableLists, withTheirLists, type ListKind } from "../their-lists.js";
 import { BASICS_MESSAGE_MAX, BasicPriorSchema } from "@cobblr/platform-contract/basics-limits";
 import { requireAPerson } from "@cobblr/platform-contract/person-door";
 import { Router, type Request } from "express";
@@ -48,14 +49,22 @@ export const basicsRouter = Router({ mergeParams: true });
  *  keystroke is noise however true it is. */
 const MIN_PEEK_RULE_SCORE = 2;
 
+/** The lists a person can add to in this workspace, as an answer names them. */
+async function listsHere(wsApi: ReturnType<typeof chatWorkspaceApi>, message: string): Promise<string[]> {
+  const res = await wsApi.request("GET", "/entity-kinds").catch(() => null);
+  return addableLists(((res?.body.items as ListKind[] | undefined) ?? []), message);
+}
+
 async function guideAnswerFor(
   db: ReturnType<typeof tenantDb>,
   message: string,
   aiOn: boolean,
+  lists: readonly string[],
 ): Promise<string | null> {
   const rules = toMatchable(await loadEffectiveRules(db));
-  const m = matchBasics(message, rules, { aiOn, offering: true });
-  if (!m.matched) return null;
+  const found = matchBasics(message, rules, { aiOn, offering: true });
+  if (!found.matched) return null;
+  const m = { ...found, reply: found.reply ? withTheirLists(found.reply, lists) : found.reply };
   if (m.score >= MIN_PEEK_RULE_SCORE) return m.reply;
   // ...with one exception: a single word that is the WHOLE message is not a
   // fragment of a longer sentence, it is the sentence. "hello" is a complete
@@ -198,6 +207,8 @@ basicsRouter.post(
     }
     const effective = await loadEffectiveRules(db);
     const result = matchBasics(parsed.data.message, toMatchable(effective));
+    // The lists an answer names are this workspace's own (their-lists.ts).
+    if (result.reply?.includes(LISTS_TOKEN)) result.reply = withTheirLists(result.reply, await listsHere(chatWorkspaceApi(ctxOf(req)), parsed.data.message));
     res.json(result);
     // Remember what we could NOT answer, so the ruleset can grow from what
     // people actually ask. After the response: a question is not worth failing
@@ -1256,7 +1267,7 @@ async function workspaceAnswer(req: Request, message: string, opts: { aiOn: bool
     // is sent costs nothing and saves a whole model call. Once sent, the
     // keyword rules answer it themselves.
     if (!opts.guide) return null;
-    const guide = await guideAnswerFor(db, message, opts.aiOn).catch(() => null);
+    const guide = await guideAnswerFor(db, message, opts.aiOn, addableLists(kindRows as ListKind[], message)).catch(() => null);
     return guide ? { answer: guide, from: "guide" } : null;
   }
 

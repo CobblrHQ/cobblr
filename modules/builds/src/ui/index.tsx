@@ -3,7 +3,7 @@ import { BoardRevisionCard } from "./BoardRevisions.js";
 import type { BoardRevision } from "../api/board-revisions.js";
 export { BuildsApi } from "./api.js";
 export { BoardProjectPanel } from "./BoardRevisions.js";
-import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, QueryError } from "@cobblr/platform-web";
 // builds UI — the host mounts <BuildsUI /> at /builds. A grid of builds;
 // clicking one opens a detail MODAL with its bill-of-materials, a live
 // "can I build N right now / limiting component" readout, and a Build button
@@ -870,7 +870,8 @@ export function AddComponentRow({
           {q.length > 0 && (
             <div className="absolute z-10 mt-1 w-full rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg max-h-56 overflow-auto">
               {results.isLoading && <div className="px-3 py-2 text-xs text-muted">Searching…</div>}
-              {!results.isLoading && options.length === 0 && (
+              {results.isError && <QueryError what="builds" onRetry={() => void results.refetch()} />}
+              {results.isSuccess && options.length === 0 && (
                 <div className="px-3 py-2 text-xs text-muted italic">
                   {mode === "part"
                     ? "Nothing kept in stock matches. Components come from any collection you keep stock in."
@@ -1199,8 +1200,8 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
                       </span>
                     )}
                     {it.assembly_state ? <Link className="text-accent underline text-xs" to={`/builds/${it.build_id}`}>Assembly kit · {it.assembly_state}</Link> : <div className="flex items-center hover-reveal">
-                      <button type="button" onClick={() => completePlanned.mutate(it.id)} className="text-slate-300 hover:text-green-600" title="Mark done" aria-label="Mark done"><Check size={14} /></button>
-                      <button type="button" onClick={() => removePlanned.mutate(it.id)} className="text-slate-300 hover:text-red-500 ml-1" title="Remove" aria-label="Remove"><X size={14} /></button>
+                      <button disabled={completePlanned.isPending} type="button" onClick={() => completePlanned.mutate(it.id)} className="text-slate-300 hover:text-green-600" title="Mark done" aria-label="Mark done"><Check size={14} /></button>
+                      <button disabled={removePlanned.isPending} type="button" onClick={() => removePlanned.mutate(it.id)} className="text-slate-300 hover:text-red-500 ml-1" title="Remove" aria-label="Remove"><X size={14} /></button>
                     </div>}
                   </li>
                 ))}

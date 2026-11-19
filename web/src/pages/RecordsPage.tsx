@@ -184,7 +184,7 @@ export function RecordsPage({
     <div className="space-y-4">
       <CollectionHeader
         title={heading}
-        count={`${filtered.length} of ${list.data?.total ?? allRows.length}`}
+        count={list.isSuccess ? `${filtered.length} of ${list.data?.total ?? allRows.length}` : undefined}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${nounPlural}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
         exportQuery={query}

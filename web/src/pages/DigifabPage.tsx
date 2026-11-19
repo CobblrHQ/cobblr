@@ -1,5 +1,5 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { productName, useSentWords, editOf } from "@cobblr/platform-web";
+import { productName, useSentWords, editOf, QueryError } from "@cobblr/platform-web";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { useEnabledModules } from "../lib/useEnabledModules";
 import { bridgeDisplayName } from "../lib/bridge-choice";
@@ -207,7 +207,8 @@ export function DigifabPage({
           <Link to="/digifab/production" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Production test</Link>
           <Link to="/digifab/embroidery" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Embroidery</Link>
           <Link to="/digifab/manager" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Floor manager</Link>
-          {items.length === 0 && !list.isLoading && (
+          {list.isError && <QueryError what="machines" onRetry={() => void list.refetch()} />}
+          {items.length === 0 && list.isSuccess && (
             <div className="max-w-lg rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 text-center">
               <Printer size={26} className="mx-auto text-faint mb-3" />
               <p className="text-sm text-content dark:text-mortar-100 font-medium mb-1">No machines connected yet</p>
@@ -287,7 +288,8 @@ export function DigifabPage({
       <OnceQuiet className="space-y-4">
       <h2 className="text-sm font-semibold text-content dark:text-mortar-100 pt-2">Connections</h2>
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="this list" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
           No connections yet. Add one to point {productName()} at your machine manager.
         </div>
@@ -357,7 +359,7 @@ export function DigifabPage({
               >
                 <Sliders size={15} />
               </button>
-              <button
+              <button disabled={del.isPending}
                 aria-label="Remove"
                 onClick={async () => {
                   const ok = await confirm({
@@ -643,7 +645,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
               <Boxes size={14} className="text-faint" />
               <span className="flex-1 text-content dark:text-mortar-100">{d.name} <span className="text-[11px] font-mono text-faint">{d.key}</span></span>
               <span className="text-[10px] font-mono text-faint">{d.kind}</span>
-              <button
+              <button disabled={remove.isPending}
                 onClick={async () => {
                   if (await confirm({ title: `Remove "${d.name}"?`, message: "Connections using it will stop resolving.", confirmLabel: "Remove", destructive: true })) remove.mutate(d.key);
                 }}
@@ -1026,7 +1028,8 @@ function ExternalDetectorConfig({ slug, cfg, save }: { slug: string; cfg: Digifa
         <button type="button" onClick={() => setManage(true)} className="text-xs text-cobble-600 dark:text-cobble-400 hover:underline">Manage…</button>
       </div>
       {missing && <p className="text-[10px] text-ember-600 dark:text-ember-500">The selected detector was removed - pick another.</p>}
-      {detectors.length === 0 && !list.isLoading && <p className="text-[10px] text-faint">No detectors yet - click Manage to add one.</p>}
+      {list.isError && <QueryError what="detectors" onRetry={() => void list.refetch()} />}
+      {detectors.length === 0 && list.isSuccess && <p className="text-[10px] text-faint">No detectors yet - click Manage to add one.</p>}
       {manage && <DetectorsModal slug={slug} onClose={() => setManage(false)} />}
     </div>
   );
@@ -1156,7 +1159,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
         <div className="ml-auto flex items-center gap-2">
           <button type="button" onClick={() => test.mutate()} disabled={test.isPending} className="text-cobble-600 dark:text-cobble-400 hover:underline">Test</button>
           <button type="button" onClick={() => setEditing((v) => !v)} className="text-faint hover:underline">{editing ? "Close" : "Edit"}</button>
-          <button type="button" onClick={async () => { if (await confirm({ title: `Remove "${det.label}"?`, message: "The failure watch will stop using it.", confirmLabel: "Remove", destructive: true })) del.mutate(); }} className="text-ember-600 dark:text-ember-500 hover:underline">Remove</button>
+          <button disabled={del.isPending} type="button" onClick={async () => { if (await confirm({ title: `Remove "${det.label}"?`, message: "The failure watch will stop using it.", confirmLabel: "Remove", destructive: true })) del.mutate(); }} className="text-ember-600 dark:text-ember-500 hover:underline">Remove</button>
         </div>
       </div>
       <div className="mt-1 text-[10px] text-faint break-all">
@@ -1705,7 +1708,8 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
 
       {view === "timeline" && <QueueTimeline slug={activeSlug} jobs={rawItems} onOpenJob={setDetailId} />}
       {view === "list" && jobs.isLoading && <div className="text-sm text-muted">Loading queue…</div>}
-      {view === "list" && items.length === 0 && !jobs.isLoading && (
+      {jobs.isError && <QueryError what="jobs" onRetry={() => void jobs.refetch()} />}
+      {view === "list" && items.length === 0 && jobs.isSuccess && (
         <div className="text-[13px] text-muted dark:text-slate-400 italic">
           {filter === "active"
             ? "No active jobs. Create one, then Send it to the farm when you're ready."
@@ -3013,7 +3017,7 @@ function PoolsSection({ slug }: { slug: string }) {
                   <span className="text-[11px] text-faint">{p.members.length} machine{p.members.length === 1 ? "" : "s"}</span>
                   {typeof p.config.hour_rate === "number" && <span className="text-[11px] text-faint">· {formatMoney(centsFromAmount(p.config.hour_rate), { currency: String(p.config.hour_rate_currency ?? "") || undefined })} an hour</span>}
                   <div className="flex-1" />
-                  {may.remove && <button
+                  {may.remove && <button disabled={del.isPending}
                     aria-label="Remove pool"
                     onClick={async () => {
                       const ok = await confirm({ title: `Remove pool "${p.name}"?`, message: "Jobs already assigned keep running; nothing is sent anywhere.", confirmLabel: "Remove", destructive: true });
@@ -3031,7 +3035,7 @@ function PoolsSection({ slug }: { slug: string }) {
                     return (
                       <span key={`${m.connection_id}:${m.remote_device_id}`} className="inline-flex items-center gap-1 rounded bg-subtle dark:bg-slate-800 px-2 py-0.5 text-[11px] text-content dark:text-mortar-200">
                         {info?.name ?? m.remote_device_id}
-                        {may.takeOut && <button
+                        {may.takeOut && <button disabled={removeMember.isPending}
                           aria-label="Remove from pool"
                           onClick={() => removeMember.mutate({ poolId: p.id, connId: m.connection_id, deviceId: m.remote_device_id })}
                           className="text-faint hover:text-ember-500"

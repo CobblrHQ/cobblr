@@ -1,4 +1,4 @@
-import { NewItemMenu, editOf, useRecordEdits } from "@cobblr/platform-web";
+import { NewItemMenu, editOf, useRecordEdits, QueryError } from "@cobblr/platform-web";
 // Project detail — header + inline tasks list. Tasks are added,
 // checked off, deleted inline. Cross-module dependencies render as
 // pill chips on the task row.
@@ -406,7 +406,8 @@ export function ProjectDetailPage() {
         </div>
         <NewTaskInline projectId={id!} />
         {tasks.isLoading && <div className="text-xs text-faint dark:text-slate-500 mt-3">loading…</div>}
-        {(tasks.data?.items ?? []).length === 0 && !tasks.isLoading && (
+        {tasks.isError && <QueryError what="tasks" onRetry={() => void tasks.refetch()} />}
+        {(tasks.data?.items ?? []).length === 0 && tasks.isSuccess && (
           <div className="text-xs text-faint dark:text-slate-500 italic mt-3">No tasks yet.</div>
         )}
         <ul className="space-y-1 mt-3">
@@ -575,7 +576,7 @@ function TaskRow({
 
   return (
     <li className="flex flex-wrap items-center gap-2 py-1.5 group">
-      <button
+      <button disabled={setStatus.isPending}
         type="button"
         aria-label={completionLabel}
         title={completionLabel}
@@ -642,7 +643,7 @@ function TaskRow({
           </button>
         </span>
       )}
-      <button
+      <button disabled={remove.isPending}
         title="Delete task"
         aria-label="Delete task"
         onClick={async () => {
@@ -745,14 +746,14 @@ function MaterialsPanel({
               <span className="font-mono text-xs text-muted dark:text-slate-400">{Number(a.qty)}</span>
               {a.status === "reserved" && (
                 <span className="ml-auto flex gap-3 shrink-0">
-                  <button
+                  <button disabled={setAllocStatus.isPending}
                     type="button"
                     onClick={() => setAllocStatus.mutate({ id: a.id, status: "consumed" })}
                     className="text-xs text-accent hover:underline"
                   >
                     use up
                   </button>
-                  <button
+                  <button disabled={setAllocStatus.isPending}
                     type="button"
                     onClick={() => setAllocStatus.mutate({ id: a.id, status: "released" })}
                     className="text-xs text-faint hover:text-ember-500"

@@ -52,7 +52,7 @@ const CAPABILITIES = `Without AI connected I can still make some changes for you
 
 Say **"undo"** to put a change back. For anything else:
 
-- **Add stuff**: use **+ New** on any list (parts, printers, orders…), or **Scan** to add by barcode or photo.
+- **Add stuff**: use **+ New** on any list {lists}, or **Scan** to add by barcode or photo.
 - **Build your workspace**: the **Build** page turns a plain-English description into fields and modules.
 - **Find things**: the search box up top spans every module.
 - **Low stock, due dates and the like**: open the list and sort or filter by that column.
@@ -108,7 +108,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     keywords: ["how do i add", "how do i create", "add a part", "add an item", "new part", "new item", "add something", "add"],
     offerOnlyAsQuestion: true,
     reply:
-      "Use **+ New** at the top of the relevant list (Parts, Printers, Orders…), or hit **Scan** to add something by its barcode or a photo. I can add a place right now: type \"add a place called Blue bin in Shelf 1\". Once AI's connected you can just tell me any of it (\"add a part called Widget\") and I'll do it.",
+      "Use **+ New** at the top of the relevant list {lists}, or hit **Scan** to add something by its barcode or a photo. I can add a place right now: type \"add a place called Blue bin in Shelf 1\". Once AI's connected you can just tell me any of it (\"add a part called Widget\") and I'll do it.",
   },
   {
     key: "scan",

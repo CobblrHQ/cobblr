@@ -2,12 +2,17 @@
   "manifest": {
     "id": "cobblr.flagship.collections",
     "catalog": "disabled",
-    "version": "0.3.5",
+    "version": "0.3.6",
     "name": "Collections",
     "description": "Your collection as its own cover wall: condition, edition, paid vs value today, so you stop buying the dupe.",
     "author": "Cobblr",
     "released_at": "2026-10-02",
     "releases": [
+      {
+        "version": "0.3.6",
+        "released_at": "2026-11-19",
+        "notes": "Field help says your list is grouped by this, in plain words, instead of naming a table."
+      },
       {
         "version": "0.3.5",
         "released_at": "2026-10-07",
@@ -57,7 +62,7 @@
               "Fair",
               "Poor"
             ],
-            "help": "Collector grade, the table groups by this; condition drives resale value."
+            "help": "Collector grade; your list is grouped by this; condition drives resale value."
           },
           {
             "entity_kind": "inventory:part",

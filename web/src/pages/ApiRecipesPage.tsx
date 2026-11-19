@@ -361,7 +361,7 @@ export function ApiRecipesPage() {
     <div className="space-y-4">
       {kindsQ.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {kindsQ.isError && <QueryError what="your entity kinds" onRetry={() => kindsQ.refetch()} />}
-      {!kindsQ.isLoading && kinds.length === 0 && (
+      {kindsQ.isSuccess && kinds.length === 0 && (
         <div className={SECTION + " text-sm text-muted dark:text-slate-400"}>
           {/* vocab-lint-ok: generic scripting empty state, not a per-kind surface */}
           Nothing to script against yet. Create a category (a named table) and it shows up here.

@@ -88,7 +88,6 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   const fp = useFieldPresentation(entityKind);
   const navigate = useNavigate();
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
-  const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
   // Does any installed catalog bind to inventory:part? If so, show the
   // quick-match typeahead even on a skinned instance (Lego Sets is the point —
   // the instance IS the catalog-backed thing). Instances in a workspace with no
@@ -365,7 +364,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   const customRows = customFieldRows(customFields, fieldDefs.data?.sections, barcode.barcodeName);
 
   return (
-    <RecordFormModal open onClose={() => onClose(false)} title={`new ${itemNoun.toLowerCase()}`} dismissOnBackdrop={false}>
+    <RecordFormModal open onClose={() => onClose(false)} title={`New ${itemNoun.toLowerCase()}`} dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
         {!!recordTemplates?.length && <label className="block text-sm">Starter template<select aria-label="Starter template" className={"input " + fieldPackControlClass} value={selectedTemplate} onChange={e => {
           setSelectedTemplate(e.target.value);
@@ -546,7 +545,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             // VOCAB-ENUMERATION OK: a coincidence of spelling, not a field role
             !fp.hidden("location")
               ? {
-                  need: fieldNeed("native:location", { control: "choice", label: fp.label("location", "Location"), choices: (locs.data?.items ?? []).map((l) => l.name) }),
+                  need: fieldNeed("native:location", { control: "picker", label: fp.label("location", "Location") }),
                   node: (
                     <Field label={fp.label("location", "Location")}>
                       <LocationPicker value={locationId || null} onChange={(id) => setLocationId(id ?? "")} />
@@ -566,7 +565,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
               onChange={(e) => setPrintLabel(e.target.checked)}
               className="accent-cobble-500"
             />
-            Queue a QR label print after create
+            Print a label for it once it is saved
           </label>
         )}
         {askedMissing && (

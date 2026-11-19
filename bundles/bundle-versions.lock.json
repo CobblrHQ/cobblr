@@ -12,16 +12,16 @@
     "hash": "bdd517e01bf5f0ecf25cb57804bec09d72ea646048dc6fc0813584ef443dcc84"
   },
   "cobblr.community.computers": {
-    "version": "0.2.2",
-    "hash": "5119cd8e9570f5fdde65284dea3e8561b4d771f3e762629029502bd2c27374ac"
+    "version": "0.2.3",
+    "hash": "86d6708065f5706b8b8a7098ecc04b500c37b79474857f45ecbab5161315e348"
   },
   "cobblr.community.garden": {
     "version": "0.1.1",
     "hash": "655d5b060fc62c6adefa58f71fb9a5b770a4b09513f40d0de6f6503c47964ed2"
   },
   "cobblr.community.hand-tools": {
-    "version": "0.1.0",
-    "hash": "8319dbb0fd76611ebd1b7d8c1c5b49e4cb44f88963fb6ecbed3ebae0e5a504d2"
+    "version": "0.1.3",
+    "hash": "87bd74efb3815f31abf0ddba855c18c02433f3c563edcfe81303e7e882c8be3a"
   },
   "cobblr.community.laser-cutters": {
     "version": "0.3.5",
@@ -64,32 +64,32 @@
     "hash": "f641ed9f1861f4e262edec5da8e397b7b2c8ef7760e7e2d889e117210c623dcc"
   },
   "cobblr.flagship.cnc-tooling": {
-    "version": "0.2.7",
-    "hash": "c77b425ce1f06d8418f08dad9e219ea0a832fa296da822a3399d6f730e82d36d"
+    "version": "0.2.8",
+    "hash": "5421efa72b382b04618bfee67dbb79aa816af6f99b66309efc7ae9ce9eb4dd8e"
   },
   "cobblr.flagship.collections": {
-    "version": "0.3.5",
-    "hash": "ae23d2351840fcfae1177214c0be48b2ebd8c7800d51d553ccae910cd2f64bd4"
+    "version": "0.3.6",
+    "hash": "2d74c76e4f071b01c44f6c4b1619b57ae5abd2df314b6eb03182cd7fdba4b669"
   },
   "cobblr.flagship.documents": {
-    "version": "0.2.4",
-    "hash": "fbefad65f76fd344c2f93b79f8895d65584825b1a277c54cd3d28417b457aa4e"
+    "version": "0.2.5",
+    "hash": "3da5ce1405a8687e8d569d36f49c9db3bfd8c320148737f7d92ebe4faef4a892"
   },
   "cobblr.flagship.electronics-assembly": {
     "version": "0.1.11",
     "hash": "d63dc4387f730966ac055ff6691777c3a164710e475f3e45752ff81bfadc9892"
   },
   "cobblr.flagship.fasteners": {
-    "version": "0.1.5",
-    "hash": "9aa4622697c9f76a5022faf56549b2f1268924b9d48780e3773ca2b8325904ba"
+    "version": "0.1.6",
+    "hash": "01ffb32d3f6ff083f7a00f62edbae4956c7ec13e4796fe0c1f3b475a22d537f0"
   },
   "cobblr.flagship.filament": {
     "version": "0.8.7",
     "hash": "9db08b54f78428e5840639f9bec1d3c0319f0c7a54dc05d96ce25821d154441f"
   },
   "cobblr.flagship.gifts-occasions": {
-    "version": "0.2.5",
-    "hash": "8a54eee5c1a3e1594888c7774c04f316dd4b1d0b7192380d09c62004667f13ad"
+    "version": "0.2.6",
+    "hash": "bfbe86835f5169ab1fc5a3e096962ca71a26f4e7a523b062b9114851046dda95"
   },
   "cobblr.flagship.groceries": {
     "version": "0.15.0",
@@ -104,8 +104,8 @@
     "hash": "0a036299cf84bf3b0f4d200ea90bd44b8981978cf0f465b39cbd9f222ee6d138"
   },
   "cobblr.flagship.home-maintenance": {
-    "version": "0.3.3",
-    "hash": "67d66b4234185d5f43dcb0b9b88dff598af120562c187451c0ae677efce18cdc"
+    "version": "0.3.4",
+    "hash": "66f595d31e3ed078db35c3f1e6040d1636fb239bae6671ae99be9cb81f99bb24"
   },
   "cobblr.flagship.household-supplies": {
     "version": "0.3.4",
@@ -124,8 +124,8 @@
     "hash": "93d1b4c4dd4a4e89a42b1a50ba07d5247769c95fafbb79d9d8bc993ebcb99a9b"
   },
   "cobblr.flagship.plants": {
-    "version": "0.3.5",
-    "hash": "1352da920d1becb483955b77b75ee3f5474d2932eadd72edbd4464a62d025e4a"
+    "version": "0.3.6",
+    "hash": "53a7206cf23df73636991a09ff65597cb6c5c02323ef842b94a56a4945442c2b"
   },
   "cobblr.flagship.sewing": {
     "version": "0.1.2",
@@ -152,8 +152,8 @@
     "hash": "80da9416dbbfa07c2f645d0ebe64d0f0fa7b9fbf9717913829062389bebe83fd"
   },
   "cobblr.flagship.wardrobe": {
-    "version": "0.1.7",
-    "hash": "b2e596e7668efdb868efd9c88313e9b6a883fe601e736fa59aa783c1ce5c03f6"
+    "version": "0.1.8",
+    "hash": "6c1fc154649df3588ac1e12b16d323de6c1347be8247f570ae351801f7990dc3"
   },
   "cobblr.flagship.warranties": {
     "version": "0.2.4",

@@ -6,7 +6,7 @@ import { getStationTokenOverride, noteStationTokenRefused } from "../station-tok
 import { sessionChanged, sessionIdentityOf } from "../session-identity";
 import { getImpersonationToken } from "../impersonation";
 import { forgetDashboardCopies } from "../../dashboard/device-copy";
-import { UploadError, beginWrite, isAWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
+import { UploadError, noteSavedEdit, beginWrite, isAWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
 import { SHARE_VIEW_BLOCKED, SHARE_VIEW_READ_ONLY, shareViewPathAllowed } from "@cobblr/platform-contract/share-view";
 import { EDITED_FROM_HEADER, PAGE_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
@@ -417,6 +417,8 @@ async function sendRequest<T>(
   if (res.ok && isAWrite(method)) {
     noteWorkspaceWrite(path, res);
     noteAiAvailabilityWrite(path);
+    // A page's save of a record's fields is offered back (saved-edit-undo.ts).
+    if (!impToken) noteSavedEdit(method, path, headers, bodyText, res.status);
   }
 
   // Always try to parse JSON — our error responses are always JSON.

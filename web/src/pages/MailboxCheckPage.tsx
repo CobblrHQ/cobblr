@@ -61,7 +61,7 @@ export function MailboxCheckPage() {
             {check?.status === "running" ? "Checking…" : check ? "Check again" : "Check my mailbox"}
           </button>
           {check?.status === "running" && (
-            <button type="button" onClick={() => stop.mutate()} className="text-xs text-muted hover:text-content underline">Stop</button>
+            <button disabled={stop.isPending} type="button" onClick={() => stop.mutate()} className="text-xs text-muted hover:text-content underline">Stop</button>
           )}
         </div>
         {check && words && (

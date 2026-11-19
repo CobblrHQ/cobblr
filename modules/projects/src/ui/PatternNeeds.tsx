@@ -432,7 +432,7 @@ function YarnMatch({
             )}
           </ul>
           {m.chosen && (
-            <button type="button" onClick={() => use.mutate(null)} className="text-xs text-faint hover:text-ember-500 min-h-9">
+            <button disabled={use.isPending} type="button" onClick={() => use.mutate(null)} className="text-xs text-faint hover:text-ember-500 min-h-9">
               Stop using {m.chosen.name} for this
             </button>
           )}

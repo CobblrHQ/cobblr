@@ -57,7 +57,7 @@ export function DeleteAccountSection() {
         Removes your account and everything that was yours: memberships, tokens, connections. Workspaces you share stay
         with their other owners; a workspace only you own has to be deleted or handed over first. This cannot be undone.
       </div>
-      <button
+      <button disabled={del.isPending}
         type="button"
         onClick={() => {
           setSoleOwner(null);

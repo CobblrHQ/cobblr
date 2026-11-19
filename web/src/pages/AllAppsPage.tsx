@@ -83,7 +83,7 @@ export function AllAppsPage() {
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-subtle dark:bg-slate-800 text-accent">
           <Icon size={20} />
         </span>
-        <span className="min-w-0 flex-1 pr-8">
+        <span className="min-w-[8em] flex-1 pr-8">
           <span data-app-name className="block font-medium text-content dark:text-mortar-100">{a.label}</span>
           {a.description && <span data-app-description className="mt-0.5 text-xs text-muted dark:text-slate-400 line-clamp-2">{a.description}</span>}
         </span>
@@ -92,14 +92,14 @@ export function AllAppsPage() {
     return (
       <li key={a.name} data-testid="app-row" data-state={a.state} className="relative">
         {a.state === "off" ? (
-          <div className="flex h-full items-start gap-3 rounded-xl border border-dashed border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/60 p-4 opacity-80">
+          <div className="flex flex-wrap h-full items-start gap-3 rounded-xl border border-dashed border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/60 p-4 opacity-80">
             {body}
           </div>
         ) : (
           <Link
             to={a.route}
             aria-label={`Open ${a.label}`}
-            className="flex h-full items-start gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 transition hover:border-accent hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="flex flex-wrap h-full items-start gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 transition hover:border-accent hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             {body}
           </Link>
@@ -108,6 +108,7 @@ export function AllAppsPage() {
           <button
             type="button"
             data-testid="app-pin"
+            data-corner-action
             data-pinned={inSidebar ? "" : undefined}
             onClick={() => pin(activeSlug, { label: a.label, names: [...new Set([rowName(a), a.key, a.name])] }, !inSidebar)}
             aria-label={inSidebar ? `Remove ${a.label} from your ${navNoun}` : `Add ${a.label} to your ${navNoun}`}
@@ -120,11 +121,11 @@ export function AllAppsPage() {
         )}
         {a.state === "off" &&
           (door.canTurnOn ? (
-            <button type="button" disabled={door.busy} onClick={() => door.turnOn(a)} className={`${corner} bg-cobble-600 text-white hover:bg-cobble-700`}>
+            <button type="button" data-corner-action disabled={door.busy} onClick={() => door.turnOn(a)} className={`${corner} bg-cobble-600 text-white hover:bg-cobble-700`}>
               Turn on
             </button>
           ) : (
-            <button type="button" disabled={door.busy} onClick={() => door.ask(a)} className={`${corner} bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100`}>
+            <button type="button" data-corner-action disabled={door.busy} onClick={() => door.ask(a)} className={`${corner} bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100`}>
               Ask an admin
             </button>
           ))}

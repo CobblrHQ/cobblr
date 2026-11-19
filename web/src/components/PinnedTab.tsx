@@ -22,6 +22,7 @@ import { api, type KnowledgeEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { RailTabContent, useRailTab } from "./SideRail";
 import { useEnabledModules } from "../lib/useEnabledModules";
+import { QueryError } from "@cobblr/platform-web";
 
 /** A pinned entry, rendered for READING rather than for editing.
  *
@@ -94,7 +95,8 @@ export function PinnedTab() {
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-3">
         {pinned.isLoading && <p className="text-xs text-faint">loading…</p>}
 
-        {!pinned.isLoading && items.length === 0 && (
+        {pinned.isError && <QueryError what="what's pinned" onRetry={() => void pinned.refetch()} />}
+        {pinned.isSuccess && items.length === 0 && (
           <div className="text-sm text-faint dark:text-slate-500 italic space-y-2">
             <p>Nothing pinned yet.</p>
             <p>

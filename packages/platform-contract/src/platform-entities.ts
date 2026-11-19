@@ -37,8 +37,10 @@ export interface PlatformEntities {
   /** The whole row for a record, when its kind can produce one — what a change
    *  ledger stores so an undo has real state to put back. */
   snapshot(orgId: string, kind: string, id: string): Promise<Record<string, unknown> | null>;
-  /** What would be deleted along with this record. Empty when nothing would be;
-   *  null when the kind cannot say (and a caller must not read that as "safe"). */
+  /** What would be deleted along with this record, or lose its place with
+   *  it: the kind's own cascade and whatever is placed in it (any kind can
+   *  hold things). Empty when nothing would be; null when the kind cannot say
+   *  (and a caller must not read that as "safe"). */
   dependents(orgId: string, kind: string, id: string): Promise<string[] | null>;
   /** Register a list-resolver for a kind. Optional — without one,
    *  list() returns an empty result. Modules opt in when they want

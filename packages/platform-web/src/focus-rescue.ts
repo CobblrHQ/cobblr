@@ -23,6 +23,8 @@ export interface FocusPlace {
   path: Array<{ parent: Element; child: Element; index: number }>;
   /** The page it was on: after a page change, focus is the new page's. */
   href: string;
+  /** The dialog it was in, if any: a dialog that closed returns its own focus. */
+  dialog: Element | null;
 }
 
 /** Where an element is, as each ancestor and the child's place in it. */
@@ -34,7 +36,7 @@ export function placeOf(el: Element): FocusPlace {
     path.push({ parent, child, index: Array.prototype.indexOf.call(parent.children, child) });
     child = parent;
   }
-  return { el, path, href: typeof location === "undefined" ? "" : location.href };
+  return { el, path, href: typeof location === "undefined" ? "" : location.href, dialog: el.closest('[role="dialog"], [aria-modal="true"]') };
 }
 
 function shown(el: Element): boolean {
@@ -76,14 +78,20 @@ export function installFocusRescue(): () => void {
   let last: FocusPlace | null = null;
   let frame = 0;
   const onFocusIn = (e: FocusEvent) => {
-    if (e.target instanceof Element && e.target !== document.body) last = placeOf(e.target);
+    if (!(e.target instanceof Element) || e.target === document.body) return;
+    last = placeOf(e.target);
   };
   const check = () => {
     frame = 0;
     const place = last;
     if (!place || place.el.isConnected || !nowhere() || place.href !== location.href) return;
+    // A dialog that closed gives focus back to its opener itself (useDialogFocus),
+    // on its own schedule: rescued first, focus went to a row further down and the
+    // page scrolled the top bar away (#9561, a toast's walk). A row removed inside
+    // a dialog still open is still rescued.
+    if (place.dialog && !place.dialog.isConnected) return;
     last = null;
-    rescueTarget(place)?.focus({ preventScroll: false });
+    rescueTarget(place)?.focus({ preventScroll: true });
   };
   const mo = new MutationObserver(() => {
     if (last && !last.el.isConnected && !frame) frame = requestAnimationFrame(check);

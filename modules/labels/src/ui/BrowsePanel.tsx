@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Plus, X } from "lucide-react";
-import { EntityThumb, buildLocationForest, flattenLocationForest, useToast, SearchInput } from "@cobblr/platform-web";
+import { EntityThumb, buildLocationForest, flattenLocationForest, useToast, SearchInput, QueryError } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import type { LabelableItem } from "./api";
 
@@ -222,7 +222,8 @@ export function BrowsePanel() {
       {/* Items in the active tab */}
       <div className="p-2">
         {itemsQ.isLoading && <div className="px-2 py-6 text-sm text-faint dark:text-slate-500">loading…</div>}
-        {!itemsQ.isLoading && items.length === 0 && (
+        {itemsQ.isError && <QueryError what="matches" onRetry={() => void itemsQ.refetch()} />}
+        {itemsQ.isSuccess && items.length === 0 && (
           <div className="px-2 py-6 text-sm text-faint dark:text-slate-500">
             {q ? "No matches." : "Nothing here yet."}
           </div>

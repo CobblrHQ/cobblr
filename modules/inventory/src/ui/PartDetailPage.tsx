@@ -237,7 +237,6 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
   const holdsContents = useHoldsContents(orgSlug, getToken, { kind: "inventory:part", id: id ?? "" });
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
-  const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
   // Things that hold things (a Backpack) are places too: offered beside the
   // locations, and the part says it is inside one ("Backpack, in Desk drawer").
   const where = useQuery({ queryKey: ["placement-path", "inventory:part", id], queryFn: () => api.partPath(id!), enabled: !!id });
@@ -732,7 +731,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
               : null,
             !hide("location")
               ? {
-                  need: fieldNeed("location", { control: "choice", label: fp.label("location", "Location"), choices: (locs.data?.items ?? []).map((l) => l.name) }),
+                  need: fieldNeed("location", { control: "picker", label: fp.label("location", "Location") }),
                   node: (
                     <Field label={fp.label("location", "Location")}>
                       {/* A fieldset is at least as wide as its content by default; the picker ran past a phone at 200% text (#8612). */}
@@ -965,7 +964,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
         >
           <ArrowRightLeft size={12} /> Move to another list…
         </button>}
-        {mayDelete && <button
+        {mayDelete && <button disabled={remove.isPending}
           data-testid="delete-part"
           onClick={async () => {
             const ok = await confirm({
@@ -1653,7 +1652,7 @@ function PerUnitConsumptionPanel({
         <div key={u.id} className="rounded-lg border border-dashed border-line dark:border-slate-700 p-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
           <span className="text-faint">{b.label}'s {countUnit || "unit"} ran out</span>
           {modelQty > 0 ? (
-            <button
+            <button disabled={continueProject.isPending}
               onClick={() => {
                 stock.setAllocationStatus(b.allocationId, "released").catch(() => {});
                 continueProject.mutate({ module: b.targetModule, type: b.targetEntityType, id: b.targetEntityId, label: b.label });

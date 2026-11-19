@@ -80,14 +80,14 @@ export function LinksPage() {
               actions={
                 <>
                   {l.target_role === "owner" && (
-                    <button
+                    <button disabled={accept.isPending}
                       onClick={() => accept.mutate(l.id)}
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
                     >
                       <Check size={12} /> Accept
                     </button>
                   )}
-                  <button
+                  <button disabled={revoke.isPending}
                     onClick={async () => {
                       const ok = await confirm({
                         title: "Revoke this link?",
@@ -120,7 +120,7 @@ export function LinksPage() {
               key={l.id}
               link={l}
               actions={
-                <button
+                <button disabled={revoke.isPending}
                   onClick={async () => {
                     const ok = await confirm({
                       title: "Revoke this link?",

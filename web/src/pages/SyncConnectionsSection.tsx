@@ -449,7 +449,7 @@ function SourceRow({
             <span className="text-faint dark:text-slate-500 shrink-0">· {connections.length} connection{connections.length === 1 ? "" : "s"}</span>
           )}
         </button>
-        <button
+        <button disabled={uninstall.isPending}
           type="button"
           onClick={async () => {
             if (await confirm({ title: `Remove "${source.name}"?`, message: "Every connection built on it stops resolving." }))
@@ -788,7 +788,7 @@ function ArchivedConnectionRow({ conn, onChange }: { conn: SyncConnection; onCha
       >
         {unarchive.isPending ? "…" : "Re-activate"}
       </button>
-      <button
+      <button disabled={del.isPending}
         onClick={async () => {
           if (await confirm({ title: "Remove connection?", message: "Deletes it for good (mirrored records stay). Un-archive instead to keep it." })) del.mutate();
         }}
@@ -929,7 +929,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
         >
           {archive.isPending ? "Archiving…" : "Archive"}
         </button>
-        <button
+        <button disabled={del.isPending}
           onClick={async () => {
             if (await confirm({ title: "Remove connection?", message: "Mirrored records stay; the link stops." })) del.mutate();
           }}

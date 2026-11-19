@@ -1,4 +1,4 @@
-import { RecordFormModal, editOf } from "@cobblr/platform-web";
+import { RecordFormModal, editOf, QueryError } from "@cobblr/platform-web";
 // knowledge UI — the host mounts <KnowledgeUI /> at /knowledge. A list of
 // entries (bordered cards) with a create/edit MODAL that uses the shared
 // Markdown editor (KB phase 1). Modals for detail/edit, toasts for feedback,
@@ -127,7 +127,8 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
           That entry is not here any more. It may have been deleted.
         </div>
       )}
-      {!entries.isLoading && items.length === 0 && (
+      {entries.isError && <QueryError what="entries" onRetry={() => void entries.refetch()} />}
+      {entries.isSuccess && items.length === 0 && (
         <div className="rounded-lg border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-muted italic">
           {q || kindFilter ? "No entries match." : "No entries yet. Capture a note, an SOP, a reference, a prompt."}
         </div>
@@ -140,7 +141,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
             className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900/40 hover:border-accent transition"
           >
             <div className="flex items-start gap-3 p-3">
-              <button
+              <button disabled={togglePin.isPending}
                 aria-label={e.pinned ? "Unpin" : "Pin to Quick Access"}
                 type="button"
                 title={e.pinned ? "Unpin" : "Pin to Quick Access"}
@@ -163,7 +164,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
                   <p className="mt-0.5 text-xs text-muted line-clamp-1">{stripMarkdown(e.body)}</p>
                 )}
               </button>
-              <button
+              <button disabled={del.isPending}
                 aria-label="Delete"
                 type="button"
                 title="Delete"

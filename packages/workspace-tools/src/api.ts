@@ -1,3 +1,4 @@
+import { EDITED_FROM_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
 // The transport seam. Tools never fetch — they call this interface, and each
 // consumer supplies its own implementation over the SAME REST surface:
 //   - the in-app chat: an in-process fetch to 127.0.0.1 forwarding the
@@ -14,13 +15,41 @@ export interface WorkspaceApiResponse {
   body: Record<string, unknown>;
 }
 
+export interface WorkspaceRequestOptions {
+  /** Sent as the Idempotency-Key header: the same write sent again under it
+   *  is answered as the first was and runs nothing (retry-key.ts). A
+   *  transport that talks to the kernel's REST surface must send it. */
+  idempotencyKey?: string;
+  /** Sent as the x-cobblr-edited-from header: for the fields a change writes,
+   *  what the reader last read them as, so the server refuses the change when
+   *  a person has changed one since (read-memory.ts, #7925). */
+  editedFrom?: Record<string, unknown>;
+}
+
+/** The headers a transport sends for a request's options: the one place
+ *  they are spelled, so every transport (the hosted MCP door, the stdio
+ *  server, the in-app chat) sends all of them. */
+export function requestHeaders(opts: WorkspaceRequestOptions | undefined): Record<string, string> {
+  return {
+    // The same write sent again under it runs once (retry-key.ts).
+    ...(opts?.idempotencyKey ? { "idempotency-key": opts.idempotencyKey } : {}),
+    // What the reader read; a field changed since refuses the change (read-memory.ts).
+    ...(opts?.editedFrom ? { [EDITED_FROM_HEADER]: encodeEditedFrom(opts.editedFrom) } : {}),
+  };
+}
+
 export interface WorkspaceApi {
-  request(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<WorkspaceApiResponse>;
+  request(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, opts?: WorkspaceRequestOptions): Promise<WorkspaceApiResponse>;
   /** An address a person can open: an org-relative API path (a picture's
    *  file) or an app page, on this workspace. Absent, or null, when the
    *  transport does not know an address the reader could use; a tool then
    *  says so rather than handing out a path that goes nowhere. */
   link?(to: { api: string } | { app: string }): string | null;
+  /** Who is reading, for as long as their reads should be remembered: one
+   *  person's chat, one MCP connection, on this workspace. With it, a change
+   *  is judged against what that reader last read (read-memory.ts); without
+   *  it, a change goes through as sent. */
+  readerScope?: string;
 }
 
 /** The one way a transport builds `link`. `apiBase` is the REST root a
@@ -53,13 +82,15 @@ export function honestTransport(api: WorkspaceApi): WorkspaceApi {
     ...api,
     // The call goes through exactly as the tool made it, arguments and all.
     async request(...call: Parameters<WorkspaceApi["request"]>) {
-      const [method] = call;
+      const [method, , , opts] = call;
       const res = await api.request(...call);
       if (Number.isInteger(res.status) && res.status >= 100 && res.status < 600) return res;
       const message =
         method === "GET"
           ? "Cobblr could not be reached, so nothing was read."
-          : "The connection to Cobblr was lost before it answered, so it is not known whether this change happened. Check before trying it again.";
+          : opts?.idempotencyKey
+            ? "The connection to Cobblr was lost before it answered, so it is not known yet whether this change happened. Send the same call again with the same request_id: it applies once either way."
+            : "The connection to Cobblr was lost before it answered, so it is not known whether this change happened. Check before trying it again.";
       return { status: CONNECTION_LOST_STATUS, body: { error: { code: "connection_lost", message } } };
     },
   };

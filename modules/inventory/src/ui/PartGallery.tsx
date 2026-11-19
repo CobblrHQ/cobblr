@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Scissors, Star, Trash2, Upload, X } from "lucide-react";
-import { SELECTED_TILE, useConfirm, useImageSrc, usePhotoPick, useToast, EntityPhoto, Lightbox, MutationError, noteWorkspaceWrite, uploadJson, workspaceFetch } from "@cobblr/platform-web";
+import { SELECTED_TILE, useConfirm, useImageSrc, usePhotoPick, useToast, EntityPhoto, Lightbox, MutationError, noteWorkspaceWrite, uploadJson, workspaceFetch, QueryError } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { cutoutPlainBackground } from "./remove-background";
 import { isCoverFile } from "./gallery-cover";
@@ -203,7 +203,8 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       {list.isLoading && (
         <div className="text-xs text-faint">loading…</div>
       )}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="pictures" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-xs text-faint italic border border-dashed border-line dark:border-slate-700 rounded-lg p-6 text-center">
           No photos yet. Drag-and-drop or click "add" above.
         </div>
@@ -264,7 +265,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                   </button>
                   )}
                   {att.attachment && (
-                  <button
+                  <button disabled={detach.isPending}
                     type="button"
                     onClick={async () => {
                       const ok = await confirm({

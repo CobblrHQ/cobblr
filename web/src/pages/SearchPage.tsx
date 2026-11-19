@@ -23,6 +23,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { SearchIncomplete } from "../components/SearchIncomplete";
 import { useExactHits } from "../lib/useExactHits";
+import { shorterSearches } from "../lib/search-next-steps";
 import { countOf } from "@cobblr/platform-contract/plural";
 
 /** Rows of each kind per page. */
@@ -192,7 +193,7 @@ export function SearchPage() {
           </span>
           {q && (
             <Chip onClear={() => setParam("q", null)}>
-              q: "<span className="font-mono">{q}</span>"
+              “{q}”
             </Chip>
           )}
           {tag && (
@@ -200,7 +201,7 @@ export function SearchPage() {
           )}
           {Array.from(selectedKinds).map((k) => (
             <Chip key={k} onClear={() => toggleKind(k)}>
-              <span className="font-mono">{k}</span>
+              {(entityKinds.data?.items ?? []).find((e) => e.id === k)?.display_name ?? k}
             </Chip>
           ))}
         </div>
@@ -257,10 +258,27 @@ export function SearchPage() {
       )}
       <SearchIncomplete failed={results.data?.kinds_failed} />
       {(q || tag || kinds) && !results.isLoading && !results.isError && grouped.length === 0 && exact.length === 0 && (
-        <div className="text-sm text-muted italic">
-          No results{q ? ` for "${q}"` : ""}
-          {tag ? ` tagged #${tag}` : ""}. Try a different keyword, a different
-          tag, or relax the kind filters.
+        <div className="space-y-2 text-sm" data-testid="search-nothing-found">
+          <p className="text-muted">
+            Nothing found{q ? ` for “${q}”` : ""}
+            {tag ? ` tagged #${tag}` : ""}
+            {selectedKinds.size > 0 ? " in the kinds picked" : ""}.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {shorterSearches(q).map((w) => (
+              <button key={w} type="button" className="min-h-11 px-3 rounded border border-line dark:border-slate-700 text-accent" onClick={() => { setDraft(w); setParam("q", w); }}>
+                Search for “{w}”
+              </button>
+            ))}
+            {(tag || selectedKinds.size > 0) && (
+              <button type="button" className="min-h-11 px-3 rounded border border-line dark:border-slate-700 text-accent" onClick={() => { params.delete("tag"); params.delete("kinds"); setParams(params, { replace: true }); }}>
+                Search everything
+              </button>
+            )}
+            <Link to="/" className="min-h-11 inline-flex items-center px-3 rounded border border-line dark:border-slate-700 text-accent">
+              Add it as something new
+            </Link>
+          </div>
         </div>
       )}
 

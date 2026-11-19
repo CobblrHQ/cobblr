@@ -418,7 +418,7 @@ export function MachinesPage({
     <div className="space-y-4">
       <CollectionHeader
         title={heading}
-        count={`${filtered.length} of ${machines.data?.total ?? allRows.length}${allUnits !== allRows.length ? ` · ${countOf(machineCount(filtered), words)}` : ""}`}
+        count={machines.isSuccess ? `${filtered.length} of ${machines.data?.total ?? allRows.length}${allUnits !== allRows.length ? ` · ${countOf(machineCount(filtered), words)}` : ""}` : undefined}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
           <>
@@ -586,7 +586,11 @@ export function MachinesPage({
           <ModuleInstanceChooser instances={namedInstances(machineInstances.data?.items)} icon={Wrench} noun={noun} />
         ) : (
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-10 text-center text-xs text-faint italic">
-            {allRows.length === 0
+            {/* Said only once the list has answered: on a slow connection
+                the empty state stood for seconds over a list on its way (#4115). */}
+            {!machines.isSuccess
+              ? <span role="status">Loading {nounPlural}…</span>
+              : allRows.length === 0
               ? `No ${nounPlural} yet. Add one with New ${noun}.`
               : "No matches with the current filters."}
           </div>

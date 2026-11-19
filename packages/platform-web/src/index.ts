@@ -373,6 +373,7 @@ export { missingRequired, type RequiredLike } from "./required-fields";
 export type { PlatformWire, PlatformWireInput } from "./types";
 export type { AddressSuggestionsBody, FieldValuesUsedBody, UsedValueBody } from "./types";
 export { noteWorkspaceWrite, subscribeWorkspaceWrite, subscribeDeletedRecord, refreshStockViews, refreshContainerCounts, carriesAContainerCount, refreshStockThresholds, carriesAStockThreshold, RECORD_HISTORY_KEY, STOCK_VIEW_KEYS, STOCK_LIST_KEYS, type WorkspaceWriteListener } from "./workspace-writes";
+export { noteSavedEdit, savedEditOf, subscribeSavedEdit, UNDO_OF_AN_EDIT_HEADER, UNDO_SHOWN_HERE_HEADER, type SavedEdit } from "./saved-edit-undo";
 export { ChoiceCombobox, matchChoice, orderChoices, type ChoiceComboboxProps, type ChoiceDetail, type ChoiceOption } from "./ChoiceCombobox";
 export { NfcTags, type NfcTarget } from "./NfcTags";
 export { StationTagWriter, type StationTagClient } from "./StationTagWriter";

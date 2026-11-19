@@ -34,7 +34,7 @@ const src = stripComments(readFileSync(FILE, "utf8"));
 const errors: string[] = [];
 const lineOf = (i: number) => src.slice(0, i).split("\n").length;
 
-const INPUT = 'aria-label="Search the inbox, or paste a UPC or link to add"';
+const INPUT = 'aria-label="Search the inbox, or paste a barcode number or link to add"';
 const inputAt = src.indexOf(INPUT);
 if (inputAt === -1) {
   errors.push(`${FILE}: could not find the inbox search input (${INPUT}); if it was renamed, update this lint`);

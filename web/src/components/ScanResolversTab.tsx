@@ -87,7 +87,7 @@ export function ScanResolversTab() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <button
+                    <button disabled={toggle.isPending}
                       onClick={() => toggle.mutate(r)}
                       className="px-2 py-1 text-xs rounded border border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100"
                     >
@@ -102,7 +102,7 @@ export function ScanResolversTab() {
                       <Pencil size={13} />
                     </button>
                     {!r.builtin && (
-                      <button
+                      <button disabled={remove.isPending}
                         aria-label="Remove"
                         onClick={async () => {
                           if (

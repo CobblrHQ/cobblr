@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { Bluetooth, Check, ChevronDown, Download, Hash, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { NumberStepper, useRoleAtLeast, usePageTitle, usePageWidth, useToast, Modal, BACKDROP_LAYER_CLASS, useFieldDraft, NfcTags, isWebNfcAvailable, type NfcTarget } from "@cobblr/platform-web";
+import { NumberStepper, useRoleAtLeast, usePageTitle, usePageWidth, useToast, Modal, BACKDROP_LAYER_CLASS, useFieldDraft, NfcTags, isWebNfcAvailable, type NfcTarget, QueryError } from "@cobblr/platform-web";
 import { PRINTER_MANAGERS } from "@cobblr/platform-contract/org-roles";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
@@ -1292,7 +1292,8 @@ export function QueuePage() {
       </div>
 
       {list.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="the label queue" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-sm text-faint dark:text-slate-500">
           Queue is empty - pick items below, or add labels from any module that supports them.
         </div>
@@ -1341,7 +1342,7 @@ export function QueuePage() {
                       inputClassName="font-mono text-xs text-muted dark:text-slate-400 w-7 bg-transparent text-center tabular-nums"
                       onChange={(n) => setQty.mutate({ id: it.id, qty: n })}
                     />
-                    <button
+                    <button disabled={remove.isPending}
                       aria-label="Remove from queue"
                       onClick={() => remove.mutate(it.id)}
                       className="text-faint dark:text-slate-600 hover:text-ember-500 transition shrink-0"

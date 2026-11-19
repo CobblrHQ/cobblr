@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { refuseStaleEditOf, staleSaveRefusal } from "./platform/stale-edit.js";
 import { stopAtGate } from "./lib/gate-probe.js";
 import { registerPanelPresence } from "./platform/panel-presence.js";
@@ -304,12 +305,53 @@ function stockGroupValues(kind: string, holders: string[]) {
 
 
 /** Where each thing is, innermost container first, named (platform().placement.pathsOf). */
+/** Set while placePaths reads the names of a path's steps. Only each step's
+ *  title is read there, but reading a record works out its own place line,
+ *  which asks placePaths again for the same records: with two things inside
+ *  each other that never ended, and every read of either hung (#9637). A
+ *  path asked for inside that read answers empty; nobody reads it. */
+const namingPathSteps = new AsyncLocalStorage<true>();
+
+/** The placement lock, for the rest of `trx`: one per workspace (its own
+ *  database), the way a place move takes the location tree's (#4115). */
+async function lockPlacements(trx: Kysely<PlacementDB>): Promise<void> {
+  await sql`select pg_advisory_xact_lock(hashtext('core_placement_placements.container'))`.execute(trx);
+}
+
+/** Whether putting `containee` into `container` would put it inside itself:
+ *  walking up from the container reaches it. A loop already there (from
+ *  before the lock) is walked once and left. */
+async function placementWouldLoop(db: Kysely<PlacementDB>, containee: { kind: string; id: string }, container: { kind: string; id: string }): Promise<boolean> {
+  let cursor: { kind: string; id: string } | null = { kind: container.kind, id: container.id };
+  const seen = new Set<string>();
+  while (cursor) {
+    if (cursor.kind === containee.kind && cursor.id === containee.id) return true;
+    // \x00 written as an escape, never a raw NUL: one made grep read this
+    // whole file as binary and silently find nothing in it.
+    const key = `${cursor.kind}\x00${cursor.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    const up = await db
+      .selectFrom("core_placement_placements")
+      .select(["container_kind", "container_id"])
+      .where("containee_kind", "=", cursor.kind)
+      .where("containee_id", "=", cursor.id)
+      .executeTakeFirst();
+    cursor = up ? { kind: up.container_kind, id: up.container_id } : null;
+  }
+  return false;
+}
+
 async function placePaths(
   orgId: string,
   asked: ReadonlyArray<{ kind: string; id: string }>,
 ): Promise<Map<string, Array<{ kind: string; id: string; name: string }>>> {
   const out = new Map<string, Array<{ kind: string; id: string; name: string }>>();
   if (!asked.length) return out;
+  if (namingPathSteps.getStore()) {
+    for (const a of asked) out.set(`${a.kind}:${a.id}`, []);
+    return out;
+  }
   const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
   const containerOf = new Map<string, { kind: string; id: string } | null>();
   const key = (r: { kind: string; id: string }) => `${r.kind}:${r.id}`;
@@ -351,7 +393,7 @@ async function placePaths(
     }
   }
   const all = [...new Map(chains.flatMap((c) => c.steps).map((s) => [key(s), s])).values()];
-  const names = new Map((await entities.lookupMany(orgId, all, { system: true }).catch(() => [])).map((e) => [key(e), e.title]));
+  const names = new Map((await namingPathSteps.run(true, () => entities.lookupMany(orgId, all, { system: true })).catch(() => [])).map((e) => [key(e), e.title]));
   asked.forEach((a, i) => {
     out.set(key(a), chains[i]!.steps.map((s) => ({ ...s, name: names.get(key(s)) ?? "Something" })));
   });
@@ -467,7 +509,25 @@ async function boot() {
       },
       dependents: async (orgId, kind, id) => {
         const w = await entities.getEntityWriterFor(orgId, kind);
-        return w?.dependents ? await w.dependents(orgId, id) : null;
+        const own = w?.dependents ? await w.dependents(orgId, id) : null;
+        // What is placed IN it goes too: a deleted shelf takes the only
+        // record of where the drill is. Any kind can hold things (a shelf, a
+        // backpack, a toolbox), so it is asked here for every kind, not left
+        // to each writer: Undo deleted "Shelf B" with the drill on it while
+        // the shelf's writer named only the places inside it (#4115).
+        const container = await canonicalRef(orgId, { kind, id });
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        const placed = await tdb
+          .selectFrom("core_placement_placements")
+          .select(["containee_kind", "containee_id"])
+          .where("container_kind", "=", container.kind)
+          .where("container_id", "=", container.id)
+          .execute();
+        if (placed.length === 0) return own;
+        const names = await Promise.all(
+          placed.map(async (p) => (await entities.lookup(orgId, p.containee_kind, p.containee_id).catch(() => null))?.title ?? "a thing placed in it"),
+        );
+        return [...(own ?? []), ...names];
       },
       snapshot: async (orgId, kind, id) => {
         const w = await entities.getEntityWriterFor(orgId, kind);
@@ -1254,29 +1314,10 @@ async function boot() {
           }
         }
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
-        // Cycle guard: walk up the container's placement chain (same tenant DB);
-        // reaching the containee means this placement would form a loop.
-        let cursor: { kind: string; id: string } | null = { kind: container.kind, id: container.id };
-        const seen = new Set<string>();
-        while (cursor) {
-          if (cursor.kind === containee.kind && cursor.id === containee.id) {
-            throw new Error("placement: would create a containment cycle");
-          }
-          // NOTE: \x00 (an actual control byte) as the join delimiter used to be typed
-          // as a RAW NUL here, which made every grep/rg treat this whole boot file
-          // as binary and silently return zero matches. Same byte at runtime, but
-          // written as an escape so the file stays searchable text.
-          const key = `${cursor.kind}\x00${cursor.id}`;
-          if (seen.has(key)) break; // defensive — pre-existing cycle, don't spin
-          seen.add(key);
-          const up = await tdb
-            .selectFrom("core_placement_placements")
-            .select(["container_kind", "container_id"])
-            .where("containee_kind", "=", cursor.kind)
-            .where("containee_id", "=", cursor.id)
-            .executeTakeFirst();
-          cursor = up ? { kind: up.container_kind, id: up.container_id } : null;
-        }
+        // Cycle guard, early: a plain loop is refused before anything else
+        // runs. Asked again under the placement lock at the write, where two
+        // moves at once cannot both pass it (#4115).
+        if (await placementWouldLoop(tdb, containee, container)) throw new Error("placement: would create a containment cycle");
         // Only some of it: the kind's module takes that many off into a record
         // of its own, and that record is the one placed (2 of 4 sticks).
         // The split-off part remembers where the rest is, so "back where it
@@ -1337,31 +1378,43 @@ async function boot() {
           }
         }
         const metadata = sql`${JSON.stringify(md)}::jsonb`;
-        if (expected) await comparePlacementWrite(tdb, containee, {
-          ...expected, container: expected.container ? await canonicalRef(orgId, expected.container) : null,
-        }, { container, slot: slot ?? null, metadata: md, userId: placedBy ?? null });
-        else await tdb
-          .insertInto("core_placement_placements")
-          .values({
-            containee_kind: containee.kind,
-            containee_id: containee.id,
-            container_kind: container.kind,
-            container_id: container.id,
-            slot: slot ?? null,
-            metadata,
-            placed_by: placedBy ?? null,
-          })
-          .onConflict((oc) =>
-            oc.columns(["containee_kind", "containee_id"]).doUpdateSet({
+        // The loop check and the write, under the placement lock: two people
+        // putting the red box in the blue box and the blue box in the red one
+        // at once each passed the check above (the other had not landed), both
+        // writes were saved, each box was inside the other, and every read
+        // that climbs from either went round for ever: the moves themselves
+        // hung (#4115). Held only across this check and this write; the rest
+        // of a move (a split, a displaced thing sent home) runs outside it.
+        const expectedContainer = expected?.container ? await canonicalRef(orgId, expected.container) : null;
+        await tdb.transaction().execute(async (trx) => {
+          await lockPlacements(trx);
+          if (await placementWouldLoop(trx, containee, container)) throw new Error("placement: would create a containment cycle");
+          if (expected) await comparePlacementWrite(trx, containee, {
+            ...expected, container: expectedContainer,
+          }, { container, slot: slot ?? null, metadata: md, userId: placedBy ?? null });
+          else await trx
+            .insertInto("core_placement_placements")
+            .values({
+              containee_kind: containee.kind,
+              containee_id: containee.id,
               container_kind: container.kind,
               container_id: container.id,
               slot: slot ?? null,
               metadata,
               placed_by: placedBy ?? null,
-              placed_at: sql`now()`,
-            }),
-          )
-          .execute();
+            })
+            .onConflict((oc) =>
+              oc.columns(["containee_kind", "containee_id"]).doUpdateSet({
+                container_kind: container.kind,
+                container_id: container.id,
+                slot: slot ?? null,
+                metadata,
+                placed_by: placedBy ?? null,
+                placed_at: sql`now()`,
+              }),
+            )
+            .execute();
+        });
         if (via?.trim()) {
           const [module, entityType] = containee.kind.includes(":") ? containee.kind.split(":", 2) : [null, containee.kind];
           await activity

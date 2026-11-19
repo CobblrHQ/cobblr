@@ -1,7 +1,7 @@
 // /configuration/catalogs — list of imported reference datasets +
 // "+ New catalog" affordance. Clicking a row opens the detail page.
 
-import { productName } from "@cobblr/platform-web";
+import { productName, QueryError } from "@cobblr/platform-web";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -67,7 +67,8 @@ export function CatalogsPage() {
       </p>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="catalogs" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-sm italic text-muted dark:text-slate-400">
           No catalogs yet. Click "New catalog" to start one - give it a name,
           then upload a CSV.

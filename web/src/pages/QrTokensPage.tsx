@@ -10,7 +10,7 @@ import { Copy, ExternalLink, QrCode, Ban, Globe, Download } from "lucide-react";
 import { ApiError, api, type QrToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { useConfirm, useToast, usePageTitle, downloadBlob, EntityChip, WorkspaceLink } from "@cobblr/platform-web";
+import { useConfirm, useToast, usePageTitle, downloadBlob, EntityChip, WorkspaceLink, QueryError } from "@cobblr/platform-web";
 
 /** The kind an action label's token names: the label itself, not a record. */
 const ACTION_LABEL_KIND = "labels:action-label";
@@ -213,7 +213,8 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
       </div>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {!list.isLoading && items.length === 0 && (
+      {list.isError && <QueryError what="QR tokens" onRetry={() => void list.refetch()} />}
+      {list.isSuccess && items.length === 0 && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
           No QR tokens minted yet. Print a label or hit "QR" on any item's
           detail page.
@@ -294,7 +295,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
                     <Download size={14} />
                   </button>
                   {isAdmin && st === "active" && (
-                    <button
+                    <button disabled={revoke.isPending}
                       aria-label="Revoke"
                       onClick={async () => {
                         const ok = await confirm({

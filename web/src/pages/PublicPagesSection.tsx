@@ -142,7 +142,7 @@ function PublicPageRow({ slug, page, onEdit }: { slug: string; page: PublicPageI
         <button type="button" onClick={() => setAdding(true)} data-testid="public-link-new" className={btn}>
           New link
         </button>
-        <button
+        <button disabled={act.isPending}
           type="button"
           onClick={async () => {
             if (await confirm({ title: `Delete ${page.name}?`, message: "Every link to it stops working. Your things stay as they are.", confirmLabel: "Delete", destructive: true })) act.mutate({ id: page.id, what: "delete" });
@@ -198,10 +198,10 @@ function PublicPageRow({ slug, page, onEdit }: { slug: string; page: PublicPageI
                     <span className="text-xs text-muted">Turn off in Settings</span>
                   ) : (
                     <>
-                      <button type="button" className={btn} onClick={() => act.mutate({ id: l.id, what: "regenerate" })}>
+                      <button disabled={act.isPending} type="button" className={btn} onClick={() => act.mutate({ id: l.id, what: "regenerate" })}>
                         New address
                       </button>
-                      <button type="button" data-testid="public-link-revoke" className={btn} onClick={() => act.mutate({ id: l.id, what: "revoke" })}>
+                      <button disabled={act.isPending} type="button" data-testid="public-link-revoke" className={btn} onClick={() => act.mutate({ id: l.id, what: "revoke" })}>
                         Revoke
                       </button>
                     </>

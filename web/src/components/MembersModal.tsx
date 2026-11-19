@@ -443,7 +443,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                       <span className="flex flex-col items-end gap-1" data-testid="join-link-paused">
                         <span className="text-[10px] uppercase tracking-widest text-ember-500">paused</span>
                         <span className="flex gap-2">
-                          <button
+                          <button disabled={resumeLink.isPending}
                             type="button"
                             className="text-[11px] text-accent hover:underline"
                             onClick={() => resumeLink.mutate(inv.id)}
@@ -451,7 +451,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                           >
                             Resume
                           </button>
-                          <button
+                          <button disabled={rotateLink.isPending}
                             type="button"
                             className="text-[11px] text-accent hover:underline"
                             onClick={() => rotateLink.mutate(inv.id)}
@@ -483,7 +483,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                     >
                       <Copy size={12} />
                     </button>
-                    <button
+                    <button disabled={revokeInvite.isPending}
                       aria-label="Revoke"
                       onClick={() => revokeInvite.mutate(inv.id)}
                       className="text-faint hover:text-ember-500 transition"
@@ -585,7 +585,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
               ) : (
               <label className="flex-1 block min-w-0">
                 <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-                  Email {inviteKind === "platform" ? "(optional)" : "hint (optional)"}
+                  Their email (optional)
                 </span>
                 <input
                   ref={inviteRef}
@@ -620,7 +620,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                 disabled={createInvite.isPending || createSignupInvite.isPending}
                 className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50 flex items-center gap-1"
               >
-                <Plus size={13} /> {inviteKind === "platform" ? `Invite to ${productName()}` : joinLink ? "Make join link" : "Mint invite"}
+                <Plus size={13} /> {inviteKind === "platform" ? `Invite to ${productName()}` : joinLink ? "Make join link" : "Create invite"}
               </button>
             </div>
 

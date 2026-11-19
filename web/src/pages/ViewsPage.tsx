@@ -25,7 +25,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { LentChip, SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, stillAsking, useViewToolbarPending, usePlatformWeb, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, runUndoSteps, undoStepsOf, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { LentChip, SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, stillAsking, useViewToolbarPending, usePlatformWeb, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, runUndoSteps, undoStepsOf, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout, QueryError } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { kindOptionLabels } from "../lib/kind-option-labels";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
@@ -113,7 +113,8 @@ export function ViewsPage() {
       </div>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="views" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
           No saved views yet. Each module's pages can save their current filters as a view.
         </div>
@@ -140,7 +141,7 @@ export function ViewsPage() {
                 {v.pinned && " · pinned"}
               </div>
             </div>
-            <button
+            <button disabled={pinToggle.isPending}
               aria-label={v.pinned ? "Unpin from dashboard" : "Pin to dashboard"}
               onClick={(e) => {
                 e.stopPropagation();

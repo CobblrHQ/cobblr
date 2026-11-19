@@ -134,7 +134,7 @@ export function LinksSection({
                   </span>
                 )}
                 {!fixed.has(p.relationship_kind) && (
-                <button
+                <button disabled={del.isPending}
                   type="button"
                   onClick={async () => {
                     const ok = await confirm({ title: "Remove this link?", message: "Both things stay; only the link between them goes.", confirmLabel: "Remove", destructive: true });

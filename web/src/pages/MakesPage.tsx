@@ -86,9 +86,12 @@ export function MakesPage() {
         aria-label="Find a make"
         wrapperClassName="mb-4"
       />
-      {list.isLoading ? (
-        <p className="text-sm text-muted">Loading…</p>
-      ) : list.isError ? (
+      {/* isPending, not isLoading: the list waits on the modules read, and a
+          query not started yet is not loading, so "Nothing made yet" showed
+          for seconds on a slow connection (#4115). */}
+      {list.isPending && !(on && !on.has("digifab")) ? ( // pending-ok: switched off is said on its own branch below; pending otherwise is the modules read or the list on its way
+        <p className="text-sm text-muted" role="status">Loading…</p>
+      ) : list.isError || (on && !on.has("digifab")) ? (
         <div className="rounded border border-dashed border-line dark:border-slate-600 p-6 text-center text-sm text-muted">
           Makes come with Digital Fabrication, which is not on in this workspace. <Link to="/configuration/modules" className="text-accent hover:underline">Turn it on in Modules</Link>
         </div>
@@ -314,7 +317,7 @@ export function MakePage() {
         <button type="button" onClick={() => setRerunning(true)} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-3 py-1.5 text-sm transition">
           <RotateCcw className="w-4 h-4" /> Make again
         </button>
-        {mayDelete && <button
+        {mayDelete && <button disabled={remove.isPending}
           type="button"
           onClick={async () => {
             if (await confirm({ title: "Delete this make?", message: "Its history goes. Its files stay in Files.", confirmLabel: "Delete", destructive: true })) remove.mutate();

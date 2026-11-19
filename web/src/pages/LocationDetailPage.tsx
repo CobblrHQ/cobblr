@@ -535,7 +535,7 @@ export function LocationDetailPage() {
         >
           <ArrowRightLeft size={12} /> Move everything to…
         </button>
-        <button
+        <button disabled={remove.isPending}
           onClick={async () => {
             let goes;
             try {

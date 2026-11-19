@@ -1,0 +1,7 @@
+{
+  "match": "add a wrapped gift for my partner, it is a surprise",
+  "rounds": [
+    { "tool_calls": [{ "name": "create_record", "args": { "kind": "inventory:part", "fields": { "name": "Wrapped gift" } } }] },
+    { "content": "Added the wrapped gift." }
+  ]
+}

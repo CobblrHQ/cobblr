@@ -121,7 +121,7 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
                 >
                   <Pencil size={12} />
                 </button>
-                <button
+                <button disabled={remove.isPending}
                   aria-label="Delete"
                   type="button"
                   onClick={async () => {

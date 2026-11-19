@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { EDITED_FROM_HEADER, encodeEditedFrom, type EditedFrom } from "@cobblr/platform-contract/edited-from";
 // Agentic chat — Cobb can READ the workspace and PROPOSE writes, in a real
 // tool-calling loop (agent-loop.ts): read tools (search/list/get/kinds/
@@ -58,6 +59,7 @@ import {
   workspaceLinks,
   type KindRec,
   type WorkspaceApi,
+  requestHeaders,
 } from "@cobblr/workspace-tools";
 import { actionToolCall } from "./action-tool-call.js";
 import { runAgentLoop, type AgentLoopDeps, type AgentLoopOutcome, type AppliedWrite } from "./agent-loop.js";
@@ -203,8 +205,16 @@ export function chatWorkspaceApi(c: Ctx, opened?: EditedFrom): WorkspaceApi {
   return {
     // The chat is read in the app, on this origin: same-origin paths open.
     link: workspaceLinks({ apiBase: "/api/v1", appOrigin: "" }, c.slug),
-    async request(method, path, body) {
-      return callApi(c, method, path, body, method === "PATCH" && opened ? { [EDITED_FROM_HEADER]: encodeEditedFrom(opened) } : undefined);
+    // This person's chat on this workspace: what Cobb read for them judges
+    // the change it applies (read-memory.ts). A confirm card's own opened
+    // values, what the person saw, win over it.
+    readerScope: `chat:${createHash("sha256").update(c.auth).digest("hex").slice(0, 32)}:${c.slug}`,
+    async request(method, path, body, opts) {
+      const headers = {
+        ...requestHeaders(opts),
+        ...(method === "PATCH" && opened ? { [EDITED_FROM_HEADER]: encodeEditedFrom(opened) } : {}),
+      };
+      return callApi(c, method, path, body, Object.keys(headers).length ? headers : undefined);
     },
   };
 }
@@ -1215,6 +1225,10 @@ async function answerTurn(
       // The answer has to match the ledger: a turn that only created things
       // cannot say it moved them. See reported-truthfully.ts.
       reportCheck: (_said, reply, appliedTools) => misreportedWrites(reply, appliedTools),
+      // A figure in the answer has to be one the turn was given; the prompt
+      // gives today's date and the page's own figures (figures-from-tools.ts).
+      figuresKnown: typeof system === "string" ? system : system.text,
+      canRead: !!prefs.read_tools && toolDefs.length > 0,
       // A step that makes a list runs before one that names it, and a step
       // refused for a list not made yet runs again once it is (#5067).
       orderWrites,
@@ -2198,6 +2212,7 @@ chatRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const c = ctxOf(req);
+    const me = sessionUserId(req) ?? "";
     const wsApi = chatWorkspaceApi(c);
     const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
     const rows = await tenantDb(req)
@@ -2220,9 +2235,12 @@ chatRouter.get(
         created_at: r.created_at,
         // What was asked for. Stored since the ledger learned to pair a write
         // with its message, and worth showing: "you asked for X" is the only
-        // thing that makes a list of changes readable a week later.
-        prompt: r.prompt,
-        undoable: mayUndoWrite(r, sessionUserId(req) ?? "", roleHoldsEveryCapability(tenantContext(req).role)) && undoableOf(r, kinds),
+        // thing that makes a list of changes readable a week later. Only to
+        // the person who said it: the list holds everyone's changes, and the
+        // words were said in their own chat (#4115; a member read the owner's
+        // "it is a surprise"). The change itself is named by entity_label.
+        prompt: r.user_id === me ? r.prompt : null,
+        undoable: mayUndoWrite(r, me, roleHoldsEveryCapability(tenantContext(req).role)) && undoableOf(r, kinds),
       })),
     });
   }),

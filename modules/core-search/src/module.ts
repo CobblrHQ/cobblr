@@ -15,7 +15,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-search",
-  version: "0.1.6",
+  version: "0.1.7",
   displayName: "Search",
   description:
     "One search across everything you keep.",

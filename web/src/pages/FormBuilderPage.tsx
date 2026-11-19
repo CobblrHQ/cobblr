@@ -20,7 +20,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Trash2, FolderPlus, Loader2, Check } from "lucide-react";
 import { api, ApiError, type FieldSection, type PlatformFieldDef } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast, usePageTitle, useStillAsking } from "@cobblr/platform-web";
+import { useToast, usePageTitle, useStillAsking, QueryError } from "@cobblr/platform-web";
 
 export type Item =
   | { kind: "section"; id: string; name: string }
@@ -225,7 +225,8 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
       </div>
       )}
 
-      {kinds.length === 0 && !allDefs.isLoading && (
+      {allDefs.isError && <QueryError what="fields" onRetry={() => void allDefs.refetch()} />}
+      {kinds.length === 0 && allDefs.isSuccess && (
         <div className="text-sm text-faint italic">
           No custom fields yet. Add some in Configuration → Fields, then arrange them here.
         </div>
@@ -249,7 +250,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
                         className="w-0 min-w-0 flex-1 bg-transparent font-semibold text-content dark:text-mortar-100 text-sm focus:outline-none border-b border-transparent focus:border-line"
                       />
                       <span className="shrink-0 text-[10px] uppercase tracking-widest text-faint">section</span>
-                      <button
+                      <button disabled={deleteSection.isPending}
                         onClick={() => deleteSection.mutate(it.id.slice(2))}
                         className="shrink-0 text-faint hover:text-red-500 transition"
                         aria-label="Delete section"
@@ -271,7 +272,8 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
         </DndContext>
       )}
 
-      {items.length === 0 && kinds.length > 0 && !defs.isLoading && (
+      {defs.isError && <QueryError what="this kind's fields" onRetry={() => void defs.refetch()} />}
+      {items.length === 0 && kinds.length > 0 && defs.isSuccess && (
         <div className="text-sm text-faint italic">This kind has no custom fields to arrange yet.</div>
       )}
 

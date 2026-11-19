@@ -4,7 +4,7 @@
 // (#6564).
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { EntityPhoto, relativeTime } from "@cobblr/platform-web";
+import { EntityPhoto, relativeTime, QueryError } from "@cobblr/platform-web";
 import { activityActor, activitySyncSource, ACTIVITY_VERBS } from "@cobblr/platform-contract/activity-summary";
 import { api, type ActivityEntry } from "../lib/api";
 import { useKindLabels } from "../lib/useKindLabels";
@@ -55,7 +55,8 @@ export function RecentActivity({ slug, editing = false, heading }: { slug: strin
     <section>
       {!editing && heading}
       {q.isLoading && <div className="text-xs text-faint">loading…</div>}
-      {!q.isLoading && items.length === 0 && (
+      {q.isError && <QueryError what="recent activity" onRetry={() => void q.refetch()} />}
+      {q.isSuccess && items.length === 0 && (
         <div className="text-xs text-faint italic">no activity yet</div>
       )}
       {groups.length > 0 && (

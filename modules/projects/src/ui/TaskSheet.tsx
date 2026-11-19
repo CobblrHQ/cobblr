@@ -220,7 +220,7 @@ export function TaskSheet({ taskId, onClose }: { taskId: string; onClose: () => 
 
           <div className="flex items-center gap-2 border-t border-line dark:border-slate-700 pt-3">
             <EntityActionsBar entityKind="projects:task" entityId={t.id} />
-            <button
+            <button disabled={remove.isPending}
               type="button"
               className="ml-auto inline-flex items-center gap-1 text-xs text-ember-600 hover:text-ember-700 dark:text-ember-400 dark:hover:text-ember-300"
               onClick={async () => {
@@ -276,7 +276,7 @@ function WaitsOn({ task, dependencies: given, onChanged }: { task: Task; depende
             <span className="flex-1 min-w-0 truncate">
               {d.depends_on_task_id ? d.blocker_title ?? "a deleted task" : `${d.target_entity_type ?? "record"} ${d.target_entity_id?.slice(0, 8) ?? ""}`}
             </span>
-            <button title="Stop waiting on this" type="button" aria-label="Stop waiting on this" className="text-faint hover:text-ember-600" onClick={() => drop.mutate(d.id)}>
+            <button disabled={drop.isPending} title="Stop waiting on this" type="button" aria-label="Stop waiting on this" className="text-faint hover:text-ember-600" onClick={() => drop.mutate(d.id)}>
               <X size={13} />
             </button>
           </li>

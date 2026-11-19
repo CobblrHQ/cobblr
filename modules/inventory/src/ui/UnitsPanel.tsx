@@ -11,7 +11,7 @@ import { useStockWrites } from "./stock-writes";
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToast, MutationError, editOf, useCan } from "@cobblr/platform-web";
+import { useToast, MutationError, editOf, useCan, QueryError } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 /** Who holds this unit — click to set/change. A plain string ("Janet", "IT
@@ -100,7 +100,8 @@ export function UnitsPanel({ partId, partName }: { partId: string; partName?: st
         units on file{items.length > 0 ? ` (${items.length})` : ""}
       </div>
       {list.isLoading && <div className="text-xs text-faint dark:text-slate-500">loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="units" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-xs text-faint dark:text-slate-500 italic">
           No serials on file yet. Add one below to start tracking individuals.
         </div>

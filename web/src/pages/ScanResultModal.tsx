@@ -737,7 +737,7 @@ export function ScanResultModal({
               {alreadyOwned ? "Add as a separate one" : <>{fileHere.isPending ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />} Add to {oneTap.label}</>}
             </button>
             {rowState?.eligibility === "needs-install" && (
-              <div className="text-center text-[11px] text-muted dark:text-slate-400">Sets up the {oneTap.label} table on the way.</div>
+              <div className="text-center text-[11px] text-muted dark:text-slate-400">Sets up {oneTap.label} on the way.</div>
             )}
           </div>
         ) : (

@@ -3,8 +3,13 @@
     "id": "cobblr.community.hand-tools",
     "released_at": "2026-10-02",
     "changelog": "Hand tools as their own table: each one's size and drive as real measurements and what kind of tool it is, filled from its name.",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "releases": [
+      {
+        "version": "0.1.3",
+        "released_at": "2026-11-19",
+        "notes": "Field help says your list is grouped by this, in plain words, instead of naming a table."
+      },
       {
         "version": "0.1.0",
         "released_at": "2026-10-02",
@@ -79,7 +84,7 @@
             ],
             "field_role": "category",
             "position": 1,
-            "help": "What kind of tool. The table groups by this, and a name that says it fills it."
+            "help": "What kind of tool. Your list is grouped by this, and a name that says it fills it."
           },
           {
             "entity_kind": "inventory:part",

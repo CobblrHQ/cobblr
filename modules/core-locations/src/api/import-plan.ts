@@ -217,6 +217,7 @@ export function planByName(rows: ImportRow[], existing: ExistingPlace[]): Import
     });
   }
   for (const d of drafts) {
+    // LOOP-SAFE: a plan of a file, nothing written; the import's own writes go through place-move's lock.
     if (d.parentRef === undefined && !d.error) d.error = "its parent is inside a loop of rows that name each other";
   }
 
@@ -351,6 +352,7 @@ function finish(planned: PlannedRow[], refs: ParentRef[], rows: ImportRow[], exi
   const visit = (i: number) => {
     if (state.get(i) === "done") return;
     if (state.get(i) === "doing") {
+      // LOOP-SAFE: a plan of a file, nothing written.
       planned[i]!.error ??= "its parent is inside a loop of rows that name each other";
       return;
     }

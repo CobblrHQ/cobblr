@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { apiErrorMessage, toolFail, toolOk } from "../api.js";
 import { fetchKinds, fieldsByRole, resolveUpdatePath, withKindsTitleField } from "../kinds.js";
+import { openedFor, rememberWrite } from "../read-memory.js";
 import { ROLES_SAID, type WorkspaceTool } from "../tool-kit.js";
 
 const tool: WorkspaceTool = {
@@ -23,8 +24,13 @@ const tool: WorkspaceTool = {
     const sent = { ...byRole.fields, ...((args.fields as Record<string, unknown>) ?? {}) };
     if (!Object.keys(sent).length) return toolFail(byRole.refused.length ? `nothing to change: ${byRole.refused.map((r) => `${r.name}: ${r.reason}`).join("; ")}` : "no fields or roles given");
     const { fields: patch } = withKindsTitleField(kind, kinds, sent);
-    const res = await api.request("PATCH", `/${path}`, patch);
+    // Judged against what this reader read: a field a person changed since
+    // refuses the change, nothing written (read-memory.ts).
+    const id = String(args.id ?? "");
+    const opened = openedFor(api.readerScope, kind, id, patch);
+    const res = await api.request("PATCH", `/${path}`, patch, opened ? { editedFrom: opened } : undefined);
     if (res.status >= 400) return toolFail(apiErrorMessage(res, "update failed"));
+    rememberWrite(api.readerScope, kind, id, patch);
     return toolOk(byRole.refused.length ? { ...(res.body as Record<string, unknown>), fields_refused: byRole.refused } : res.body);
   },
 };

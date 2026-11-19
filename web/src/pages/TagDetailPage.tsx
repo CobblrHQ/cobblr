@@ -154,7 +154,7 @@ export function TagDetailPage() {
           // Its three actions wrap: held on one line, Delete ran 67 px past a
           // phone at 200% text (#8430).
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <button disabled={pin.isPending}
               type="button"
               onClick={() => pin.mutate()}
               className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-2.5 py-1 text-sm text-muted hover:text-content"
@@ -168,7 +168,7 @@ export function TagDetailPage() {
             >
               <Pencil size={13} /> Edit or merge
             </button>
-            <button
+            <button disabled={del.isPending}
               type="button"
               onClick={async () => {
                 const ok = await confirm({

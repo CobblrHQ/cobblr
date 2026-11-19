@@ -4,7 +4,7 @@
 
 import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { useStockWrites } from "./stock-writes";
-import { MutationError, SearchInput } from "@cobblr/platform-web";
+import { MutationError, SearchInput, QueryError } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
 import { collectionLabelFor } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -39,7 +39,8 @@ export function AllocationsPanel({ partId }: { partId: string }) {
         allocations
       </div>
       {list.isLoading && <div className="text-xs text-faint dark:text-slate-500">loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="allocations" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-xs text-faint dark:text-slate-500 italic">
           No allocations yet. Reserve some below.
         </div>
@@ -60,14 +61,14 @@ export function AllocationsPanel({ partId }: { partId: string }) {
               )}
               {a.status === "reserved" && (
                 <span className="flex gap-1">
-                  <button
+                  <button disabled={setStatus.isPending}
                     onClick={() => setStatus.mutate({ id: a.id, status: "consumed" })}
                     className="text-[10px] uppercase tracking-widest text-accent hover:text-cobble-800"
                   >
                     consume
                   </button>
                   <span className="text-faint dark:text-slate-600">·</span>
-                  <button
+                  <button disabled={setStatus.isPending}
                     onClick={() => setStatus.mutate({ id: a.id, status: "released" })}
                     className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 hover:text-content dark:text-mortar-200"
                   >
@@ -252,7 +253,8 @@ export function EntityPicker({
       {open && debounced.trim().length >= 2 && (
         <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg">
           {results.isLoading && <li className="px-3 py-2 text-xs text-faint">searching…</li>}
-          {!results.isLoading && items.length === 0 && (
+          {results.isError && <QueryError what="matches" onRetry={() => void results.refetch()} />}
+          {results.isSuccess && items.length === 0 && (
             <li className="px-3 py-2 text-xs text-faint italic">no matches</li>
           )}
           {items.map((it) => {

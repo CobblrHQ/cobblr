@@ -110,7 +110,7 @@ export function DriverPackages({ slug, hasBridge }: { slug: string; hasBridge: b
               <span className="font-mono text-faint">{d.version}</span>
               {d.bridgeId && <span className="text-faint">· {d.bridgeId}</span>}
               <span className="flex-1" />
-              <button
+              <button disabled={remove.isPending}
                 title={`Remove ${d.kind}`}
                 type="button"
                 aria-label={`Remove ${d.kind}`}

@@ -99,7 +99,15 @@ export function ListsUI({ orgSlug, getToken }: Props) {
           pushed every list 114 px down under a finger (#7788). The lists wait
           for it and the page draws once. */}
       {lists.data && offerKnown && <RunningLowOffer lists={lists.data.items} />}
-      {(lists.isLoading || (lists.data && !offerKnown)) && <div className="text-sm text-muted">Loading…</div>}
+      {/* The same box as the "couldn't load" that may replace it, so nothing
+          under it moves when a read fails (#4115). */}
+      {(lists.isLoading || (lists.data && !offerKnown)) && (
+        <div className="flex items-center gap-2 py-2 text-sm text-muted">
+          Loading…
+          {/* Holds Retry's height: on a touch screen it is a 44 px button. */}
+          <button type="button" tabIndex={-1} aria-hidden className="invisible underline">Retry</button>
+        </div>
+      )}
       {lists.isError && <QueryError what="your lists" onRetry={() => void lists.refetch()} />}
       {offerKnown && lists.data?.items.length === 0 && (
         <div className="text-sm text-muted italic">No lists yet. Create one - a shopping list, a to-do, a packing list.</div>
@@ -482,7 +490,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                     <ChevronDown size={14} className={expanded === it.id ? "rotate-180" : ""} />
                   </button>
                 )}
-                <button title="Remove item" type="button" onClick={() => remove.mutate(it.id)} className={`${LINE_TOOL} text-muted dark:text-slate-400 hover:text-red-500 hover-reveal`} aria-label="Remove item">
+                <button disabled={remove.isPending} title="Remove item" type="button" onClick={() => remove.mutate(it.id)} className={`${LINE_TOOL} text-muted dark:text-slate-400 hover:text-red-500 hover-reveal`} aria-label="Remove item">
                   <X size={14} />
                 </button>
               </span>
@@ -540,7 +548,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
 
         {doneCount > 0 && (
           <div className="flex justify-end">
-            <button type="button" onClick={() => clearDone.mutate()} className="text-xs text-muted hover:text-accent">
+            <button disabled={clearDone.isPending} type="button" onClick={() => clearDone.mutate()} className="text-xs text-muted hover:text-accent">
               Clear {doneCount} done
             </button>
           </div>

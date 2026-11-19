@@ -175,7 +175,7 @@ export function HeadingsBuilder() {
                 {h.members.length} item{h.members.length === 1 ? "" : "s"}
               </span>
               <div className="flex-1" />
-              <button
+              <button disabled={deleteHeading.isPending}
                 aria-label="Delete heading"
                 onClick={async () => {
                   const ok = await confirm({
@@ -201,7 +201,7 @@ export function HeadingsBuilder() {
                   className="inline-flex items-center gap-1 text-xs rounded-full border border-line dark:border-slate-700 pl-2 pr-1 py-0.5 bg-subtle dark:bg-slate-800/60"
                 >
                   {labelFor(m.target_kind, m.target_id)}
-                  <button
+                  <button disabled={removeMember.isPending}
                     aria-label="Remove from heading"
                     onClick={() =>
                       removeMember.mutate({

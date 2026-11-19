@@ -13,6 +13,9 @@ export declare const CAPPED_SHARE: number;
 export declare function memoryRoom(): { mib: number | null; capped: boolean };
 export declare function roomUnderLimitMib(v: { limit: number; current: number; file?: number }): number;
 export declare function shareOf(env?: Record<string, string | undefined>, capped?: boolean): number;
+export declare const FIXED_MIB: { "web-build": number; "export-gate": number };
+export declare function fixedCostOf(cmd: string): number;
+export declare function splitAround(cmds: string[], o?: { env?: Record<string, string | undefined>; capped?: boolean; roomMib?: number | null }): Record<string, string>[];
 export declare function splitShare(n: number, env?: Record<string, string | undefined>, capped?: boolean): Record<string, string>;
 export declare function width(
   kind: "tsc" | "tsgo" | "vitest" | "unit" | "lint",

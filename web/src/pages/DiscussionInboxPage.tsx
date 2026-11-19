@@ -16,7 +16,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AtSign, CheckCircle2, RotateCcw } from "lucide-react";
-import { usePageTitle, useToast, relativeTime, SearchInput, walkPages } from "@cobblr/platform-web";
+import { usePageTitle, useToast, relativeTime, SearchInput, walkPages, QueryError } from "@cobblr/platform-web";
 import { api, ApiError, type DiscussionInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { canResolveConversation } from "../lib/discussionPermissions";
@@ -210,7 +210,8 @@ export function DiscussionInboxPage() {
 
       {inbox.isLoading && <p className="text-xs text-faint">loading…</p>}
 
-      {!inbox.isLoading && shown.length === 0 && (
+      {inbox.isError && <QueryError what="your discussions" onRetry={() => void inbox.refetch()} />}
+      {inbox.isSuccess && shown.length === 0 && (
         <div className="border border-dashed border-line dark:border-slate-700 rounded-md p-6 text-center text-sm text-faint italic">
           {lane === "me"
             ? q

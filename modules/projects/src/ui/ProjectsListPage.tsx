@@ -1,4 +1,4 @@
-import { SelectBox, RecordFormModal, NewItemMenu, SnippetText, workspaceFetch, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { SelectBox, RecordFormModal, NewItemMenu, SnippetText, workspaceFetch, PhoneRecordList, usePhoneLayout, QueryError } from "@cobblr/platform-web";
 // Projects index. Status-grouped list + search + new-project form.
 
 import { useDeferredValue, useMemo, useState, type FormEvent } from "react";
@@ -196,7 +196,7 @@ export function ProjectsListPage() {
     <div className="space-y-5">
       <CollectionHeader
         title={heading}
-        count={query ? `${filtered.length} of ${items.length}` : `${items.length} total`}
+        count={!list.isSuccess ? undefined : query ? `${filtered.length} of ${items.length}` : `${items.length} total`}
         hint={hint}
         kind={entityKind}
         exportQuery={query}
@@ -298,7 +298,8 @@ export function ProjectsListPage() {
         </div>
       )}
 
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="projects" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
           No {nounPlural} yet - create one above.
         </div>

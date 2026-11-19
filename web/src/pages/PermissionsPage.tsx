@@ -299,7 +299,7 @@ function PermissionsOverview() {
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
                 {s.capability}
               </span>
-              <button
+              <button disabled={delScope.isPending}
                 type="button"
                 onClick={() => delScope.mutate({ kind: s.kind, field: s.field })}
                 className="text-faint hover:text-rose-500 dark:text-slate-600 dark:hover:text-rose-400 transition"

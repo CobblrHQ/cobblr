@@ -54,7 +54,7 @@ export function DriveSettingsPage() {
           {OPTIONS.map((o) => {
             const selected = current === o.value;
             return (
-              <button
+              <button disabled={set.isPending}
                 key={o.value}
                 type="button"
                 onClick={() => !selected && set.mutate(o.value)}

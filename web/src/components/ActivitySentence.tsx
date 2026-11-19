@@ -95,7 +95,12 @@ export function ActivitySentence({ entry: e, labels }: { entry: ActivityEntry; l
   );
 }
 
-export const ACTIVITY_FEED_LAYOUT = "grid grid-cols-[2rem_minmax(0,1fr)_max-content] items-start gap-2";
+/** A feed row: its picture, its sentence, then when (and its toggle). The
+ *  sentence keeps at least 8em beside the picture; when the time cannot fit
+ *  beside it too, the time goes under it. As three fixed columns, 200% text
+ *  on a phone left the sentence a few words wide, clamped to "You turned
+ *  on…" with the word that said what hidden (#4115). */
+export const ACTIVITY_FEED_LAYOUT = "flex flex-wrap items-start gap-2 [&>:first-child]:w-8 [&>:first-child]:shrink-0 [&>:nth-child(2)]:min-w-0 [&>:nth-child(2)]:flex-1 [&>:nth-child(2)]:basis-[8em] [&>:nth-child(3)]:ml-auto";
 
 export function ActivityThumbnail({ entry, labels }: { entry: ActivityEntry; labels: KindLabels }) {
   // A sync's change shows the sync, not a letter tile of whatever it touched

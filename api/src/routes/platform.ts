@@ -445,6 +445,9 @@ platformOrgRouter.get(
           filter: Object.keys(filter).length ? filter : undefined,
           where: predicates.where,
           ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
+          // Ask q again by near words, each long word one edit away (#9624):
+          // what an assistant asks when the words as typed found nothing.
+          ...(req.query.near === "1" ? { near: true } : {}),
         },
         { userId: req.session?.id, role: req.tenant!.role, ...(readsAsAssistant(req) ? { assistant: true } : {}) },
       );

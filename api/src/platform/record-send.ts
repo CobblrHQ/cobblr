@@ -257,6 +257,7 @@ export async function previewSend(orgId: string, userId: string, p: SendRequest)
 
 type Transfer = { mode: "copy" | "move"; state: "landing" | "landed" | "complete" | "undoing" | "undone"; target_name: string; source_name: string; previous?: Record<string, unknown>; previous_id?: string; previous_kind?: string; source_deleted?: boolean; source_changed?: boolean; added_attachments?: string[]; target_after?: Record<string, unknown>; target_related?: unknown; target_record?: {kind: string; id: string}; batch_complete?: boolean; thing: OfferedThing };
 async function save(id: string, transfer: Transfer, landed?: unknown) {
+  // LANDED-OVER: a send straight into another workspace has no inbox gap; each step of its own transfer says where it is now.
   await meta.updateTable("share_offers").set({ transfer: JSON.stringify(transfer) as never, ...(landed ? { landed: JSON.stringify(landed) as never } : {}), ...(transfer.state === "complete" ? { status: "taken" as const, taken_at: new Date(), decided_at: new Date() } : {}) }).where("id", "=", id).execute();
 }
 

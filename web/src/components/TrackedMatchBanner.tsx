@@ -357,7 +357,7 @@ export function TrackedMatchBanner({
             </>
           )}
         </div>
-        <button
+        <button disabled={keepSeparate.isPending}
           aria-label="Not the same - keep this as a new item"
           type="button"
           title="Not the same - keep this as a new item"

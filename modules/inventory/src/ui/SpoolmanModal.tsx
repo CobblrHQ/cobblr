@@ -1,7 +1,7 @@
 import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, useCan, useRoleAtLeast, useToast } from "@cobblr/platform-web";
+import { Modal, useCan, useRoleAtLeast, useToast, QueryError } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 export function SpoolmanModal({
@@ -80,13 +80,15 @@ export function SpoolmanModal({
             >
               {sync.isPending ? "syncing…" : "Sync now"}
             </button>}
-            {mayConnect && <button onClick={() => del.mutate(c.id)} className="text-[11px] text-faint hover:text-ember-500 px-1">
+            {mayConnect && <button disabled={del.isPending} onClick={() => del.mutate(c.id)} className="text-[11px] text-faint hover:text-ember-500 px-1">
               Remove
             </button>}
           </div>
         ))}
-        {items.length === 0 && !conns.isLoading && !mayConnect && <p className="text-sm text-muted">An owner or admin connects Spoolman.</p>}
-        {items.length === 0 && !conns.isLoading && mayConnect && (
+        {conns.isError && <QueryError what="Spoolman connections" onRetry={() => void conns.refetch()} />}
+        {items.length === 0 && conns.isSuccess && !mayConnect && <p className="text-sm text-muted">An owner or admin connects Spoolman.</p>}
+        {conns.isError && <QueryError what="Spoolman connections" onRetry={() => void conns.refetch()} />}
+        {items.length === 0 && conns.isSuccess && mayConnect && (
           <form
             onSubmit={(e) => {
               e.preventDefault();

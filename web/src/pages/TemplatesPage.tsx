@@ -14,7 +14,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useConfirm, useToast, usePageTitle, QueryError } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -88,7 +88,8 @@ export function TemplatesPage() {
       {list.isLoading && (
         <div className="text-sm text-muted">Loading…</div>
       )}
-      {!list.isLoading && items.length === 0 && (
+      {list.isError && <QueryError what="templates" onRetry={() => void list.refetch()} />}
+      {list.isSuccess && items.length === 0 && (
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <CopyPlus size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
@@ -147,7 +148,7 @@ export function TemplatesPage() {
                     >
                       <Pencil size={14} />
                     </button>
-                    <button
+                    <button disabled={del.isPending}
                       aria-label="Delete"
                       type="button"
                       onClick={async () => {

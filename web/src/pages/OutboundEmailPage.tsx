@@ -171,7 +171,7 @@ export function OutboundEmailPage() {
               <button type="button" onClick={() => test.mutate()} disabled={test.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50">
                 <Send size={14} aria-hidden /> Send me a test
               </button>
-              <button
+              <button disabled={remove.isPending}
                 type="button"
                 onClick={async () => {
                   if (await confirm({ title: "Remove outbound email?", message: "Customers will no longer be emailed from this workspace. You can still copy a shipping notice and send it yourself.", confirmLabel: "Remove", destructive: true })) remove.mutate();
@@ -306,7 +306,7 @@ function TextMessagesSection({ slug }: { slug: string }) {
             <button type="button" onClick={() => test.mutate()} disabled={test.isPending || !testTo.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50" data-testid="outbound-sms-test">
               <Send size={14} aria-hidden /> Text a test
             </button>
-            <button
+            <button disabled={remove.isPending}
               type="button"
               onClick={async () => {
                 if (await confirm({ title: "Remove text messages?", message: "Automations will no longer text anyone outside the workspace.", confirmLabel: "Remove", destructive: true })) remove.mutate();

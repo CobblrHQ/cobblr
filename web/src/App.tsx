@@ -1,5 +1,6 @@
 import { WorkspaceAccessBoundary } from "./components/WorkspaceAccessBoundary";
 import { DeletedRecordUndo } from "./components/DeletedRecordUndo";
+import { SavedEditUndo } from "./components/SavedEditUndo";
 // Top-level shell. AuthProvider hydrates from /me on mount; while
 // that's in flight we show nothing (a fast roundtrip avoids flash).
 // Once resolved we render the routed authed surface for an authed
@@ -327,6 +328,7 @@ export function App() {
         <ToastProvider>
           <ConfirmProvider>
             <DeletedRecordUndo />
+            <SavedEditUndo />
             <WaitingWritesSender />
             <Shell />
           </ConfirmProvider>

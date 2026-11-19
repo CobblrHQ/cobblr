@@ -625,7 +625,7 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
         <button
           type="button"
           onClick={() => change.mutate()}
-          disabled={!canSubmit}
+          disabled={(!canSubmit) || change.isPending}
           className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
         >
           {change.isPending ? "updating…" : "Change password"}

@@ -25,6 +25,7 @@
 // Local + CI, free, zero deps. COBBLR_LINT_ROOT points it at a fixture tree
 // (the lint's own test).
 
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { entryToAdd, readReasonedBaseline, staleKeys } from "./lib/reasoned-baseline.js";
@@ -72,7 +73,12 @@ const KIND_ID_OFFENSE =
 // go through exposableFields projection", that a filter was "resolver-
 // dependent", and that a paused link "404s" (#7874): the code's words for
 // what the person needed said plainly.
-const PHRASE_OFFENSE = /exposableFields|resolver-dependent|\b404s\b|bundle installed|bundle uninstalled|ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALLERY\b|the one that ran out|still had some|went bad|No AI to read|\(set it up\)/;
+const PHRASE_OFFENSE = /exposableFields|resolver-dependent|\b404s\b|bundle installed|bundle uninstalled|ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALLERY\b|the one that ran out|still had some|went bad|No AI to read|\(set it up\)|\bMint invite|paste a UPC|\btable on the way|Queue a QR label/;
+
+// The first hour on a phone (#4115): an invite was "minted", a scan inbox asked
+// for "a UPC", a first scan "set up the Tea table on the way", and a new thing's
+// form offered to "Queue a QR label print". Each is the code's word for what a
+// newcomer needs said plainly: create, a barcode number, set up Tea, print.
 
 // A COUNT SHAPE as a default face: `0w · 9f`, `${wires.length}w · ${fields}f`.
 // The 2026-09-13 blank-account review saw it on the install dialog, ahead of
@@ -107,9 +113,40 @@ const EVENT_ACTION_ID_OFFENSE =
 const INTERNAL_WORD_OFFENSE =
   /> *[^<>{}]*(?<![.\w])(?:[Pp]rojections?|[Rr]esolvers?)(?!\.\w|[\w(])[^<>{}]*<|(["'`])(?=[^"'`]*\s)[^"'`$]*(?<![.\w])(?:[Pp]rojections?|[Rr]esolvers?)(?!\.\w|[\w(])[^"'`$]*\1/;
 
+// Words a newcomer meets in their first hour that are the code's or the
+// billing page's, not theirs (#9622): a field's help said "the table groups by
+// this" ("table" is the code's word for a collection) on the first form a new
+// signup filled in, and the second card on Home said "this workspace's plan
+// doesn't include AI ... connect a model". They are written as data and
+// contract sentences, so they are looked for there too (COPY_ROOTS), not only
+// in components.
+const FIRST_HOUR_OFFENSE = /[Tt]he table groups by|plan doesn't include AI|connect a model/;
+
 const OFFENSE = new RegExp(
-  `${COUNT_OFFENSE.source}|${KIND_ID_OFFENSE.source}|${PHRASE_OFFENSE.source}|${COUNT_SHAPE_OFFENSE.source}|${EVENT_ACTION_ID_OFFENSE.source}|${INTERNAL_WORD_OFFENSE.source}`,
+  `${COUNT_OFFENSE.source}|${KIND_ID_OFFENSE.source}|${PHRASE_OFFENSE.source}|${COUNT_SHAPE_OFFENSE.source}|${EVENT_ACTION_ID_OFFENSE.source}|${INTERNAL_WORD_OFFENSE.source}|${FIRST_HOUR_OFFENSE.source}`,
 );
+
+/** Where copy is written as data or as a contract's sentence, read for
+ *  FIRST_HOUR_OFFENSE only: a bundle's help, the featured-bundles mirror, the
+ *  contract's words and a module's own strings. */
+const COPY_ROOTS = ["bundles", "packages/platform-contract/src", "web/src/lib", "modules"];
+
+function copyFiles(dir: string): string[] {
+  const out: string[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (e === "node_modules" || e === "dist") continue;
+    const p = join(dir, e);
+    if (statSync(p).isDirectory()) out.push(...copyFiles(p));
+    else if ((p.endsWith(".ts") || p.endsWith(".json")) && !/\.test\.tsx?$/.test(p) && !p.endsWith(".d.ts")) out.push(p);
+  }
+  return out;
+}
 
 function tsxFiles(dir: string): string[] {
   const out: string[] = [];
@@ -155,6 +192,34 @@ for (const root of ROOTS) {
         // A comment naming the jargon is the explanation, not the offense.
         if (/^\s*(\/\/|\*|\{\/\*|\/\*)/.test(l)) return;
         if (!OFFENSE.test(l)) return;
+        const snippet = l.trim();
+        const rel = relative(ROOT, file).split("\\").join("/");
+        found.push({ file: rel, line: i + 1, snippet, key: `${rel}::${snippet}` });
+      });
+  }
+}
+
+/** The copy files that hold a first-hour phrase at all, picked by git grep so
+ *  the lint does not read every module's source to find three sentences; a
+ *  fixture tree that is not a repository is walked instead. */
+function copyCandidates(): string[] {
+  try {
+    const out = execFileSync("git", ["-C", ROOT, "grep", "--untracked", "-l", "-E", FIRST_HOUR_OFFENSE.source, "--", ...COPY_ROOTS.flatMap((r) => [`${r}/*.ts`, `${r}/*.json`])], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 1024 * 1024 * 1024 });
+    return out.split("\n").filter((f) => f && !/\.test\.tsx?$/.test(f) && !f.endsWith(".d.ts") && !/(^|\/)(node_modules|dist)\//.test(f)).map((f) => join(ROOT, f));
+  } catch (e) {
+    // git grep answers 1 when nothing matches: no file holds a phrase.
+    if ((e as { status?: number }).status === 1) return [];
+    return COPY_ROOTS.flatMap((root) => copyFiles(join(ROOT, root)));
+  }
+}
+
+{
+  for (const file of copyCandidates()) {
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((l, i) => {
+        if (/^\s*(\/\/|\*|\/\*)/.test(l)) return;
+        if (!FIRST_HOUR_OFFENSE.test(l)) return;
         const snippet = l.trim();
         const rel = relative(ROOT, file).split("\\").join("/");
         found.push({ file: rel, line: i + 1, snippet, key: `${rel}::${snippet}` });

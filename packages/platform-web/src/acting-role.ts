@@ -26,6 +26,7 @@ import { EDITED_FROM_HEADER, PAGE_HEADER, encodeEditedFrom } from "@cobblr/platf
 import { browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites } from "./waiting-writes";
 import { KEPT_OFFLINE, KEPT_SENTENCE } from "./network-failure";
 import { beginWrite, outcomeOf } from "./write-identity";
+import { noteSavedEdit } from "./saved-edit-undo";
 
 const roles = new Map<string, string>();
 const shared = new Map<string, PortalShares>();
@@ -155,6 +156,8 @@ export async function workspaceFetch(input: string | URL | Request, init?: Reque
       throw new Error(networkFailureMessage(), { cause: e });
     }
     if (keeps && method !== "GET") landedWrite(method, path, authorization, sentKey ?? undefined);
+    // A page's save of a record's fields is offered back (saved-edit-undo.ts).
+    if (keeps && res.ok) noteSavedEdit(method, path, init?.headers, init?.body, res.status);
     if (keeps && method === "GET" && res.ok) res = await overWaitingWrites(res, path, authorization);
     if (res.status < 400 || res.status >= 500 || !path.startsWith("/orgs/")) return res;
     const sent = typeof init?.body === "string" ? parseBody(init.body) : undefined;

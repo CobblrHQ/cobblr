@@ -14,6 +14,7 @@
 //
 // Buildless subpath: only type imports from siblings.
 import type { AiFallback, ProviderErrorReason } from "./scan-fallback.js";
+import { NO_AI_HERE, NO_AI_REMEDY } from "@cobblr/platform-contract/no-ai-words";
 
 /** What the batch row stores. `null` on a session that is not a receipt read
  *  (a walk with the camera), and on receipt sessions from before this state
@@ -90,7 +91,7 @@ export function receiptReadWords(f: Pick<ReceiptReadFailure, "code" | "ai" | "ai
     case "background":
       return { sentence: "Couldn't be read: this step ran without your personal AI. Read it again to use it.", retry: true, connect: false };
     case "not-entitled":
-      return { sentence: "Couldn't be read: this workspace's plan doesn't include AI. Connect your own under Account, then read it again.", retry: false, connect: true };
+      return { sentence: `Couldn't be read: ${NO_AI_HERE}. ${NO_AI_REMEDY}, then read it again.`, retry: false, connect: true };
     case "not-shared":
       return { sentence: "Couldn't be read: the AI here answers only its owner. Ask them to share it, or connect your own under Account.", retry: false, connect: true };
     case "provider-error":

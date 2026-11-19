@@ -63,6 +63,9 @@ const KNOWN = new Set([
   "bake-a6",
   "docker-build",
   "light-main",
+  // Main's typecheck (ci-main.yml, gen-ci-main.mjs LANE): runners of at least 6656 MiB, so a set tip's unit suite gets
+  // two workers (#6226, 2026-11-19; server-setup runner-configs-test.py holds the carriers).
+  "main-set-check",
   "ci-main",
   "fast-light",
   "fast-test",
@@ -255,7 +258,7 @@ if (seen.size === 0) {
 // (it would queue on main's own runner), and every label a pull-request workflow asks for is in
 // PR_LANE_LABELS (a new one must be added there AND to the policy's pr_labels, or main's runner may
 // carry it and serve pull requests again).
-const MAIN_LANE_LABELS = new Set(["light-main", "ci-main"]);
+const MAIN_LANE_LABELS = new Set(["light-main", "ci-main", "main-set-check"]);
 // A copy of main_lane.pr_labels in server-setup forge-ci/fleet-policy.json: change both together.
 const PR_LANE_LABELS = new Set(["ci-test", "pr-check", "image-pr", "fast-dispatch", "fast-light", "fast-test", "fast-recheck-light", "fast-recheck-test"]);
 /** The events a workflow runs on: `on: x`, `on: [x, y]`, or the keys of an `on:` block. */

@@ -33,6 +33,10 @@ export {
   type KindRec,
 } from "./kinds.js";
 export { jsonSchemaOf, undescribedParams } from "./schema.js";
+export { RETRY_ARG, RETRY_PARAM, mcpParamsOf, retryKeyOf } from "./retry-key.js";
+export type { WorkspaceRequestOptions } from "./api.js";
+export { requestHeaders } from "./api.js";
+export { forgetReads } from "./read-memory.js";
 export { addThingArgs } from "./tools/add-thing.js";
 export { offerableToAssistant, READ_TOOLS_THAT_POST, lookOnlyCanRun } from "./tools.js";
 export { pageWithTruth, resultBudgetFor } from "./tools.js";

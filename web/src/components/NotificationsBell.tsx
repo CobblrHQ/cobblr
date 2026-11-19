@@ -394,7 +394,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                   {/* A no-navigate notification still has somewhere to go for
                       anyone who wants it — just not by hijacking the click. */}
                   {NO_NAVIGATE.has(n.event_type) && n.link_url && (
-                    <button
+                    <button disabled={markRead.isPending}
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();

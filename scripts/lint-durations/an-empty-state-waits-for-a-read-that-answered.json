@@ -1,0 +1,10 @@
+{
+  "lint": "lint:an-empty-state-waits-for-a-read-that-answered",
+  "run": "node scripts/lint-an-empty-state-waits-for-a-read-that-answered.ts",
+  "rows": [
+    "page-level-module-ui"
+  ],
+  "ms": 514,
+  "recorded": "2026-11-19",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

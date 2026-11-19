@@ -5,7 +5,7 @@
 // the App Player. Members only ever see apps + fields their
 // capabilities allow — the server enforces it; this page is authoring.
 
-import { productName } from "@cobblr/platform-web";
+import { productName, QueryError } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink } from "lucide-react";
@@ -231,7 +231,8 @@ export function AppsConfigPage() {
               </button>
             </div>
           ))}
-          {!apps.isLoading && (apps.data?.items ?? []).length === 0 && (
+          {apps.isError && <QueryError what="your apps" onRetry={() => void apps.refetch()} />}
+          {apps.isSuccess && (apps.data?.items ?? []).length === 0 && (
             <div className="text-xs text-faint italic p-3">No apps yet. Create one.</div>
           )}
         </div>

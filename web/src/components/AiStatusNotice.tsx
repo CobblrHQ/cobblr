@@ -11,6 +11,7 @@ import { CobbHead } from "./CobbHead";
 import { X } from "lucide-react";
 import { api, type AiStatus } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { NO_AI_HERE, NO_AI_REMEDY } from "@cobblr/platform-contract/no-ai-words";
 
 /** Is AI usable for this workspace/user? Cached well beyond a session —
  *  availability only changes when someone reconfigures. */
@@ -124,12 +125,12 @@ export function aiStatusLine(
         cta: { to: "/configuration/ai", label: "Turn AI on \u2192" },
       };
     case "not_entitled":
-      // The plan does not include it, but a person can bring their own model.
+      // No AI here (the plan has none); anyone can bring their own (#9622).
       return {
         text: (
           <>
-            <strong>This workspace's plan doesn't include AI.</strong> Everything else works;
-            connect a model of your own to use it here.{" "}
+            <strong>{NO_AI_HERE}.</strong> Everything else works. {NO_AI_REMEDY} to use it
+            here.{" "}
           </>
         ),
         cta: { to: "/me/connections", label: "Connect your own \u2192" },

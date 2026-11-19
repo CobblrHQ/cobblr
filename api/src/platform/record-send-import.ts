@@ -23,6 +23,7 @@ async function rowsForImport(orgId: string, userId: string, id: string) {
   return meta.selectFrom("share_offers").selectAll().where("batch", "=", id).where("target_org_id", "=", orgId).where("created_by", "=", userId).where(sql<string>`transfer->>'transport'`, "=", "file-import").execute();
 }
 async function saveImport(id: string, t: ImportTransfer, landed?: unknown) {
+  // LANDED-OVER: an import from a file has no inbox gap; each step of its own transfer says where it is now.
   await meta.updateTable("share_offers").set({transfer: json(t), ...(landed ? {landed: json(landed)} : {}), ...(t.state === "complete" ? {status: "taken", taken_at: new Date(), decided_at: new Date()} : {})}).where("id", "=", id).execute();
 }
 export async function receiptForImport(orgId: string, userId: string, id: string, phase: "imported" | "undone"): Promise<SendReceipt> {

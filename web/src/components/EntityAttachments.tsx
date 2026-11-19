@@ -163,7 +163,7 @@ export function TagsSection({
           >
             <TagIcon size={10} style={{ color: a.tag_color ?? undefined }} />
             <span>{a.tag_name}</span>
-            <button
+            <button disabled={detach.isPending}
               aria-label="Detach"
               onClick={() => detach.mutate(a.id)}
               className="text-faint hover:text-ember-500 transition"
@@ -666,7 +666,7 @@ export function FilesSection({
             bottomRight={
               !ph.isMain &&
               ph.attachmentId && (
-                <button
+                <button disabled={detach.isPending}
                   type="button"
                   onClick={async () => {
                     const ok = await confirm({

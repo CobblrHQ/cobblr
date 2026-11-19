@@ -2,6 +2,7 @@ import { z } from "zod";
 import { apiErrorMessage, toolFail, toolOk } from "../api.js";
 import { explainRecords } from "../field-meanings.js";
 import { fetchKinds } from "../kinds.js";
+import { rememberRead } from "../read-memory.js";
 import { type WorkspaceTool } from "../tool-kit.js";
 
 const tool: WorkspaceTool = {
@@ -19,6 +20,7 @@ const tool: WorkspaceTool = {
       `/entities/${encodeURIComponent(String(args.kind))}/${encodeURIComponent(String(args.id))}`,
     );
     if (res.status >= 400) return toolFail(apiErrorMessage(res, "record not found"));
+    rememberRead(api.readerScope, String(args.kind), String(args.id), (res.body as { fields?: unknown }).fields);
     return toolOk(explainRecords(res.body, await fetchKinds(api).catch(() => [])));
   },
 };

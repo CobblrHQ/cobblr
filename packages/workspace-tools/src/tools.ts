@@ -22,6 +22,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { honestTransport } from "./api.js";
+import { keyedCall } from "./retry-key.js";
 import type { WorkspaceTool } from "./tool-kit.js";
 
 export * from "./tool-kit.js";
@@ -72,9 +73,15 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = discoverTools();
 // Every tool runs over the honest transport, whoever calls it (the chat, the
 // stdio MCP server, the hosted MCP endpoint): a request with no HTTP answer is
 // a failure in every tool's own status check, never a success (#6968).
+// A write called with a request_id sends each of its writes under a key made
+// from it, so the same call sent again after a timeout applies once
+// (retry-key.ts, #4115).
 for (const t of WORKSPACE_TOOLS) {
   const run = t.execute;
-  t.execute = (api, args) => run(honestTransport(api), args);
+  t.execute = (api, args) => {
+    const call = t.mode === "write" ? keyedCall(t.name, api, args) : { api, args };
+    return run(honestTransport(call.api), call.args);
+  };
 }
 
 

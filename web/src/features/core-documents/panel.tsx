@@ -230,7 +230,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                         {copy.isPending ? "Copying…" : `Bring a copy into ${productName()}`}
                       </button>
                     ) : null}
-                    <button
+                    <button disabled={unlink.isPending}
                       type="button"
                       aria-label={`Unlink ${d.title}`}
                       title="Unlink"
@@ -253,7 +253,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                     <button type="button" className={`text-xs min-h-8 ${d.conflict ? "text-muted" : "font-medium text-accent"}`} onClick={() => link.mutate(d)} disabled={link.isPending} data-testid="documents-link">
                       {d.conflict ? "Link anyway" : "Link"}
                     </button>
-                    <button type="button" className="text-xs text-muted min-h-8" onClick={() => dismiss.mutate(d)}>
+                    <button disabled={dismiss.isPending} type="button" className="text-xs text-muted min-h-8" onClick={() => dismiss.mutate(d)}>
                       Not this one
                     </button>
                   </DocumentLine>
@@ -294,7 +294,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
               {s.error ? (
                 <p className="text-xs text-muted">
                   {s.label} didn't answer.{" "}
-                  <button type="button" className="text-accent" onClick={() => find.mutate(query.trim() || undefined)}>
+                  <button disabled={find.isPending} type="button" className="text-accent" onClick={() => find.mutate(query.trim() || undefined)}>
                     Retry
                   </button>
                 </p>

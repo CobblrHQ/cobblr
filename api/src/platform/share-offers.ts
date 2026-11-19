@@ -381,6 +381,7 @@ async function answerOffer(
   } else {
     await it.mark(orgId, inboxId, "maybe");
   }
+  // LANDED-OVER: this is the answer, held on the offer's row (forNoKeyUpdate); where it went is what it decided.
   await trx
     .updateTable("share_offers")
     .set({ status: decision, decided_at: new Date(), ...(decision === "taken" ? { taken_at: new Date() } : {}), landed: JSON.stringify(landed) as never })
@@ -760,8 +761,12 @@ export function registerShareOfferOps(): void {
     const at: Landed = { org_id: link.org_id, inbox_id: landed.inbox_id };
     // Recorded with the status as it stands: a share that ended while this
     // landed called the offer off before it knew where (#9133). One taken in
-    // the gap stays, waiting to be filed (#7711).
-    const recorded = await meta.updateTable("share_offers").set({ landed: JSON.stringify(at) as never }).where("id", "=", row.id).returning(["status"]).executeTakeFirst();
+    // the gap stays, waiting to be filed (#7711). Only where nobody recorded
+    // it first: an answer in the gap already did (inRowFor, answerOffer), and
+    // one taken into a workspace of the person's own said that workspace.
+    // Written over, it went back to the share space, and the arrival left its
+    // destination's Handed over history and its Send back (#9626).
+    const recorded = await meta.updateTable("share_offers").set({ landed: JSON.stringify(at) as never }).where("id", "=", row.id).where("landed", "is", null).returning(["status"]).executeTakeFirst();
     if (recorded?.status === "withdrawn") await removeWaitingArrival(at);
   });
 

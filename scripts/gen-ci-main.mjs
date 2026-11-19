@@ -25,7 +25,7 @@
 //     that is no longer the tip when its jobs start stands them down instead
 //     (scripts/ci/stand-down-if-superseded.sh), so only main's newest commit is
 //     tested, and a red tip names its culprit by testing the merges it skipped;
-//   - runs-on: pr-check -> light-main, ci-test -> ci-main.
+//   - runs-on: pr-check -> main-set-check, ci-test -> ci-main.
 // `name: CI` stays, so the status contexts stay `CI / typecheck (push)` and
 // `CI / test (push)`, which the release, merge-pr and deploy read.
 //
@@ -52,7 +52,11 @@ const OUT_RECHECK_FIRST = join(ROOT, ".forgejo/workflows/ci-recheck-first.yml");
 const OUT_RECHECK_RULES = join(ROOT, ".forgejo/workflows/ci-recheck-rules.yml");
 const OUT_RECHECK_FIRST_RULES = join(ROOT, ".forgejo/workflows/ci-recheck-first-rules.yml");
 
-export const LANE = { "pr-check": "light-main", "ci-test": "ci-main" };
+// pr-check -> main-set-check, not light-main (2026-11-19, #6226): ci.yml's one pr-check job is typecheck, and a set
+// tip's typecheck runs every unit file. light-main's 4608 MiB runner gives the unit suite one worker (40-51 min, sets
+// 512-529); main-set-check's runners, at least 6656 MiB, give it two (20-22). A main push's typecheck stands aside on
+// its set's proof in seconds wherever it lands. scripts/ci/a-set-tips-typecheck-runs-where-unit-gets-two-workers.test.ts
+export const LANE = { "pr-check": "main-set-check", "ci-test": "ci-main" };
 export const FAST_LANE = { "pr-check": "fast-light", "ci-test": "fast-test" };
 
 const DEPLOY_STEP = "Deploy if the images are pushed (else the image side deploys)";
@@ -171,7 +175,7 @@ const MAIN = {
   group: "ci-main-${{ github.ref }}-${{ github.sha }}",
   header: [
     "# The same CI as ci.yml, for pushes to main and bisect branches, on",
-    "# runner labels only they use (light-main, ci-main), so the release's green",
+    "# runner labels only they use (main-set-check, light-main, ci-main), so the release's green",
     "# candidate never waits behind the pull-request queue.",
   ],
   tail: [

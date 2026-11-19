@@ -645,7 +645,7 @@ export function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: Sale
                       return makeButton;
                     })()}
                     {(!fulfilled || (cannotAddUp && !(Number(it.qty_fulfilled) > 0))) && (
-                      <button
+                      <button disabled={removeItem.isPending}
                         title={`Remove ${it.description || "line item"}`}
                         type="button"
                         onClick={async () => {
@@ -669,8 +669,8 @@ export function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: Sale
               <div role="alertdialog" aria-label="Was it returned?" className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
                 <p className="text-sm text-content dark:text-mortar-100">{askReturned}</p>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => cancel.mutate(true)} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white">Yes, it came back</button>
-                  <button type="button" onClick={() => cancel.mutate(false)} className="px-3 py-1.5 text-xs rounded border border-line dark:border-slate-600">No, cancel it anyway</button>
+                  <button disabled={cancel.isPending} type="button" onClick={() => cancel.mutate(true)} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white">Yes, it came back</button>
+                  <button disabled={cancel.isPending} type="button" onClick={() => cancel.mutate(false)} className="px-3 py-1.5 text-xs rounded border border-line dark:border-slate-600">No, cancel it anyway</button>
                   <button type="button" onClick={() => setAskReturned(null)} className="px-3 py-1.5 text-xs rounded text-muted">Keep the order</button>
                 </div>
               </div>
@@ -1318,7 +1318,7 @@ function CustomersModal({ api, initialEditing, onClose }: { api: SalesApi; initi
                     <div className="text-xs text-muted">{c.order_count} order{c.order_count === 1 ? "" : "s"}{c.email ? ` · ${c.email}` : ""}</div>
                   </div>
                   <button type="button" onClick={() => setEditing(c.id)} className="text-xs text-muted hover:text-accent shrink-0">Edit</button>
-                  <button
+                  <button disabled={remove.isPending}
                     title="Delete customer"
                     type="button"
                     onClick={async () => { if (await confirm({ title: `Delete "${c.name}"?`, message: "Orders for this customer keep their name but lose the link.", confirmLabel: "Delete", destructive: true })) remove.mutate(c.id); }}

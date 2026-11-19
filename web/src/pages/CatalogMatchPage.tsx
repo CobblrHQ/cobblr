@@ -10,7 +10,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Library, ArrowLeft } from "lucide-react";
-import { useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { useToast, usePageTitle, SearchInput, QueryError } from "@cobblr/platform-web";
 import { ApiError, api, type CatalogEntry, type Catalog } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
@@ -179,7 +179,8 @@ export function CatalogMatchPage() {
             {entriesQ.isLoading && (
               <div className="text-sm text-muted">Loading…</div>
             )}
-            {entries.length === 0 && !entriesQ.isLoading && debounced && (
+            {entriesQ.isError && <QueryError what="catalog entries" onRetry={() => void entriesQ.refetch()} />}
+            {entries.length === 0 && entriesQ.isSuccess && debounced && (
               <div className="text-sm italic text-muted dark:text-slate-400">
                 No entries match "{debounced}".
               </div>

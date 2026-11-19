@@ -23,7 +23,7 @@ import { isSandboxSession } from "../lib/sandbox-session";
 import { BringInBackup } from "../components/BringInBackup";
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { RecentActivity } from "../components/RecentActivity";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, X } from "lucide-react";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
@@ -1604,6 +1604,18 @@ function TileGrid({
 }) {
   const [dragTile, setDragTile] = useState<number | null>(null);
   const spanCls = (span: number) => (span === 2 ? "col-span-2" : "");
+  // Settled: the workspace's reads have run and gone quiet once. Until then no
+  // tile collapses and the "still empty" line waits, so the grid swaps for the
+  // line in one step. Collapsing each tile as its own read answered shrank the
+  // grid in steps on a slow phone, and the line's links slid up 63 px under a
+  // finger seconds after the page showed them (#9640).
+  const fetching = useIsFetching();
+  const [sawReads, setSawReads] = useState(false);
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (fetching > 0) setSawReads(true);
+    else if (sawReads) setSettled(true);
+  }, [fetching, sawReads]);
   // Zero-tile collapse (audit 2026-07-03): empty tiles vanish from the grid
   // and reappear as one quiet "Also enabled" line — a workspace with three
   // empty modules stops burning a tile row on zeros. Arrange mode shows every
@@ -1631,7 +1643,7 @@ function TileGrid({
       return next;
     });
   }, []);
-  const collapseCtx = useMemo(() => ({ editing, reportEmpty }), [editing, reportEmpty]);
+  const collapseCtx = useMemo(() => ({ editing: editing || !settled, reportEmpty }), [editing, settled, reportEmpty]);
 
   if (!hasModules) {
     // The GettingStartedPanel above already owns the empty-workspace message
@@ -1666,7 +1678,7 @@ function TileGrid({
               );
             })}
           </div>
-          {alsoEnabled.length > 0 && <EmptyTablesLine tables={alsoEnabled} first={empties.size >= visible.length} />}
+          {settled && alsoEnabled.length > 0 && <EmptyTablesLine tables={alsoEnabled} first={empties.size >= visible.length} />}
           </TileCollapseContext.Provider>
         )}
       </section>

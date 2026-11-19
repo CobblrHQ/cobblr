@@ -425,7 +425,7 @@ function ConnectorRow({
           >
             {connector.enabled ? "Disable" : "Enable"}
           </button>
-          <button
+          <button disabled={delM.isPending}
             aria-label="Delete"
             type="button"
             onClick={async () => {
@@ -504,7 +504,7 @@ function InboundTokenRow({ token }: { token: InboundToken }) {
             <Copy className="h-4 w-4" />
           </button>
           {token.enabled && (
-            <button
+            <button disabled={revokeM.isPending}
               type="button"
               onClick={() => revokeM.mutate()}
               className="px-2 py-1 text-xs rounded text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/40"
@@ -512,7 +512,7 @@ function InboundTokenRow({ token }: { token: InboundToken }) {
               Revoke
             </button>
           )}
-          <button
+          <button disabled={deleteM.isPending}
             aria-label="Delete"
             type="button"
             onClick={async () => {

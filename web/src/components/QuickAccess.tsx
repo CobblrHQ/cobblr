@@ -74,10 +74,14 @@ export function QuickAccess({ activeSlug }: { activeSlug: string }) {
         type="button"
         onClick={() => setOpen(true)}
         title="Quick Access - your pinned entries"
-        className={"right-4 z-[80] inline-flex items-center gap-1.5 rounded-full border border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 shadow-lg px-3.5 py-2 text-sm font-medium text-content dark:text-mortar-100 hover:border-accent transition"}
+        aria-label="Quick Access"
+        // On a phone it is the icon alone, the size of the chat button beside
+        // it: with its words, 200% text made it half the screen wide, laid over
+        // the page's headings and its first rows (#4115).
+        className={"right-4 z-[80] inline-flex items-center gap-1.5 rounded-full border border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 shadow-lg px-3.5 py-2 max-sm:p-3 text-sm font-medium text-content dark:text-mortar-100 hover:border-accent transition"}
       >
-        <Zap size={15} className="text-accent" />
-        Quick Access
+        <Zap size={15} className="text-accent" aria-hidden />
+        <span className="max-sm:sr-only">Quick Access</span>
       </FloatingChrome>
 
       {open &&

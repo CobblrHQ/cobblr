@@ -212,6 +212,39 @@ export function shareOf(env = process.env, capped = memoryRoom().capped) {
   return capped ? CAPPED_SHARE : SHARE;
 }
 
+/** Peak resident memory of a command that sizes nothing from its share, MiB: its siblings must leave it the room.
+ *  The web build (vite, the typecheck job's budget:first-load): 2.2 GiB measured on 2026-11-19 in a transient cgroup
+ *  with node's heap at 2304, as under a 4608 MiB limit, at origin/main cdbff56b8. Counted at 2560, its heap and the
+ *  rest of node. Uncounted, the job's lints, export gate and unit suite each took a quarter of the share as if the
+ *  build were free, and run 64773 (#9625) was OOM-killed under cobblr-check-a6's 4608 MiB. */
+// The export gate (export-repo + verify-export): 247 MiB, measured the same way the same day; counted at 256.
+export const FIXED_MIB = { "web-build": 2560, "export-gate": 256 };
+
+/** The fixed peak of a shell command, MiB, or 0 when it sizes itself from the share. */
+export function fixedCostOf(cmd) {
+  if (/(^|[\s/])(vite build|budget:first-load)\b/.test(cmd)) return FIXED_MIB["web-build"];
+  if (/(^|[\s/])export-repo\.mjs\b/.test(cmd)) return FIXED_MIB["export-gate"];
+  return 0;
+}
+
+/**
+ * The env each of `cmds` gets when they run together: what this process's share leaves after the commands with a
+ * fixed peak (fixedCostOf), split among the rest. With none of those, 1/n of the share, as splitShare. A room the
+ * fixed peaks fill leaves the rest a sliver, so each of them runs at one (width never goes below one).
+ * @param {string[]} cmds
+ * @param {{ env?: Record<string, string | undefined>, capped?: boolean, roomMib?: number | null }} [o]
+ */
+export function splitAround(cmds, o = {}) {
+  const env = o.env ?? process.env;
+  const room = o.roomMib === undefined ? memoryRoom() : { mib: o.roomMib, capped: o.capped ?? false };
+  const share = shareOf(env, o.capped ?? room.capped);
+  const fixed = cmds.map(fixedCostOf);
+  const reserved = fixed.reduce((a, b) => a + b, 0);
+  const sizing = Math.max(1, fixed.filter((f) => f === 0).length);
+  const left = reserved === 0 || room.mib == null || room.mib <= 0 ? share * (sizing / Math.max(1, cmds.length)) : Math.max(1e-6, (share * room.mib - reserved) / room.mib);
+  return cmds.map(() => ({ [SHARE_ENV]: String(left / sizing) }));
+}
+
 /** The env a fan-out gives each of `n` commands it runs together: 1/n of its share. */
 export function splitShare(n, env = process.env, capped) {
   const share = shareOf(env, capped ?? memoryRoom().capped);

@@ -20,8 +20,9 @@
 // short-lived read grant the bridge relay carries. The process holds no
 // credentials and never elevates.
 
+import { createHash } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
-import { READ_TOOLS_THAT_POST, WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
+import { READ_TOOLS_THAT_POST, RETRY_ARG, requestHeaders, WORKSPACE_TOOLS, jsonSchemaOf, mcpParamsOf, mcpToolName, retryKeyOf, toolFromMcpName, workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { instanceOfGrants, signMcpWriteGrant, verifySession } from "../auth/jwt.js";
 import { resolveApiToken } from "../auth/api-tokens.js";
@@ -65,7 +66,7 @@ const LIST_WORKSPACES = {
 export const HOSTED_MCP_TOOLS = [
   LIST_WORKSPACES,
   ...WORKSPACE_TOOLS.map((t) => {
-    const schema = jsonSchemaOf(t.params) as {
+    const schema = jsonSchemaOf(mcpParamsOf(t)) as {
       type: string;
       properties?: Record<string, unknown>;
       required?: string[];
@@ -84,10 +85,15 @@ export const HOSTED_MCP_TOOLS = [
 ];
 
 // ── REST proxy (caller's Bearer reused → all auth/permissions enforced) ──────
-async function rest(token: string, method: string, path: string, body?: unknown): Promise<unknown> {
+async function rest(token: string, method: string, path: string, body?: unknown, idempotencyKey?: string): Promise<unknown> {
   const res = await apiFetch(`${SELF_BASE}${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}`, ...mcpProxyHeaders(), ...(body !== undefined ? { "content-type": "application/json" } : {}) },
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...mcpProxyHeaders(),
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -127,7 +133,9 @@ function workspaceApiFor(token: string, slug: string): WorkspaceApi {
   const origin = publicBaseUrl();
   return {
     link: workspaceLinks({ apiBase: origin ? `${origin}/api/v1` : null, appOrigin: origin || null }, slug),
-    async request(method, path, body) {
+    // This connection on this workspace: its reads judge its changes.
+    readerScope: `mcp:${createHash("sha256").update(token).digest("hex").slice(0, 32)}:${slug}`,
+    async request(method, path, body, opts) {
       const res = await apiFetch(`${SELF_BASE}/orgs/${slug}${path}`, {
         method,
         headers: {
@@ -139,6 +147,7 @@ function workspaceApiFor(token: string, slug: string): WorkspaceApi {
           // whatever this says.
           "x-cobblr-client": "mcp",
           ...(body !== undefined ? { "content-type": "application/json" } : {}),
+          ...requestHeaders(opts),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
@@ -358,6 +367,13 @@ function narrate(token: string, slug: string, step: Record<string, unknown>): vo
   void rest(token, "POST", `/orgs/${slug}/modules/core-ai/chat/turns/open/steps`, step).catch(() => {});
 }
 
+/** A call's arguments without its request_id, which says how to send it and
+ *  is no part of the change. */
+function withoutRetryId(args: Json): Json {
+  const { [RETRY_ARG]: _id, ...rest } = args;
+  return rest;
+}
+
 async function callTool(name: string, args: Json, token: string, defaultSlug: string | null): Promise<unknown> {
   // The one non-workspace tool.
   if (name === "cobblr_list_workspaces") return rest(token, "GET", "/orgs");
@@ -395,7 +411,7 @@ async function callTool(name: string, args: Json, token: string, defaultSlug: st
   // the user is watching. A full API token is a script or a connector with no
   // panel in front of it.
   const write = tool.mode === "write";
-  if (caller.kind === "grant") narrate(token, slug, { kind: "tool", name: tool.name, write, args });
+  if (caller.kind === "grant") narrate(token, slug, { kind: "tool", name: tool.name, write, args: withoutRetryId(args) });
 
   // A RECORD write goes through the chat's own write endpoint, not straight at
   // the module route, so it lands in the change ledger with a before-image and
@@ -403,10 +419,10 @@ async function callTool(name: string, args: Json, token: string, defaultSlug: st
   // than at the module route is the point: the ledger is a property of "the
   // assistant changed something", not of any one module.
   if (caller.kind === "grant" && write && LEDGERED_TOOLS.has(tool.name)) {
-    const led = (await rest(execToken, "POST", `/orgs/${slug}/modules/core-ai/chat/writes`, {
-      tool: tool.name,
-      args,
-    })) as { ok?: boolean; message?: string; entity?: unknown } | null;
+    // Sent again after a timeout with the same request_id, it is answered as
+    // the first was: one record, one offer (retry-key.ts).
+    const key = retryKeyOf(tool.name, args);
+    const led = (await rest(execToken, "POST", `/orgs/${slug}/modules/core-ai/chat/writes`, { tool: tool.name, args: withoutRetryId(args) }, key ? `${key}.1` : undefined)) as { ok?: boolean; message?: string; entity?: unknown } | null;
     // The endpoint narrates its own result (it is the one that knows the ledger
     // id, which is what an Undo is made of), so nothing more is said here.
     if (!led?.ok) throw new Error(led?.message ?? "the change could not be made");

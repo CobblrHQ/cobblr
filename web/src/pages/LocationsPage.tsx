@@ -21,6 +21,7 @@ import { SPACE_PARAM, placeItemsHref } from "../components/placeItems/useSelecte
 import { NewBinSheet } from "./NewBinSheet";
 import { HeaderMenu, MenuItem } from "../components/HeaderMenu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryError } from "../components/QueryError";
 import { Camera, Plus, Printer, Trash2, Pencil, Box as BoxIcon, MapPin as AreaIcon, Upload, Download, GripVertical, CheckSquare, ChevronRight, ChevronsDownUp, ChevronsUpDown, Layers, MoreHorizontal, PackageOpen } from "lucide-react";
 import {
   DndContext,
@@ -511,7 +512,9 @@ export function LocationsPage() {
 
       {tab === "list" && (
         <>
-      {items.length === 0 && !list.isLoading && (
+      {/* A read that failed is said, never shown as no places at all (#4115). */}
+      {list.isError && <QueryError what="your locations" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         /* The create button shares the search row below, which only renders once
            there IS a location. So the empty state needs its own, or a brand-new
            workspace is told to "add a top-level area" with no button to do it. */
@@ -1338,6 +1341,7 @@ export function LocationFormModal({
     target?.parent_id ?? parentIdInitial ?? "",
   );
   const toast = useToast();
+  const qc = useQueryClient();
   const navigate = useNavigate();
   // The place already there under this parent with this name, once the
   // server has said so; the form then offers to open it or keep both.
@@ -1356,8 +1360,14 @@ export function LocationFormModal({
   const [bottomUp, setBottomUp] = useState(true);
 
 
+  // A save on its way says so, and a second press waits for it: on a slow
+  // connection Create stayed as it was for seconds, and a second press made a
+  // second place (#4115, #9614's class for a form's submit).
+  const [saving, setSaving] = useState(false);
   async function save(allowDuplicate: boolean) {
+    if (saving) return;
     setDup(null);
+    setSaving(true);
     try {
       if (editing && target) {
         // Only what changed, with what it was: a newer move or rename from
@@ -1411,13 +1421,17 @@ export function LocationFormModal({
             (stacked && bottomUp ? ` (${expansion.names[0]} at the bottom)` : ""),
         );
       } else {
-        await api.createLocation(slug, {
+        const made = await api.createLocation(slug, {
           name: name.trim(),
           short_name: shortName.trim() || null,
           kind,
           parent_id: parentId || null,
           ...(allowDuplicate ? { allow_duplicate: true } : {}),
         });
+        // In the list at once: on a slow connection the read after the save
+        // took seconds, and the list said "No locations yet" under "Location
+        // created" until it came (#4115). The read still comes and settles it.
+        if (made?.id) qc.setQueryData<{ items: Location[] }>(["core-locations", slug], (old) => (old && !old.items.some((l) => l.id === made.id) ? { ...old, items: [...old.items, made] } : old));
         toast.success("Location created");
       }
       onSaved();
@@ -1430,6 +1444,8 @@ export function LocationFormModal({
       const found = duplicatePlaceOf(err);
       if (found) setDup(found);
       else toast.error(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -1632,10 +1648,11 @@ export function LocationFormModal({
           </button>
           <button
             type="submit"
-            disabled={!name.trim()}
+            disabled={!name.trim() || saving}
+            aria-busy={saving || undefined}
             className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
           >
-            {editing ? "Save" : "Create"}
+            {saving ? (editing ? "Saving…" : "Creating…") : editing ? "Save" : "Create"}
           </button>
         </div>
       </form>

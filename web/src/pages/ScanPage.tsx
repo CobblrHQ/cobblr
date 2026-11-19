@@ -2766,7 +2766,7 @@ export function ScanPage() {
               }
             }}
             placeholder={omniPlaceholder(false)}
-            aria-label="Search the inbox, or paste a UPC or link to add"
+            aria-label="Search the inbox, or paste a barcode number or link to add"
             className="min-w-0 flex-1 bg-transparent text-[13px] text-content dark:text-mortar-100 placeholder:text-faint outline-none"
           />
           {/* Upload progress reports where the upload was STARTED, so a

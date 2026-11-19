@@ -1,4 +1,4 @@
-import { SegmentedChoice, fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, useRunWithUndo, MutationError, noteWorkspaceWrite, AddressPicker, AddressView, workspaceFetch } from "@cobblr/platform-web";
+import { SegmentedChoice, fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, useRunWithUndo, MutationError, noteWorkspaceWrite, AddressPicker, AddressView, workspaceFetch, QueryError } from "@cobblr/platform-web";
 import type { AddressValue } from "@cobblr/platform-contract/address";
 // Per-part maintenance panel — lists scheduled + history entries
 // from core-maintenance. Add an entry as "done now", "scheduled
@@ -125,7 +125,8 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
       </div>
 
       {list.isLoading && <div className="text-xs text-faint">loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="maintenance" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-xs text-faint italic">
           No maintenance log yet. Track service history, scheduled
           tasks, warranty renewals.

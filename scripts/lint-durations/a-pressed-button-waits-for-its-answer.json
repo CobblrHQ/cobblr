@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-pressed-button-waits-for-its-answer",
+  "run": "node scripts/lint-a-pressed-button-waits-for-its-answer.ts",
+  "rows": [
+    "page-level-module-ui"
+  ],
+  "ms": 628,
+  "recorded": "2026-11-19",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

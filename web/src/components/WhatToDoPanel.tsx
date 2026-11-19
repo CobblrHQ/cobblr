@@ -592,16 +592,17 @@ export function WhatToDoPanel({
       type="button"
       data-tour="more-ways"
       onClick={() => setMoreOpen((v) => !v)}
-      className="col-span-2 sm:col-span-1 flex min-h-11 w-full items-center justify-between gap-1 rounded-lg border border-dashed border-line dark:border-slate-700 px-3 py-2 text-left text-sm font-medium text-accent hover:border-accent"
+      className="flex min-h-11 w-full items-center justify-between gap-1 rounded-lg border border-dashed border-line dark:border-slate-700 px-3 py-2 text-left text-sm font-medium text-accent hover:border-accent"
     >
       {moreOpen ? (<>Fewer ways to start <ChevronUp size={14} /></>) : (<>More ways to start <ChevronDown size={14} /></>)}
     </button>
   );
-  const setupChip = "flex min-h-11 w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ";
+  const setupChip = "flex flex-wrap min-h-11 w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ";
   const readyMadeStrip = (
     <section data-strip="ready-made" aria-labelledby="start-from-a-setup" className="space-y-2">
       <h3 id="start-from-a-setup" className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">Start from a setup</h3>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      {/* Tiles as wide as a name needs, so 200% text takes one per row, never "B" or "3." (#4115). */}
+      <div className="flex flex-wrap gap-2 [&>*]:grow [&>*]:basis-[9em] [&>*]:min-w-0 [&>*]:max-w-full">
         {skins
           .filter((b) => (b.manifest.catalog ?? "core") === "core")
           .slice(0, 4)
@@ -617,8 +618,9 @@ export function WhatToDoPanel({
                 : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-content dark:text-slate-200 hover:border-accent hover:text-accent")
             }
           >
-            <span aria-hidden>{b.glyph}</span>
-            <span className="min-w-0 truncate">{b.manifest.name}</span>
+            <span aria-hidden className="shrink-0">{b.glyph}</span>
+            {/* Whole, under its glyph when the line is too short: cut to "B" it named nothing (#4115). */}
+            <span className="min-w-[4em] flex-1 [overflow-wrap:anywhere]">{b.manifest.name}</span>
           </button>
         ))}
         {moreWays}

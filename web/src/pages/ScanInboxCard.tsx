@@ -3016,7 +3016,7 @@ export function InboxCard({
                 ) : matchFailed ? (
                   <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-300">
                     matching failed
-                    <button
+                    <button disabled={rerun.isPending}
                       type="button"
                       onClick={() => rerun.mutate({})}
                       className="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100 transition"
@@ -3629,7 +3629,7 @@ export function InboxCard({
                     can see and ignore costs a glance, one that moves under you
                     costs your trust. */}
                 {staleHint && (
-                  <button
+                  <button disabled={pickDestination.isPending}
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -3873,7 +3873,7 @@ export function InboxCard({
                 <button
                   type="button"
                   onClick={() => rerun.mutate(undefined)}
-                  disabled={aiWorking || !canRerunLookup(item)}
+                  disabled={(aiWorking || !canRerunLookup(item)) || rerun.isPending}
                   className="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200 disabled:opacity-50"
                 >
                   Retry with AI
@@ -4068,7 +4068,7 @@ export function InboxCard({
             // name (a receipt/note line has only a name; re-running re-does the
             // web/text lookup and can finally fetch a product image). See
             // canRerunLookup — gating on barcode||image alone greyed out receipts.
-            disabled={aiWorking || !canRerunLookup(item)}
+            disabled={(aiWorking || !canRerunLookup(item)) || rerun.isPending}
             className="text-faint hover:text-accent p-1 disabled:opacity-30"
             title={replayNoAi ? "Replaying…" : aiWorking ? "AI is working…" : LOOK_UP_AGAIN_LABEL}
           >

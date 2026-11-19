@@ -115,5 +115,5 @@ export function omniPlaceholder(compact: boolean): string {
   // mid-word ("...or dr") and read as broken. Drag-and-drop still works; it
   // just no longer has to be advertised here, now that upload is its own
   // control on the row (reported 2026-08-10).
-  return compact ? "Search or paste" : "Search, paste a UPC or link";
+  return compact ? "Search or paste" : "Search, paste a barcode or link";
 }

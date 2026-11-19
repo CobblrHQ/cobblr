@@ -262,7 +262,7 @@ export function MeNotificationsPage() {
                   </div>
                   {/* Its own two controls; a press here is not a press on the row. */}
                   <span className="shrink-0 flex items-center gap-0.5 self-center" onClick={(e) => e.stopPropagation()}>
-                    <button
+                    <button disabled={markUnread.isPending}
                       type="button"
                       onClick={() => (n.read_at ? markUnread.mutate(n.id) : markRead.mutate(n.id))}
                       aria-label={n.read_at ? "Mark unread" : "Mark read"}
@@ -271,7 +271,7 @@ export function MeNotificationsPage() {
                     >
                       {n.read_at ? <Mail size={14} /> : <MailOpen size={14} />}
                     </button>
-                    <button
+                    <button disabled={remove.isPending}
                       type="button"
                       onClick={() => remove.mutate(n.id)}
                       aria-label="Delete"

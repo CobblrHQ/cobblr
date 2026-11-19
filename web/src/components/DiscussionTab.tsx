@@ -9,7 +9,7 @@
 //
 // Spec: docs/design-decisions/discussion-and-the-side-rail.md
 
-import { productName } from "@cobblr/platform-web";
+import { productName, QueryError } from "@cobblr/platform-web";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -610,7 +610,8 @@ export function DiscussionTab() {
             list scrolls and the composer stays pinned. */}
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
           {conv.isLoading && <p className="text-xs text-faint">loading…</p>}
-          {!conv.isLoading && comments.length === 0 && (
+          {conv.isError && <QueryError what="the discussion" onRetry={() => void conv.refetch()} />}
+          {conv.isSuccess && comments.length === 0 && (
             <p className="text-sm text-faint dark:text-slate-500 italic">
               {isWorkspaceRoom(src)
                 ? "Nothing said in here yet. This is the whole workspace, so anything that is not about one particular record belongs here."
@@ -765,7 +766,7 @@ export function DiscussionTab() {
                       </button>
                     )}
                     {canRemoveComment(c, selfUserId, activeOrg?.role) && (
-                      <button
+                      <button disabled={remove.isPending}
                         type="button"
                         onClick={async () => {
                           const ok = await confirm({

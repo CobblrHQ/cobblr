@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { ApiError, api, type SavedView, type SurfaceRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, SegmentedChoice, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, SegmentedChoice, useToast, useConfirm, usePageTitle, QueryError } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import { useKindLabels } from "../lib/useKindLabels";
 
@@ -69,7 +69,8 @@ export function SurfacesPage() {
       </p>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="surfaces" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && list.isSuccess && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
           No public surfaces. Hit Publish to share a view.
         </div>
@@ -140,7 +141,7 @@ export function SurfacesPage() {
               >
                 <BarChart3 size={14} />
               </button>
-              <button
+              <button disabled={revoke.isPending}
                 aria-label="Revoke"
                 onClick={async () => {
                   const ok = await confirm({

@@ -597,6 +597,8 @@ export const CAPABILITIES: Capability[] = [
         "the one-shot heal that folds rows stored under a collection's kind onto the base kind (retires by its DONE WHEN)",
       "api/src/routes/test-support.ts":
         "the test-only door that plants a row as it was stored before the fix, so the heal's test has one to fold",
+      "api/src/platform/heal-placement-loops.ts":
+        "the one-shot heal that finds chains coming back to themselves, which needs every row at once; it only reads, and takes a thing out through platform().placement.remove (retires by its DONE WHEN)",
       "api/src/platform/heal-dangling-places.ts":
         "the one-shot heal that FINDS placements whose place no longer exists, a question the seam cannot ask without the place's " +
         "id; it only reads, and takes each thing out through platform().placement.remove (retires by its DONE WHEN)",

@@ -111,7 +111,7 @@ export function BridgeInstallMethod({
               <p className="text-[11px] text-faint">
                 {method === "desktop" ? "Connect this Desktop bridge to your workspace, then pair LightBurn below." : method === "windows" ? "It keeps this bridge's key on your computer and installs a startup task for your account. It downloads the native Windows x64 or ARM64 bridge and keeps its code up to date." : method === "mac" ? "It trades the code for this bridge's own key, which stays on your Mac, installs a native service that starts at login, and keeps its code up to date." : <>It trades the code for this bridge's own key, which stays on that box, installs it as a service that starts at boot, and keeps it up to date. Add <code>--system</code> to install it for the whole machine, or <code>--docker</code> for a network-only Linux bridge. USB machines need the native installer.</>}
               </p>
-              <button type="button" onClick={() => pair.mutate()} className="text-[11px] text-accent hover:underline">
+              <button disabled={pair.isPending} type="button" onClick={() => pair.mutate()} className="text-[11px] text-accent hover:underline">
                 Make a new code
               </button>
             </div>

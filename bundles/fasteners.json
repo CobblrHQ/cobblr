@@ -2,8 +2,13 @@
   "manifest": {
     "id": "cobblr.flagship.fasteners",
     "changelog": "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: First catalogued release: the fastener drawer skin (length, diameter, thread, head) on inventory.",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "releases": [
+      {
+        "version": "0.1.6",
+        "released_at": "2026-11-19",
+        "notes": "Field help says your list is grouped by this, in plain words, instead of naming a table."
+      },
       {
         "version": "0.1.5",
         "released_at": "2026-10-07",
@@ -88,7 +93,7 @@
             "display_label": "Thread",
             "type": "text",
             "position": 2,
-            "help": "M3, M5, 1/4-20, #6-32…, the table groups by this."
+            "help": "M3, M5, 1/4-20, #6-32…; your list is grouped by this."
           },
           {
             "entity_kind": "inventory:part",

@@ -21,6 +21,7 @@
 
 import { claimedAfterHandBack, endsHonestly, leftOffTheCard, claimedWithNoWrite, namedInside } from "./reported-truthfully.js";
 import { yesNoAgrees } from "./yes-no-agrees.js";
+import { figureHandBack } from "./figures-from-tools.js";
 import { resultBudgetFor } from "@cobblr/workspace-tools";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { scrubIds, namesFromToolResults } from "./scrub-ids.js";
@@ -97,6 +98,14 @@ export interface AgentLoopDeps {
    *  person's own things is never given from one list. See
    *  none-from-one-list.ts. */
   absenceNudge?(userText: string, reply: string, reads: string[]): string | null;
+  /** What the model was told outside the turns (the system prompt): a figure
+   *  in it (today's date, a page's count) is one the model was given. Every
+   *  figure in an answer must be in this, the turns or a tool result, or the
+   *  answer is handed back once. See figures-from-tools.ts. */
+  figuresKnown?: string;
+  /** Whether this chat has read tools to count with; the hand-back for a
+   *  figure nothing gave says to read it, or to leave it out. Default true. */
+  canRead?: boolean;
   /** The writes of one round, in the order they can run: a step that makes
    *  something (a list) before a step that names it. Optional; the model's
    *  order otherwise (#5067). */
@@ -254,6 +263,9 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   // answer DESCRIBES the writes correctly is a different question from whether
   // it should have written at all.
   let nudgedForReport = false;
+  // Its own once: a count nobody read is a different untruth from a write
+  // described wrongly, and a turn can hold both.
+  let nudgedForFigures = false;
   // A write handed back this turn already told the model what to do, and
   // the words it says next are its answer to the door: "Bin 4 doesn't exist
   // yet. Would you like me to create it and move the Multimeter there?" is
@@ -331,6 +343,17 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
             nudgedForReply = true;
             transcript.push({ role: "assistant", content: r.content });
             transcript.push({ role: "user", content: nudge });
+            continue;
+          }
+        }
+        if (!nudgedForFigures) {
+          // A count, total or amount the answer gives has to be one the turn
+          // was given: by a tool, by the person, or by the prompt (#4115).
+          const figure = figureHandBack({ answer: spoken, question: lastUserSaid, turns: transcript, reads: readsDone, applied: applied.length, known: deps.figuresKnown, canRead: deps.canRead });
+          if (figure) {
+            nudgedForFigures = true;
+            transcript.push({ role: "assistant", content: r.content });
+            transcript.push({ role: "user", content: figure });
             continue;
           }
         }

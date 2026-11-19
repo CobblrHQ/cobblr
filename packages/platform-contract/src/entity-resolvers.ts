@@ -198,6 +198,11 @@ export interface EntityListQuery {
    *  search that cannot find it lies by omission. The resolver decides what
    *  retired means for its kind; a kind with no such notion ignores this. */
   include_retired?: boolean;
+  /** Ask `q` again by near words: each long word also matches any spelling
+   *  one edit away (textSearchWhere, #9624). The search route asks this only
+   *  when the exact search found nothing; the kernel makes it request-local,
+   *  so a resolver passes nothing along. */
+  near?: boolean;
   /** The reader's calendar day (YYYY-MM-DD), what a `'today'` predicate
    *  compares against: the client's day when it said one, else the person's
    *  (accounts.dayFor). Absent, a resolver uses the day that has arrived

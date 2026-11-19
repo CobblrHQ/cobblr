@@ -7,6 +7,7 @@
 import { platform, ActionRefusal } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { BuildsDB } from "../db.js";
+import { sql } from "kysely";
 
 type Db = Kysely<BuildsDB>;
 
@@ -39,6 +40,21 @@ async function holds(db: Db, from: string, target: string): Promise<boolean> {
  *  through another: the engine skips a loop, so a build in one takes less than
  *  its list says, and nothing says so. */
 export async function addComponent(db: Db, orgId: string, buildId: string, c: ComponentInput) {
+  // The loop check and the insert under one lock: two people adding the frame
+  // to the wheel and the wheel to the frame at once each passed the check
+  // (the other had not landed), both were saved, and each build was made with
+  // the other, taking less stock than its list says, silently (#4115). The
+  // same lock a folder move takes for the same reason. Only a sub-assembly
+  // can make a loop, so only one waits for it.
+  if (!c.sub_assembly_build_id) return addComponentIn(db, orgId, buildId, c);
+  const locked = async (trx: Db) => {
+    await sql`select pg_advisory_xact_lock(hashtext('builds_components.sub_assembly'))`.execute(trx);
+    return addComponentIn(trx, orgId, buildId, c);
+  };
+  return db.isTransaction ? locked(db) : db.transaction().execute(locked);
+}
+
+async function addComponentIn(db: Db, orgId: string, buildId: string, c: ComponentInput) {
   const build = await db.selectFrom("builds_builds").select(["id"]).where("id", "=", buildId).executeTakeFirst();
   if (!build) throw new ActionRefusal("That build is not here.");
   if (c.sub_assembly_build_id) {

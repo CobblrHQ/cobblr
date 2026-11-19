@@ -5,8 +5,9 @@
 // workspace slug, and normalises errors into a shape the tools can surface.
 
 // EGRESS-FILE: operator-configured - the MCP server calls the instance address it was started with
+import { createHash } from "node:crypto";
 import type { Config } from "./config.js";
-import { workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
+import { requestHeaders, workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
 
 export class CobblrApiError extends Error {
   constructor(
@@ -124,7 +125,9 @@ export class CobblrClient {
     const origin = /\/api\/v1$/.test(this.cfg.baseUrl) ? this.cfg.baseUrl.replace(/\/api\/v1$/, "") : null;
     return {
       link: workspaceLinks({ apiBase: this.cfg.baseUrl, appOrigin: origin }, slug),
-      async request(method, path, body) {
+      // This server's token on this workspace: its reads judge its changes.
+      readerScope: `mcp:${createHash("sha256").update(token).digest("hex").slice(0, 32)}:${slug}`,
+      async request(method, path, body, opts) {
         let res: Response;
         try {
           res = await fetch(`${base}${path}`, {
@@ -133,6 +136,7 @@ export class CobblrClient {
               authorization: `Bearer ${token}`,
               "x-cobblr-client": "mcp",
               ...(body !== undefined ? { "content-type": "application/json" } : {}),
+              ...requestHeaders(opts),
             },
             body: body !== undefined ? JSON.stringify(body) : undefined,
           });

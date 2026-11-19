@@ -288,7 +288,7 @@ export function AssetsPage({
     <div className="space-y-4">
       <CollectionHeader
         title={heading}
-        count={showArchived ? `${list.data?.total ?? allRows.length} gone or put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${formatMoney(paidTotal, { currency: list.data?.money_total?.currency })} in all` : ""}`}
+        count={!list.isSuccess ? undefined : showArchived ? `${list.data?.total ?? allRows.length} gone or put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${formatMoney(paidTotal, { currency: list.data?.money_total?.currency })} in all` : ""}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
           (list.data?.archived_count ?? 0) > 0 || showArchived ? (

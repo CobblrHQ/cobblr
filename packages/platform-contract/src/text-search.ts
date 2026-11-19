@@ -132,13 +132,18 @@ export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | unde
   // could say what that column holds.
   const readings = text.length === columns.text.length ? columns.readings : undefined;
   const values = readableValuesPath(hidden);
-  const anywhere = (word: string): any[] => {
-    const like = likeNeedle(word);
-    return [
+  const anywhereLike = (like: string): any[] => [
       ...text.map((c: string) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
       ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(eb.fn("jsonb_path_query_array", [c, eb.val(`${values} ? (!exists(@.__cobblr_secret))`)]), "text")]), "like", like)),
-    ];
-  };
+  ];
+  const anywhere = (word: string): any[] => anywhereLike(likeNeedle(word));
+  // Asked again because the exact search found nothing (#9624): every word
+  // somewhere on the record, each long one by any spelling one edit away.
+  if (nearWordsNow()) {
+    const per = nearQueryPatterns(needle).map((patterns) => eb.or(patterns.flatMap((p) => anywhereLike(p))));
+    if (!text.length && !(columns.json ?? []).length) return null;
+    return per.length === 1 || !eb.and ? per[0] : eb.and(per);
+  }
   const exprs = anywhere(needle);
   if (exprs.length === 0) return null;
   const hasValues = !!(columns.json?.length || readings);
@@ -196,4 +201,70 @@ export function valueSearchWhere<EB extends LikeBuilder>(
     }),
   ];
   return eb.and!(every);
+}
+
+// ── near words: a mistyped word still finds the thing (#9624) ─────────────
+// "hex blot" found nothing in a workspace holding "Hex bolt M5 x 20", and a
+// person told there is nothing buys another box. When a search finds nothing,
+// the search route asks again with each long word widened to every spelling
+// one edit away: two letters swapped, one wrong, one too many, one too few. Each
+// is a plain LIKE pattern (`_` is one character), so it needs nothing from
+// the database but what an exact search already uses.
+
+let nearWordsSource: () => boolean = () => false;
+
+/** Whether this search is asking again for near words. The api registers
+ *  where that is read (a request-local flag set by entities.list when the
+ *  search route asks with `near`), so no resolver has to pass it along. */
+export function setNearWordsSource(source: () => boolean): void {
+  nearWordsSource = source;
+}
+function nearWordsNow(): boolean {
+  return nearWordsSource();
+}
+
+/** Only a word this long is widened: a short word one edit away from
+ *  everything ("cat": bat, cut, at) would match noise, not a typo. */
+export const NEAR_WORD_MIN = 4;
+/** Only this many words of a query are widened, the longest first. */
+export const NEAR_WORDS_MAX = 2;
+/** And never more patterns than this for one query, across its words. */
+export const NEAR_PATTERNS_MAX = 64;
+
+/** Every LIKE pattern one edit from `word`, the person's own `%`, `_` and
+ *  `\` made literal so only these wildcards are wildcards. Lower-cased, and
+ *  matched anywhere (`%…%`). The word itself is first. */
+export function nearWordPatterns(word: string): string[] {
+  const chars = [...word.toLowerCase()];
+  const lit = (cs: readonly string[]) => cs.map((c) => likeEscape(c)).join("");
+  const out = new Set<string>([lit(chars)]);
+  if (chars.length >= NEAR_WORD_MIN) {
+    for (let i = 0; i < chars.length; i++) {
+      // One typed too many: "boolt" for "bolt".
+      out.add(lit([...chars.slice(0, i), ...chars.slice(i + 1)]));
+      // One wrong: "bilt" for "bolt", as "b_lt".
+      out.add(`${lit(chars.slice(0, i))}_${lit(chars.slice(i + 1))}`);
+      // Two swapped: "bolt" for "blot".
+      if (i + 1 < chars.length && chars[i] !== chars[i + 1]) out.add(lit([...chars.slice(0, i), chars[i + 1]!, chars[i]!, ...chars.slice(i + 2)]));
+    }
+    // One typed too few, anywhere: "washr" for "washer", as "wash_r".
+    for (let i = 0; i <= chars.length; i++) out.add(`${lit(chars.slice(0, i))}_${lit(chars.slice(i))}`);
+  }
+  // LIKE-OK: every piece of p went through likeEscape (lit); its only bare `_` are the widening's own.
+  return [...out].map((p) => `%${p}%`);
+}
+
+/** A query's words, each with the patterns that find it: the longest
+ *  NEAR_WORDS_MAX words widened, the rest exact, and never more than
+ *  NEAR_PATTERNS_MAX patterns in all. */
+export function nearQueryPatterns(q: string): string[][] {
+  const words = q.trim().split(/\s+/).filter(Boolean);
+  const widened = new Set([...words].sort((a, b) => b.length - a.length).slice(0, NEAR_WORDS_MAX));
+  let budget = NEAR_PATTERNS_MAX;
+  return words.map((w) => {
+    const all = widened.has(w) ? nearWordPatterns(w) : [likeNeedle(w)];
+    const take = all.slice(0, Math.max(1, budget));
+    budget -= take.length;
+    return take;
+  });
 }

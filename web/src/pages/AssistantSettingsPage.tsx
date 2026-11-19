@@ -125,7 +125,7 @@ export function AssistantSettingsPage() {
                 <div className="text-sm text-muted mt-1.5 line-clamp-2 whitespace-pre-wrap">{r.reply}</div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                <button
+                <button disabled={toggle.isPending}
                   type="button"
                   onClick={() => toggle.mutate(r)}
                   title={r.enabled ? "Turn off" : "Turn on"}
@@ -138,7 +138,7 @@ export function AssistantSettingsPage() {
                 </button>
                 {r.builtin ? (
                   r.id && (
-                    <button
+                    <button disabled={remove.isPending}
                       aria-label="Reset to the shipped default"
                       type="button"
                       onClick={() => r.id && remove.mutate(r.id)}
@@ -149,7 +149,7 @@ export function AssistantSettingsPage() {
                     </button>
                   )
                 ) : (
-                  <button
+                  <button disabled={remove.isPending}
                     aria-label="Delete"
                     type="button"
                     onClick={async () => {
@@ -327,14 +327,14 @@ function Commands({ slug }: { slug: string }) {
               {c.times_used > 0 && (
                 <span className="text-[10px] font-mono text-faint dark:text-slate-500 shrink-0">used {c.times_used}×</span>
               )}
-              <button
+              <button disabled={toggle.isPending}
                 type="button"
                 onClick={() => toggle.mutate({ id: c.id, enabled: !c.enabled })}
                 className="shrink-0 text-[11px] text-muted hover:text-content dark:hover:text-mortar-200 transition"
               >
                 {c.enabled ? "Turn off" : "Turn on"}
               </button>
-              <button
+              <button disabled={forget.isPending}
                 title="Forget"
                 type="button"
                 onClick={() =>
@@ -438,7 +438,7 @@ function Unanswered({ slug, onAnswer }: { slug: string; onAnswer: (m: BasicMissR
             >
               Answer this
             </button>
-            <button
+            <button disabled={dismiss.isPending}
               type="button"
               onClick={() => dismiss.mutate(m.id)}
               title="Dismiss: not worth an answer"

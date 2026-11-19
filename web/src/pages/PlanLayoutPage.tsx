@@ -414,7 +414,7 @@ export function PlanLayoutPage() {
             )}
             {!draft.applied_at && (
               <>
-                <button
+                <button disabled={discard.isPending}
                   type="button"
                   onClick={async () => {
                     if (await confirm({ title: `Discard ${draft.name}?`, message: "Nothing in the room has moved, so nothing changes.", confirmLabel: "Discard", destructive: true })) discard.mutate(draft);

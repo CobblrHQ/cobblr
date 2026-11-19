@@ -966,7 +966,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <button
           type="button"
-          disabled={applyingPreset}
+          disabled={(applyingPreset) || essentialsPreset.isPending}
           onClick={() => essentialsPreset.mutate()}
           className="rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-3 py-1.5 text-xs font-medium text-white"
         >
@@ -974,7 +974,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
         </button>
         <button
           type="button"
-          disabled={applyingPreset}
+          disabled={(applyingPreset) || showAllNative.isPending}
           onClick={() => showAllNative.mutate()}
           className="rounded-md border border-line dark:border-slate-600 hover:border-faint disabled:opacity-50 px-3 py-1.5 text-xs font-medium text-muted hover:text-content"
         >
@@ -1014,7 +1014,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
                 }}
                 className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               />
-              <button
+              <button disabled={save.isPending}
                 aria-label={hidden ? "Show on the form" : "Hide from the form"}
                 type="button"
                 title={hidden ? "Show on the form" : "Hide from the form"}
@@ -1024,7 +1024,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
                 {hidden ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
               {o && (
-                <button aria-label="Reset to default" type="button" title="Reset to default" onClick={() => reset.mutate(f.name)} className="text-faint hover:text-ember-500 p-1">
+                <button disabled={reset.isPending} aria-label="Reset to default" type="button" title="Reset to default" onClick={() => reset.mutate(f.name)} className="text-faint hover:text-ember-500 p-1">
                   <RotateCcw size={13} />
                 </button>
               )}

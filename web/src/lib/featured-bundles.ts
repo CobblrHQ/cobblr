@@ -2430,8 +2430,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.community.computers",
       released_at: "2026-10-02",
       changelog: "A computer's Contents are called Parts: install what it is built from, and rename the word if you call them something else.",
-      version: "0.2.2",
+      version: "0.2.3",
       releases: [
+        { version: "0.2.3", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." },
         { version: "0.2.2", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.2.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         { version: "0.2.0", released_at: "2026-10-02", notes: "A computer's Contents are called Parts: install what it is built from, and rename the word if you call them something else." },
@@ -2488,7 +2489,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               learns: true, choices: ["Laptop", "Desktop", "All-in-one", "Mini PC", "Workstation", "Server", "Tablet"],
               field_role: "category",
               position: 1,
-              help: "What shape of computer. The table groups by this.",
+              help: "What shape of computer. Your list is grouped by this.",
             },
             {
               entity_kind: "assets:asset",
@@ -2550,8 +2551,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.community.hand-tools",
       released_at: "2026-10-02",
       changelog: "Hand tools as their own table: each one's size and drive as real measurements and what kind of tool it is, filled from its name.",
-      version: "0.1.0",
+      version: "0.1.3",
       releases: [
+        { version: "0.1.3", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." },
         {
           version: "0.1.0",
           released_at: "2026-10-02",
@@ -2602,7 +2604,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               choices: ["Socket", "Deep socket", "Ratchet", "Extension", "Wrench", "Driver"],
               field_role: "category",
               position: 1,
-              help: "What kind of tool. The table groups by this, and a name that says it fills it.",
+              help: "What kind of tool. Your list is grouped by this, and a name that says it fills it.",
             },
             {
               entity_kind: "inventory:part",
@@ -3884,12 +3886,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.plants",
-      version: "0.3.5",
+      version: "0.3.6",
       name: "Plants",
       description: "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
       author: "Cobblr",
       released_at: "2026-09-30",
       releases: [
+        { version: "0.3.6", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." },
         { version: "0.3.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.3.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
@@ -3911,7 +3914,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           scan_keywords: ["fertilizer", "potting soil", "planter", "seeds", "watering can"],
           field_defs: [
             { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1, help: "The plant's name/type, e.g. “Monstera”, “Snake plant”." },
-            { entity_kind: "assets:asset", name: "light", display_label: "Light", type: "text", position: 2, learns: false, choices: ["Low", "Medium", "Bright indirect", "Direct sun"], help: "How much light its spot gets, the table groups by this so similar plants sit together." },
+            { entity_kind: "assets:asset", name: "light", display_label: "Light", type: "text", position: 2, learns: false, choices: ["Low", "Medium", "Bright indirect", "Direct sun"], help: "How much light its spot gets; your list is grouped by this so similar plants sit together." },
             { entity_kind: "assets:asset", name: "water_every_days", display_label: "Water every (days)", type: "number", aggregate: "none", unit: "d", position: 3, help: "Days between waterings, e.g. 7 for weekly." },
             { entity_kind: "assets:asset", name: "last_watered", display_label: "Last watered", type: "date", position: 4 },
             { entity_kind: "assets:asset", name: "pot_size", display_label: "Pot size", type: "text", position: 5, help: "Pot diameter, e.g. “6 in”, “15 cm”." },
@@ -4395,12 +4398,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.collections",
       catalog: "disabled",
-      version: "0.3.5",
+      version: "0.3.6",
       name: "Collections",
       description: "Your collection as its own cover wall: condition, edition, paid vs value today, so you stop buying the dupe.",
       author: "Cobblr",
       released_at: "2026-10-02",
       releases: [
+        { version: "0.3.6", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." },
         { version: "0.3.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.3.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
@@ -4422,7 +4426,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "piece",
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 1, learns: false, choices: ["Mint / Sealed", "Near Mint", "Excellent", "Good", "Fair", "Poor"], help: "Collector grade, the table groups by this; condition drives resale value." },
+            { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 1, learns: false, choices: ["Mint / Sealed", "Near Mint", "Excellent", "Good", "Fair", "Poor"], help: "Collector grade; your list is grouped by this; condition drives resale value." },
             { entity_kind: "inventory:part", name: "edition", display_label: "Edition / year", type: "text", position: 2, help: "Printing/pressing/edition or year: first editions, reissues, etc." },
             { entity_kind: "inventory:part", name: "acquired_date", display_label: "Acquired", type: "date", position: 3 },
             { entity_kind: "inventory:part", name: "acquired_price", display_label: "Paid", type: "money", aggregate: "sum", position: 4 },
@@ -4460,8 +4464,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.fasteners",
       changelog: "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: First catalogued release: the fastener drawer skin (length, diameter, thread, head) on inventory.",
-      version: "0.1.5",
-      releases: [{ version: "0.1.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.1.6",
+      releases: [{ version: "0.1.6", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." }, { version: "0.1.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Fasteners",
       description:
         "Your fastener drawers as their own table: an inventory instance with thread, length, head, drive and material pre-shaped, quantities + reorder thresholds kept, grouped by thread.",
@@ -4501,7 +4505,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           scan_keywords: ["heat set insert", "wood screw", "machine screw", "sheet metal screw", "hardware assortment"],
           field_defs: [
             { entity_kind: "inventory:part", name: "fastener_type", display_label: "Type", type: "text", position: 1, learns: true, choices: ["Screw", "Bolt", "Nut", "Washer", "Standoff", "Threaded insert", "Rivet", "Anchor"] },
-            { entity_kind: "inventory:part", name: "thread", display_label: "Thread", type: "text", position: 2, help: "M3, M5, 1/4-20, #6-32…, the table groups by this." },
+            { entity_kind: "inventory:part", name: "thread", display_label: "Thread", type: "text", position: 2, help: "M3, M5, 1/4-20, #6-32…; your list is grouped by this." },
             { entity_kind: "inventory:part", name: "length_mm", display_label: "Length (mm)", type: "number", aggregate: "none", unit: "mm", position: 3, help: "Shaft length, not counting the head. Leave blank for nuts/washers." },
             { entity_kind: "inventory:part", name: "head", display_label: "Head", type: "text", position: 4, learns: true, choices: ["Socket cap", "Button", "Countersunk (flat)", "Pan", "Hex", "Flanged", "None"] },
             { entity_kind: "inventory:part", name: "drive", display_label: "Drive", type: "text", position: 5, learns: true, choices: ["Hex (Allen)", "Phillips", "Torx", "Slotted", "External hex", "None"] },
@@ -4536,8 +4540,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.documents",
       catalog: "extended",
-      version: "0.2.4",
-      releases: [{ version: "0.2.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.2.5",
+      releases: [{ version: "0.2.5", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." }, { version: "0.2.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Documents",
       description: "Every document that expires as its own table: number/issuer/expiry, grouped by type, with expiry dates on your calendar.",
       author: "Cobblr",
@@ -4553,7 +4557,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           glyph: "🪪",
           item_noun: "document",
           field_defs: [
-            { entity_kind: "assets:asset", name: "doc_type", display_label: "Type", type: "text", position: 1, learns: true, choices: ["Passport", "Driver's license", "Vehicle registration", "Insurance policy", "Membership", "Certification", "Visa / permit", "Warranty", "Other"], help: "What kind of document, the table groups by this." },
+            { entity_kind: "assets:asset", name: "doc_type", display_label: "Type", type: "text", position: 1, learns: true, choices: ["Passport", "Driver's license", "Vehicle registration", "Insurance policy", "Membership", "Certification", "Visa / permit", "Warranty", "Other"], help: "What kind of document; your list is grouped by this." },
             { entity_kind: "assets:asset", name: "document_number", display_label: "Number", type: "text", position: 2, help: "The document/policy/licence number printed on it." },
             { entity_kind: "assets:asset", name: "issuer", display_label: "Issued by", type: "text", position: 3, help: "Who issued it: passport office, DMV, insurer, etc." },
             { entity_kind: "assets:asset", name: "issued_date", display_label: "Issued", type: "date", position: 4 },
@@ -4634,12 +4638,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.gifts-occasions",
       catalog: "disabled",
-      version: "0.2.5",
+      version: "0.2.6",
       name: "Gifts & Occasions",
       description: "Gift ideas as their own table: who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
       author: "Cobblr",
       released_at: "2026-10-02",
       releases: [
+        { version: "0.2.6", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." },
         { version: "0.2.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.2.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
@@ -4660,7 +4665,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           glyph: "🎁",
           item_noun: "gift",
           field_defs: [
-            { entity_kind: "inventory:part", name: "recipient", display_label: "For", type: "text", position: 1, help: "Who the gift is for, the table groups by this." },
+            { entity_kind: "inventory:part", name: "recipient", display_label: "For", type: "text", position: 1, help: "Who the gift is for; your list is grouped by this." },
             { entity_kind: "inventory:part", name: "occasion", display_label: "Occasion", type: "text", position: 2, learns: true, choices: ["Birthday", "Christmas", "Anniversary", "Wedding", "Graduation", "Holiday", "Just because", "Other"] },
             { entity_kind: "inventory:part", name: "occasion_date", display_label: "Occasion date", type: "date", position: 3, help: "When you need it by, lands on your calendar." },
             { entity_kind: "inventory:part", name: "budget", display_label: "Budget", type: "money", aggregate: "sum", position: 4 },
@@ -4758,8 +4763,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.home-maintenance",
       catalog: "disabled",
-      version: "0.3.3",
-      releases: [{ version: "0.3.3", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.3.4",
+      releases: [{ version: "0.3.4", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." }, { version: "0.3.3", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Home Maintenance",
       description: "Your home's systems as their own table (furnace, water heater, HVAC filters, detectors) with service logs + next-due dates on your calendar.",
       author: "Cobblr",
@@ -4779,7 +4784,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             // its Location (the platform's canonical "where", native on assets).
             // The migration below moves any pre-0.3 location values into real
             // Locations.
-            { entity_kind: "assets:asset", name: "system_type", display_label: "System", type: "text", position: 1, learns: true, choices: ["Furnace", "Air conditioner", "Water heater", "HVAC filter", "Smoke / CO detector", "Gutters", "Sump pump", "Dishwasher", "Washer", "Dryer", "Refrigerator", "Garage door", "Other"], help: "Which home system, the table groups by this." },
+            { entity_kind: "assets:asset", name: "system_type", display_label: "System", type: "text", position: 1, learns: true, choices: ["Furnace", "Air conditioner", "Water heater", "HVAC filter", "Smoke / CO detector", "Gutters", "Sump pump", "Dishwasher", "Washer", "Dryer", "Refrigerator", "Garage door", "Other"], help: "Which home system; your list is grouped by this." },
             { entity_kind: "assets:asset", name: "installed_date", display_label: "Installed", type: "date", position: 3 },
             { entity_kind: "assets:asset", name: "filter_size", display_label: "Filter / part size", type: "text", position: 4, help: "The filter or replacement-part size to buy, e.g. “16×25×1” for a furnace filter." },
           ],
@@ -4817,7 +4822,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.wardrobe",
       catalog: "extended",
-      version: "0.1.7",
+      version: "0.1.8",
       name: "Wardrobe",
       description: "Catalog your clothing as its own table (type, colour, season, formality, a photo each) grouped by type. Optional Outfits table for planning looks.",
       author: "Cobblr",
@@ -4825,6 +4830,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       changelog:
         "The Outfit Planner reads in plain sentences. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: First release: your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
       releases: [
+        { version: "0.1.8", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." },
         { version: "0.1.7", released_at: "2026-10-27", notes: "Saving or deleting a look from an older Outfit Planner explains the conflict and keeps newer saved looks." },
         { version: "0.1.6", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         { version: "0.1.5", released_at: "2026-09-30", notes: "The Outfit Planner reads in plain sentences." },
@@ -4900,7 +4906,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               glyph: "👚",
               item_noun: "outfit",
               field_defs: [
-                { entity_kind: "projects:project", name: "occasion", display_label: "Occasion", type: "text", position: 1, learns: true, choices: ["Everyday", "Work", "Date", "Event", "Travel", "Workout", "Special"], help: "What the look is for, the table groups by this." },
+                { entity_kind: "projects:project", name: "occasion", display_label: "Occasion", type: "text", position: 1, learns: true, choices: ["Everyday", "Work", "Date", "Event", "Travel", "Workout", "Special"], help: "What the look is for; your list is grouped by this." },
                 { entity_kind: "projects:project", name: "wear_date", display_label: "Wear on", type: "date", position: 2, help: "When you'll wear it, lands on your calendar as “what to wear”." },
                 { entity_kind: "projects:project", name: "pieces", display_label: "Pieces", type: "text", position: 3, help: "The garments in this look: jot them here, or build it visually in the Outfit Planner app." },
               ],
@@ -4929,7 +4935,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.cnc-tooling",
       catalog: "extended",
-      version: "0.2.7",
+      version: "0.2.8",
       name: "CNC Tooling",
       description:
         "Your CNC tooling as its own table (end mills, drills, taps, reamers, inserts) by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
@@ -4938,6 +4944,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       changelog:
         "The Cataloging Bench reads in plain sentences. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing, with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together, inventory:create-item + core-scan:identify, not a bench-specific module action. See docs/product/cataloging-bench.md.",
       releases: [
+        { version: "0.2.8", released_at: "2026-11-19", notes: "Field help says your list is grouped by this, in plain words, instead of naming a table." },
         { version: "0.2.7", released_at: "2026-10-13", notes: "The Bench shows save failures and keeps captured measurements and photos for another attempt." },
         { version: "0.2.6", released_at: "2026-10-12", notes: "The Cataloging Bench keeps the photo it captures: the saved tool opens with it, in its picture and its Photos." },
         { version: "0.2.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
@@ -4955,7 +4962,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "tool",
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "tool_type", display_label: "Type", type: "text", position: 1, learns: true, choices: ["End mill", "Drill", "Tap", "Reamer", "Insert", "Collet", "Other"], help: "What kind of tool, the table groups by this." },
+            { entity_kind: "inventory:part", name: "tool_type", display_label: "Type", type: "text", position: 1, learns: true, choices: ["End mill", "Drill", "Tap", "Reamer", "Insert", "Collet", "Other"], help: "What kind of tool; your list is grouped by this." },
             { entity_kind: "inventory:part", name: "diameter_mm", display_label: "Diameter (mm)", type: "number", aggregate: "none", unit: "mm", position: 2, help: "Cutting diameter, from the calipers." },
             { entity_kind: "inventory:part", name: "shank_dia_mm", display_label: "Shank (mm)", type: "number", aggregate: "none", unit: "mm", position: 3, help: "Shank diameter, the size your collet/holder needs." },
             { entity_kind: "inventory:part", name: "overall_length_mm", display_label: "Overall length (mm)", type: "number", aggregate: "none", unit: "mm", position: 4, help: "Tip to end, for reach + holder clearance." },

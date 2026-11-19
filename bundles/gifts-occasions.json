@@ -2,12 +2,17 @@
   "manifest": {
     "id": "cobblr.flagship.gifts-occasions",
     "catalog": "disabled",
-    "version": "0.2.5",
+    "version": "0.2.6",
     "name": "Gifts & Occasions",
     "description": "Gift ideas as their own table: who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
     "author": "Cobblr",
     "released_at": "2026-10-02",
     "releases": [
+      {
+        "version": "0.2.6",
+        "released_at": "2026-11-19",
+        "notes": "Field help says your list is grouped by this, in plain words, instead of naming a table."
+      },
       {
         "version": "0.2.5",
         "released_at": "2026-10-07",
@@ -47,7 +52,7 @@
             "display_label": "For",
             "type": "text",
             "position": 1,
-            "help": "Who the gift is for, the table groups by this."
+            "help": "Who the gift is for; your list is grouped by this."
           },
           {
             "entity_kind": "inventory:part",

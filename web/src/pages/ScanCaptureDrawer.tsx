@@ -545,7 +545,7 @@ export function ScanCaptureDrawer({
             <Check size={13} /> Looks right
           </button>
         ) : name ? (
-          <button
+          <button disabled={reject.isPending}
             type="button"
             onClick={() => { setCorrecting(true); setExpanded(true); reject.mutate(); }}
             data-testid="capture-drawer-not-right"

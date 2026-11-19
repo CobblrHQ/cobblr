@@ -8,6 +8,11 @@ import { placeLine, platform } from "@cobblr/platform-contract";
 
 const router = Router({ mergeParams: true });
 
+/** How long a search found nothing may spend asking again by near words. */
+const NEAR_BUDGET_MS = 3_000;
+/** How many matching places bring what is kept in them. */
+const KEPT_PLACES_MAX = 3;
+
 const SearchQuery = z.object({
   // q is optional now — `tag=<name>` alone is a valid query ("show
   // me everything tagged `urgent`"). Still capped at 200 chars when
@@ -81,7 +86,7 @@ router.get("/search", (req, res, next) => {
     // so those fall out of kinds_searched naturally.
     // Only reads from here to the answer, so the workspace's kinds, instances
     // and field scopes are asked once for the search, not once per kind (#8898).
-    const { candidateIds, perKindResults } = await platform().entities.readingOnly(async () => {
+    const { candidateIds, perKindResults, near } = await platform().entities.readingOnly(async () => {
       const allKinds = await platform().entities.listKindsForOrg(orgId);
       const candidateIds = kindsParam
         ? allKinds.filter((k) => kindsParam.includes(k.id)).map((k) => k.id)
@@ -98,7 +103,7 @@ router.get("/search", (req, res, next) => {
       // `kinds_failed` rather than counted as "no matches": a search that could
       // not ask two kinds looked exactly like one that asked and found nothing,
       // for three weeks (#3824).
-      const perKindResults = await platform().db.fanOut(orgId, candidateIds, async (kind) => {
+      const ask = (near: boolean) => platform().db.fanOut(orgId, candidateIds, async (kind) => {
           // Search finds what was retired too: "where is my old drill" is a
           // question about something archived, and a search that cannot find
           // it lies by omission. Lists and views leave retired records out
@@ -109,11 +114,26 @@ router.get("/search", (req, res, next) => {
             offset,
             filter: tag ? { _tag: tag } : undefined,
             include_retired: true,
+            ...(near ? { near: true } : {}),
           }, viewer);
           if (tag && result.unapplied?.some((p) => p.col === "_tag")) return { items: [], failed: false, total: undefined };
           return { items: result.items.map((item) => ({ ...item, kind })), failed: result.failed === true, total: result.total };
       });
-      return { candidateIds, perKindResults };
+      let perKindResults = await ask(false);
+      // Nothing found by the words as typed: ask once more with each long
+      // word widened to any spelling one edit away ("hex blot" finds "Hex
+      // bolt", #9624), inside a time budget so a typo never holds the
+      // workspace. Only for a first page with words, and only when every kind
+      // answered: a kind that failed is not "found nothing".
+      let near = false;
+      if (q && offset === 0 && perKindResults.every((r) => !r.failed && r.items.length === 0)) {
+        const widened = await Promise.race([ask(true), new Promise<null>((done) => setTimeout(() => done(null), NEAR_BUDGET_MS).unref?.())]);
+        if (widened && widened.some((r) => r.items.length > 0)) {
+          perKindResults = widened;
+          near = true;
+        }
+      }
+      return { candidateIds, perKindResults, near };
     });
     const kindsFailed = candidateIds.filter((_, i) => perKindResults[i]!.failed);
     const perKind = perKindResults.map((r) => r.items);
@@ -135,7 +155,30 @@ router.get("/search", (req, res, next) => {
     }
 
     // Live ones first, whatever kind; retired ones after, still found.
-    const ordered = [...merged.filter((i) => i.retired !== true), ...merged.filter((i) => i.retired === true)];
+    const found = [...merged.filter((i) => i.retired !== true), ...merged.filter((i) => i.retired === true)];
+
+    // A place that matched brings what is kept directly in it, right after
+    // it: "garage shelf" found the shelf and not the tent pegs on it, so
+    // "what's on the garage shelf" took a second search (#9624). One level,
+    // the first few places, each read as this person may read it.
+    const ordered: typeof found = [];
+    const seen = new Set(found.map((i) => `${i.kind}:${i.id}`));
+    let places = 0;
+    for (const hit of found) {
+      ordered.push(hit);
+      if (!q || offset !== 0 || places >= KEPT_PLACES_MAX) continue;
+      const inside = await platform().placement.contents({ orgId, container: { kind: hit.kind, id: hit.id } }).catch(() => []);
+      if (!inside.length) continue;
+      places++;
+      for (const ref of inside.slice(0, per_kind)) {
+        const key = `${ref.kind}:${ref.id}`;
+        if (seen.has(key)) continue;
+        const rec = await platform().entities.lookup(orgId, ref.kind, ref.id, viewer).catch(() => null);
+        if (!rec) continue;
+        seen.add(key);
+        ordered.push({ ...(rec as unknown as typeof hit), kind: ref.kind, id: ref.id, kept_in: { kind: hit.kind, id: hit.id } } as typeof hit);
+      }
+    }
 
     // Where each one is, every step up ("Backpack, in Desk drawer"), read
     // from placement for every kind alike, so a thing inside another thing
@@ -152,6 +195,9 @@ router.get("/search", (req, res, next) => {
 
     res.json({
       q,
+      // Found by near words, not the words as typed: the page says so
+      // ("Showing near matches for …") so a person knows why these.
+      ...(near ? { near: true } : {}),
       kinds_searched: candidateIds.filter((_, i) => perKind[i]!.length > 0),
       // Every kind actually asked, found or not. kinds_searched names only the
       // kinds that answered with something, so on a miss it was [] and an

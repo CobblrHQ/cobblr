@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api, type QueueJob } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { usePageTitle, usePageWidth } from "@cobblr/platform-web";
+import { usePageTitle, usePageWidth, QueryError } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import { FEED_SCROLL_PAGE_INNER } from "../lib/feed";
 
@@ -75,7 +75,8 @@ export function QueuePage() {
       </p>
 
       {jobs.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {!jobs.isLoading && items.length === 0 && (
+      {jobs.isError && <QueryError what="the queue" onRetry={() => void jobs.refetch()} />}
+      {jobs.isSuccess && items.length === 0 && (
         <div className="text-sm text-muted italic">
           No jobs {statusFilter ? `with status "${statusFilter}"` : "yet"}.
         </div>

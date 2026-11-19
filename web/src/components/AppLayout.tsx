@@ -657,7 +657,12 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             moves all three together. */}
         {/* A phone on its side has the Dynamic Island or the notch at one side
             and rounded corners at both: the row keeps clear of them (#6782). */}
-        <div ref={setBarRow} className="desktop-topnav-pad pl-[max(20px,var(--inset-left))] pr-[max(20px,var(--inset-right))] pt-1 pb-3 md:py-3 flex max-md:flex-wrap items-center gap-[6px] sm:gap-[12px] min-w-0">
+        {/* The row wraps ONLY when the name takes its own row (#9502). A row
+            that may always wrap breaks a line before it shrinks anything, so a
+            long name pushed the icons onto a second line under it instead of
+            truncating: Scan sat on Home, and the bar grew 34 px once the name
+            loaded, moving every control under a finger. */}
+        <div ref={setBarRow} className={`desktop-topnav-pad pl-[max(20px,var(--inset-left))] pr-[max(20px,var(--inset-right))] pt-1 pb-3 md:py-3 flex ${nameOwnRow ? "max-md:flex-wrap" : ""} items-center gap-[6px] sm:gap-[12px] min-w-0`}>
           {/* Nav-placement flip (desktop): top bar ⇄ left sidebar. Sits LEFT
               of the wordmark, à la Vivaldi's panel toggle. Icon shows the
               layout you'd switch TO. */}
@@ -738,12 +743,13 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
                   button on-screen instead of clipping it. On a phone where that
                   would leave it under six characters' room (text at 200%, a
                   320 px screen), it takes a row of its own under the bar
-                  instead, and reads whole there (#9502). */}
+                  instead, and reads whole there (#9502), 14 px further
+                  down so its 44 px target clears Home's (#9561). */}
               <div
                 ref={setNameBox}
                 data-tour="workspace"
                 data-own-row={nameOwnRow ? "" : undefined}
-                className={`min-w-0 ${nameOwnRow ? "max-md:order-last max-md:basis-full" : ""}`}
+                className={`min-w-0 ${nameOwnRow ? "max-md:order-last max-md:basis-full max-md:mt-[14px]" : ""}`}
               >
                 <WorkspaceSwitcher />
               </div>
@@ -777,10 +783,11 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             <UserMenu themed={!!skin} />
           </div>
 
-          {/* Mobile: spacer pushes the right cluster to the edge. The scan
-              quick-action + AI launcher live here too (were desktop-only) so
-              the phone navbar has the buttons, not just the hamburger. */}
-          <div className="flex-1 md:hidden" />
+          {/* Mobile: the right cluster sits at the edge by its own ml-auto. The
+              scan quick-action + AI launcher live here too (were desktop-only)
+              so the phone navbar has the buttons, not just the hamburger. An
+              empty spacer here cost the name a 6 px gap of its own, and
+              "Sam's Workshop" came out 2 px short on an iPhone SE (#9561). */}
           {/* Each icon here is padded in px, as its icon is sized, and so are the
               bar's sides and gaps: in rem the six of them doubled with the
               phone's text at 200%, ran the menu 15 px off the screen (18 on a
@@ -790,7 +797,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               Only the capture actions sit here; the builder's (Build) are rows
               in the menu, so an owner's workspace name is whole beside the
               rest (#9278). */}
-          <div className="shrink-0 md:hidden flex items-center">
+          <div className="shrink-0 md:hidden flex items-center ml-auto">
             <HeaderActions only="capture" />
             {/* An app-mode workspace keeps its menu to the app, the same way
                 the menu leaves search out there. */}

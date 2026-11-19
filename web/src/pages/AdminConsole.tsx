@@ -23,7 +23,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { Code, SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput, useSentWords, relativeTime } from "@cobblr/platform-web";
+import { Code, SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput, useSentWords, relativeTime, QueryError } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
@@ -363,7 +363,8 @@ function WorkspacesTab() {
               </td>
             </tr>
           ))}
-          {!q.isLoading && items.length === 0 && (
+          {q.isError && <QueryError what="workspaces" onRetry={() => void q.refetch()} />}
+          {q.isSuccess && items.length === 0 && (
             <tr><td colSpan={6} className="px-3 py-6 text-center text-faint text-xs">No workspaces match.</td></tr>
           )}
         </tbody>
@@ -494,7 +495,8 @@ function UsersTab() {
               </td>
             </tr>
           ))}
-          {!q.isLoading && items.length === 0 && (
+          {q.isError && <QueryError what="users" onRetry={() => void q.refetch()} />}
+          {q.isSuccess && items.length === 0 && (
             <tr><td colSpan={5} className="px-3 py-6 text-center text-faint text-xs">No users match.</td></tr>
           )}
         </tbody>
@@ -673,7 +675,8 @@ function ImpersonationLogTab() {
                 </tr>
               );
             })}
-            {!q.isLoading && items.length === 0 && (
+            {q.isError && <QueryError what="impersonation sessions" onRetry={() => void q.refetch()} />}
+            {q.isSuccess && items.length === 0 && (
               <tr><td colSpan={8} className="px-3 py-6 text-center text-faint text-xs">No impersonation sessions yet.</td></tr>
             )}
           </tbody>
@@ -699,7 +702,8 @@ function ImpersonationLogTab() {
                 <td className="px-3 py-2 text-[11px] text-muted">{new Date(a.created_at).toLocaleString()}</td>
               </tr>
             ))}
-            {!q.isLoading && removed.length === 0 && (
+            {q.isError && <QueryError what="what was removed" onRetry={() => void q.refetch()} />}
+            {q.isSuccess && removed.length === 0 && (
               <tr><td colSpan={3} className="px-3 py-6 text-center text-faint text-xs">Nothing removed from the console yet.</td></tr>
             )}
           </tbody>
@@ -1428,7 +1432,7 @@ function InvitesTab() {
           </label>
         </div>
         <button onClick={() => mint.mutate()} disabled={mint.isPending} className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50 inline-flex items-center gap-1.5">
-          <UserPlus size={14} /> Mint invite link
+          <UserPlus size={14} /> Create invite link
         </button>
         {freshLink && (
           <div className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 p-3 space-y-1.5">
@@ -1463,7 +1467,7 @@ function InvitesTab() {
                 <td className="px-3 py-1.5 text-muted">{inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : "never"}</td>
                 <td className="px-3 py-1.5 text-right">
                   {inv.status === "open" && (
-                    <button aria-label="Revoke" onClick={async () => { if (await confirm({ title: "Revoke invite?", message: "The link stops working immediately.", destructive: true })) revoke.mutate(inv.id); }} className="text-faint hover:text-ember-500 transition" title="Revoke"><Trash2 size={13} /></button>
+                    <button disabled={revoke.isPending} aria-label="Revoke" onClick={async () => { if (await confirm({ title: "Revoke invite?", message: "The link stops working immediately.", destructive: true })) revoke.mutate(inv.id); }} className="text-faint hover:text-ember-500 transition" title="Revoke"><Trash2 size={13} /></button>
                   )}
                 </td>
               </tr>
@@ -1550,7 +1554,7 @@ function WaitlistTab() {
                       <button onClick={() => approve.mutate(w.id)} disabled={approve.isPending} className="inline-flex items-center gap-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white px-2 py-1 text-[11px] font-medium transition disabled:opacity-50" title="Mint + email an invite">
                         <UserPlus size={12} /> Approve
                       </button>
-                      <button aria-label="Dismiss" onClick={async () => { if (await confirm({ title: "Dismiss signup?", message: `${w.email} won't be invited (they can sign up again later).`, destructive: true })) dismiss.mutate(w.id); }} className="ml-2 text-faint hover:text-ember-500 transition" title="Dismiss">
+                      <button disabled={dismiss.isPending} aria-label="Dismiss" onClick={async () => { if (await confirm({ title: "Dismiss signup?", message: `${w.email} won't be invited (they can sign up again later).`, destructive: true })) dismiss.mutate(w.id); }} className="ml-2 text-faint hover:text-ember-500 transition" title="Dismiss">
                         <X size={13} />
                       </button>
                     </>
@@ -1740,7 +1744,7 @@ function BarcodeReviewSection() {
         verified answer every workspace's next scan sees; reject to drop it.
       </p>
       {q.isLoading && <p className="text-sm text-faint">loading…</p>}
-      {!q.isLoading && items.length === 0 && (
+      {q.isSuccess && items.length === 0 && (
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-faint">
           No proposed corrections to review.
         </div>
@@ -1898,7 +1902,8 @@ function BarcodeCacheTab() {
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap">{new Date(c.fetched_at).toLocaleString()}</td>
               </tr>
             ))}
-            {!q.isLoading && items.length === 0 && (
+            {q.isError && <QueryError what="the cache" onRetry={() => void q.refetch()} />}
+            {q.isSuccess && items.length === 0 && (
               <tr><td colSpan={layer === "workspaces" ? 9 : 8} className="px-3 py-6 text-center text-faint">Nothing cached yet - scan something.</td></tr>
             )}
           </tbody>
@@ -1995,7 +2000,7 @@ function ScanEvalTab() {
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap cursor-pointer" onClick={() => setDetail(c)}>{Object.keys(c.expected.fields ?? {}).length}</td>
                 <td className="px-3 py-1.5 text-faint whitespace-nowrap cursor-pointer" onClick={() => setDetail(c)}>{c.note ?? ""}</td>
                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                  <button
+                  <button disabled={del.isPending}
                     aria-label="Delete"
                     onClick={async () => {
                       if (await confirm({ title: "Delete eval case?", message: "This removes the captured case. It does not affect the committed entity.", destructive: true })) del.mutate(c);
@@ -2302,7 +2307,8 @@ function FeedbackTab() {
         ))}
       </div>
       {q.isLoading && <div className="text-xs text-faint">loading…</div>}
-      {items.length === 0 && !q.isLoading && (
+      {q.isError && <QueryError what="this list" onRetry={() => void q.refetch()} />}
+      {items.length === 0 && q.isSuccess && (
         <div className="text-xs text-faint dark:text-slate-500 italic">
           No feedback{filter !== "all" ? ` with status "${filter}"` : " yet"}.
         </div>

@@ -5,7 +5,7 @@ import { useRoleAtLeast } from "../lib/can";
 // job; we never live-drive the device (coordinate-not-control). Direct on the
 // LAN for self-hosted; the same connection rides the edge-bridge from cloud.
 
-import { productName } from "@cobblr/platform-web";
+import { productName, QueryError } from "@cobblr/platform-web";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
@@ -171,7 +171,8 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
       </p>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {!list.isLoading && items.length === 0 && (
+      {list.isError && <QueryError what="print jobs" onRetry={() => void list.refetch()} />}
+      {list.isSuccess && items.length === 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
           <div className="rounded-xl border border-line dark:border-slate-700 hover:border-accent bg-surface dark:bg-slate-900 p-4 transition">
             {/* onClick must WRAP the call: passing the handler directly hands React's
@@ -302,7 +303,7 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
               <button aria-label="Edit" onClick={() => setEditing(p)} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Edit">
                 <Pencil size={14} />
               </button>
-              <button
+              <button disabled={del.isPending}
                 aria-label="Remove"
                 onClick={async () => {
                   if (await confirm({ title: `Remove ${p.name}?`, message: "This deletes the printer connection.", confirmLabel: "Remove", destructive: true })) {

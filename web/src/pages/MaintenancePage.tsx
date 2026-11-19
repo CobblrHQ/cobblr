@@ -1,4 +1,4 @@
-import { FieldPack, fieldNeed, RecordFormModal, MoneyInput, SegmentedChoice, useConfirm, useToast, useRunWithUndo, usePageTitle } from "@cobblr/platform-web";
+import { FieldPack, fieldNeed, RecordFormModal, MoneyInput, SegmentedChoice, useConfirm, useToast, useRunWithUndo, usePageTitle, QueryError } from "@cobblr/platform-web";
 // /configuration/maintenance — workspace-wide service log. The
 // core-maintenance module (foundational) attaches polymorphic
 // entries to any entity; the embedded UI on each entity's detail
@@ -114,7 +114,8 @@ export function MaintenancePage() {
       {list.isLoading && (
         <div className="text-sm text-muted">Loading…</div>
       )}
-      {!list.isLoading && items.length === 0 && (
+      {list.isError && <QueryError what="maintenance" onRetry={() => void list.refetch()} />}
+      {list.isSuccess && items.length === 0 && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
           {kind === "scheduled"
             ? "Nothing scheduled. Maintenance is added from an item's detail page."

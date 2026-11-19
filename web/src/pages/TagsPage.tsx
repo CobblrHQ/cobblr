@@ -1,5 +1,5 @@
 import { useCan } from "../lib/can";
-import { fieldNeed, FieldPack, RecordFormModal, DragInput, SearchInput, useToast, useConfirm, usePageTitle, editOf } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, DragInput, SearchInput, useToast, useConfirm, usePageTitle, editOf, QueryError } from "@cobblr/platform-web";
 // /tags — list every tag the workspace has, what each is attached
 // to, and a quick "new tag" affordance. The attach-to-entity UX
 // happens module-side (Files page, parts page, etc.) — this page
@@ -234,7 +234,8 @@ export function TagsPage() {
       </div>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {allItems.length === 0 && !list.isLoading && (
+      {list.isError && <QueryError what="tags" onRetry={() => void list.refetch()} />}
+      {allItems.length === 0 && list.isSuccess && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
           No tags yet. Tags get created on demand when you attach one to an
           entity, or you can pre-define them here.

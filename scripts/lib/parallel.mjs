@@ -12,7 +12,7 @@
 // when every lint had its own step.
 
 import { spawn } from "node:child_process";
-import { splitShare, width } from "./job-budget.mjs";
+import { splitAround, splitShare, width } from "./job-budget.mjs";
 
 /** Default fan-out: from the box's cores and free memory, capped. The CI
  *  runner boxes are shared (scripts/lib/job-budget.mjs). */
@@ -39,8 +39,12 @@ export async function runParallel(jobs, { concurrency = defaultConcurrency(), fa
   const running = new Set();
   let stoppedBy = null;
   // The commands running together split this process's memory budget, so they
-  // cannot each size themselves for the whole room (lib/job-budget.mjs).
-  const share = splitShare(Math.min(concurrency, jobs.length));
+  // cannot each size themselves for the whole room (lib/job-budget.mjs). When
+  // all of them run at once, a command with a fixed peak (the web build) is
+  // counted at it and the rest split what it leaves (run 64773, #9625).
+  const together = Math.min(concurrency, jobs.length);
+  const shares = together >= jobs.length ? splitAround(jobs.map((j) => j.cmd)) : jobs.map(() => splitShare(together));
+  const shareOfJob = new Map(jobs.map((j, i) => [j, shares[i]]));
 
   const runOne = (job) =>
     new Promise((resolve) => {
@@ -51,7 +55,7 @@ export async function runParallel(jobs, { concurrency = defaultConcurrency(), fa
         // Its own process group under failFast, so stopping it stops what it started.
         detached: failFast,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, CI: process.env.CI ?? "1", FORCE_COLOR: "0", ...share, ...(job.env ?? {}) },
+        env: { ...process.env, CI: process.env.CI ?? "1", FORCE_COLOR: "0", ...shareOfJob.get(job), ...(job.env ?? {}) },
       });
       let out = "";
       child.stdout.on("data", (d) => (out += d));
@@ -95,7 +99,8 @@ export async function runParallel(jobs, { concurrency = defaultConcurrency(), fa
       const result = await runOne(job);
       results.push(result);
       onDone?.(result);
-      if (failFast && result.code !== 0 && !stoppedBy) stopTheRest(result.name);
+      // A kernel kill is the job's memory, not a verdict: it runs again alone below, so it stops nothing (run 64773).
+      if (failFast && result.code !== 0 && !stoppedBy && !(concurrency > 1 && killedByTheKernel(result))) stopTheRest(result.name);
     }
   };
 
@@ -121,7 +126,8 @@ export async function runParallel(jobs, { concurrency = defaultConcurrency(), fa
 }
 
 /** Whether a job was killed by the kernel (the job's memory limit, as a rule): its shell reports
- *  "Killed" and exits 137. Pure. */
+ *  "Killed" and exits 137, or pnpm, whose child it was, says "killed with SIGKILL" and exits 1. Pure. */
 export function killedByTheKernel(result) {
-  return result.code === 137 || /(^|\n)\s*Killed\s*$/m.test(String(result.out ?? ""));
+  const out = String(result.out ?? "");
+  return result.code === 137 || /(^|\n)\s*Killed\s*$/m.test(out) || /\bwas killed with SIGKILL\b/.test(out);
 }

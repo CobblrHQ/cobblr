@@ -26,6 +26,8 @@ import { dirname, join } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CHAT = join(ROOT, "modules/core-ai/src/api/chat.ts");
+// The loop the chat turn runs applies guards of its own (figures-from-tools).
+const LOOP = join(ROOT, "modules/core-ai/src/api/agent-loop.ts");
 const BENCH = join(ROOT, "scripts/bench-action-rail.ts");
 
 /** The guards a turn applies, by the module that owns each. */
@@ -37,6 +39,7 @@ const GUARD_MODULES = [
   "answer-dont-propose",
   "ask-dont-rank",
   "field-choices",
+  "figures-from-tools",
   "groundless-answer",
   "move-not-create",
   "nothing-to-repeat",
@@ -50,7 +53,7 @@ const NOT_IN_THE_BENCH: Record<string, string> = {
     "the bench never APPLIES a write - it records the proposal and stops - so a turn there can never have a ledger to misdescribe",
 };
 
-const chat = readFileSync(CHAT, "utf8");
+const chat = readFileSync(CHAT, "utf8") + readFileSync(LOOP, "utf8");
 const bench = readFileSync(BENCH, "utf8");
 const imports = (src: string, mod: string): boolean =>
   new RegExp(`from\\s+["'][^"']*${mod}\\.js["']`).test(src);

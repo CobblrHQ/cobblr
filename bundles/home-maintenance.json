@@ -2,8 +2,13 @@
   "manifest": {
     "id": "cobblr.flagship.home-maintenance",
     "catalog": "disabled",
-    "version": "0.3.3",
+    "version": "0.3.4",
     "releases": [
+      {
+        "version": "0.3.4",
+        "released_at": "2026-11-19",
+        "notes": "Field help says your list is grouped by this, in plain words, instead of naming a table."
+      },
       {
         "version": "0.3.3",
         "released_at": "2026-10-02",
@@ -53,7 +58,7 @@
               "Garage door",
               "Other"
             ],
-            "help": "Which home system, the table groups by this."
+            "help": "Which home system; your list is grouped by this."
           },
           {
             "entity_kind": "assets:asset",

@@ -104,13 +104,13 @@ export function SignInSettingsTab() {
                 {!p.enabled && <span className="ml-2 text-xs text-faint">off</span>}
                 {p.from_env && <span className="ml-2 text-xs text-faint">from COBBLR_OIDC_*</span>}
               </span>
-              <button type="button" onClick={() => test.mutate(p.id)} className="text-xs text-accent hover:underline">
+              <button disabled={test.isPending} type="button" onClick={() => test.mutate(p.id)} className="text-xs text-accent hover:underline">
                 Test
               </button>
               <button type="button" onClick={() => setEditing({ id: p.id, form: { ...p, client_secret: "" } })} className="text-xs text-accent hover:underline">
                 Edit
               </button>
-              <button
+              <button disabled={remove.isPending}
                 title={`Remove ${p.display_name}`}
                 type="button"
                 aria-label={`Remove ${p.display_name}`}

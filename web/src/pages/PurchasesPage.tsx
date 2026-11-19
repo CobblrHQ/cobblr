@@ -355,7 +355,7 @@ export function PurchasesPage() {
           reading "All stat" (#4390). */}
       <CollectionHeader
         title="Purchases"
-        count={`${filtered.length} of ${shown?.count ?? filtered.length}`}
+        count={orders.isSuccess ? `${filtered.length} of ${shown?.count ?? filtered.length}` : undefined}
         filters={
           <select
             value={statusFilter}
@@ -1335,7 +1335,7 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
                     <a href={v.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-accent hover:underline shrink-0">site ↗</a>
                   )}
                   <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(v.id); }} className="text-xs text-muted hover:text-accent shrink-0">Edit</button>
-                  {mayDelete && <button title="Delete vendor"
+                  {mayDelete && <button disabled={remove.isPending} title="Delete vendor"
                     type="button"
                     onClick={async (e) => {
                       e.stopPropagation();

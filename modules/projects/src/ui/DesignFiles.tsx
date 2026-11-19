@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Images, Loader2, Trash2, Upload } from "lucide-react";
-import { canPreviewFile, FilePreview, Lightbox, Modal, SelectableTile, usePasteImage, openAuthedFile, useConfirm, useFilePreviewRegistry, useToast, EntityPhoto, noteWorkspaceWrite, uploadJson, workspaceFetch } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, Lightbox, Modal, SelectableTile, usePasteImage, openAuthedFile, useConfirm, useFilePreviewRegistry, useToast, EntityPhoto, noteWorkspaceWrite, uploadJson, workspaceFetch, QueryError } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
 import { patternNeedsKey } from "./PatternNeeds";
@@ -226,7 +226,8 @@ export function DesignFiles({ designId }: { designId: string }) {
           <span className="truncate">Adding {upload.variables.name}…</span>
         </p>
       )}
-      {items.length === 0 && images.length === 0 && !list.isLoading && !upload.isPending && (
+      {list.isError && <QueryError what="design files" onRetry={() => void list.refetch()} />}
+      {items.length === 0 && images.length === 0 && list.isSuccess && !upload.isPending && (
         <p className="text-xs text-faint dark:text-slate-500 italic">
           No pattern or photos yet - upload the pattern PDF or a photo of the make.
         </p>
@@ -281,7 +282,7 @@ export function DesignFiles({ designId }: { designId: string }) {
                   pattern
                 </span>
               )}
-              <button
+              <button disabled={detach.isPending}
                 aria-label="Remove"
                 type="button"
                 onClick={() => {

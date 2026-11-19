@@ -6,7 +6,7 @@ export function ScanInboxEmptyState({ pendingCount, onReceipt }: { pendingCount:
     <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
       <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
       <div className="text-sm text-muted dark:text-slate-400">
-        Nothing pending. Open the camera, upload a photo, or paste a UPC into the search above.
+        Nothing pending. Open the camera, upload a photo, or type a barcode number into the search above.
       </div>
       <div className="hidden sm:block mt-1 text-xs text-faint dark:text-slate-500" data-testid="paste-anywhere-hint">
         Or paste or drop a picture anywhere on this page.

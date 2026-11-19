@@ -376,8 +376,8 @@ export function ContentsPanel({
 
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-line dark:border-slate-700">
-        <div className="flex items-center gap-2 text-sm font-medium text-content dark:text-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2 border-b border-line dark:border-slate-700">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-medium text-content dark:text-slate-200">
           <Package size={15} className="text-muted" />
           {renaming !== null ? (
             <input
@@ -419,7 +419,7 @@ export function ContentsPanel({
             <span className="text-xs text-faint">{assortedSummary(items)}</span>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex flex-wrap items-center gap-3">
           {scanIntoHref && (
             <Link
               to={scanIntoHref}
@@ -567,7 +567,7 @@ export function ContentsPanel({
                         )}
                       </>
                     ) : (
-                      <button
+                      <button disabled={remove.isPending}
                         type="button"
                         onClick={() => remove.mutate(it)}
                         className="p-1 text-faint hover:text-red-500"

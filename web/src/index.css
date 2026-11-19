@@ -29,6 +29,12 @@
     width: 13px;
     height: 13px;
   }
+  /* Beside a long sentence in a flex row, a box drawn without the system's
+     appearance gave up its width and showed as a thin sliver on a phone
+     (the invite's wall-QR choice, #4115). It keeps its size. */
+  input[type="checkbox"] {
+    flex-shrink: 0;
+  }
   input[type="checkbox"]:not(:checked):not(:indeterminate) {
     -webkit-appearance: none;
     appearance: none;
