@@ -33,6 +33,7 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { createHash, randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
+import { announceSignInsEnded, signInsEndAt } from "./sign-ins-ended.js";
 import { verifyPassword } from "../auth/password.js";
 import { sendAuthEmail } from "./hosted-seams.js";
 import { blockDisposableEnabled, isDisposableEmail } from "./disposable-emails.js";
@@ -222,7 +223,7 @@ export async function confirmEmailChange(
     await trx.updateTable("auth_email_change_tokens").set({ consumed_at: at }).where("id", "=", row.id).execute();
     await trx
       .updateTable("users")
-      .set({ email: row.new_email, email_verified_at: at, tokens_valid_from: revokeFrom(at) })
+      .set({ email: row.new_email, email_verified_at: at, ...signInsEndAt(revokeFrom(at)) })
       .where("id", "=", row.user_id)
       .execute();
     // The old mailbox keeps no way back in: a reset or verify link for this
@@ -231,6 +232,7 @@ export async function confirmEmailChange(
     await trx.updateTable("auth_email_verify_tokens").set({ consumed_at: at }).where("user_id", "=", row.user_id).where("consumed_at", "is", null).execute();
     await trx.updateTable("auth_magic_tokens").set({ consumed_at: at }).where("email", "=", row.old_email).where("consumed_at", "is", null).execute();
   });
+  announceSignInsEnded(row.user_id);
   await logAccountEvent(row.user_id, "email_changed", { from: row.old_email, to: row.new_email });
   const { plain: revertPlain, hashed } = mint();
   await meta
@@ -277,7 +279,7 @@ export async function revertEmailChange(plain: string): Promise<{ refused: Chang
     // nothing; the reset link below sets the new one.
     await trx
       .updateTable("users")
-      .set({ email: row.old_email, email_verified_at: at, tokens_valid_from: revokeFrom(at), password_hash: "", must_reset_password: false })
+      .set({ email: row.old_email, email_verified_at: at, ...signInsEndAt(revokeFrom(at)), password_hash: "", must_reset_password: false })
       .where("id", "=", row.user_id)
       .execute();
     // Credentials that never expire with a session: personal API tokens and
@@ -288,6 +290,7 @@ export async function revertEmailChange(plain: string): Promise<{ refused: Chang
     await trx.updateTable("auth_magic_tokens").set({ consumed_at: at }).where("email", "=", row.new_email).where("consumed_at", "is", null).execute();
     await trx.insertInto("auth_password_reset_tokens").values({ user_id: row.user_id, token_hash: reset.hashed, request_ip: null, request_ua: "email-change-revert" }).execute();
   });
+  announceSignInsEnded(row.user_id);
   await logAccountEvent(row.user_id, "email_change_reverted", { back_to: row.old_email, from: row.new_email });
   return { email: row.old_email, resetToken: reset.plain };
 }

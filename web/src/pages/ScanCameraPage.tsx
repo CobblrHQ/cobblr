@@ -1,5 +1,5 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { editOf, productName } from "@cobblr/platform-web";
+import { editOf, productName, UploadError } from "@cobblr/platform-web";
 import type { ScanPurpose } from "@cobblr/platform-contract/scan-triage";
 import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan/camera — full-screen immersive scanner, production-grade.
@@ -51,7 +51,7 @@ import { useDeployEnv } from "../lib/deploy-env";
 import { ManualScanField } from "../components/ManualScanField";
 import { NfcScanButton } from "../components/NfcScanButton";
 import { ingestBarcode, scannedAgain } from "../lib/scanIngest";
-import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanKnownCode, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
+import { ApiError, api, subscribeConnectivity, type LiveSortEntry, type ScanInboxItem, type ScanKnownCode, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, type DedupState } from "../lib/scanDedup";
 import { PHOTO_WANTED_ARM_MODE, nextWanted, photoQueue, promptLabel } from "../lib/photoQueue";
@@ -130,6 +130,14 @@ const LINK_HOLD_MS = 700;
 // Scan-session persistence lives in lib/scanSession.ts (one rule for the
 // camera and the wedge): a session ends on Done, or after SESSION_GAP_MS idle
 // or a new day, and a new one starts with no area (#4933).
+
+/** A save that failed for want of a connection (no answer, or a gateway or an
+ *  offline worker standing in for the api), as opposed to a refusal. */
+export function lostConnection(e: unknown): boolean {
+  if (e instanceof TypeError) return true;
+  const status = e instanceof ApiError || e instanceof UploadError ? e.status : null;
+  return status === 0 || status === 502 || status === 503 || status === 504;
+}
 
 export function ScanCameraPage() {
   const later = useLater();
@@ -305,7 +313,11 @@ export function ScanCameraPage() {
   // The capture itself is kept, not its picture: a retry is the same capture,
   // so its writes carry the same keys and a try that had landed is not made
   // again (lib/scanCapture.ts).
-  const [failedShot, setFailedShot] = useState<{ capture: Capture } | null>(null);
+  // `lost`: its save failed for want of a connection, so it is sent again by
+  // itself when the connection is back; a refusal waits for the person.
+  const [failedShot, setFailedShot] = useState<{ capture: Capture; lost?: boolean } | null>(null);
+  /** The restored shot owed its one try (offerNextKept). */
+  const sendRestored = useRef<string | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
   const [undoBusy, setUndoBusy] = useState(false);
   // ＋Photo: the next shutter press APPENDS to this item instead of creating a
@@ -2023,8 +2035,8 @@ export function ScanCameraPage() {
         // Kept on the device too, so a reload or a second failed shot does not
         // lose it (lib/keptShots.ts).
         if (capture) {
-          setFailedShot({ capture });
-          void keepShot(activeSlug, capture);
+          setFailedShot({ capture, lost: lostConnection(e) });
+          void keepShot(activeSlug, capture, lostConnection(e));
         }
         noteError(e);
       }
@@ -2282,30 +2294,76 @@ export function ScanCameraPage() {
   const offerNextKept = useCallback(async () => {
     const [next] = await keptShots(activeSlug);
     if (!next) return setFailedShot(null);
-    setFailedShot({ capture: next });
-    setFrame(next.file);
+    // A shot that failed offline, restored while the phone is already back
+    // online, hears no online event: it gets one try of its own once it is on
+    // offer. One per restore: a shot that fails again waits for the next
+    // reconnect, never looping while the api is out of reach.
+    sendRestored.current = next.lost && typeof navigator !== "undefined" && navigator.onLine !== false ? next.capture.id : null;
+    setFailedShot(next);
+    setFrame(next.capture.file);
   }, [activeSlug, setFrame]);
   useEffect(() => {
     void offerNextKept();
   }, [offerNextKept]);
 
+  // The shot on offer as of now, and whether a try of it is running: read at
+  // the moment a try starts, so the online event and a Retry press never run
+  // two tries of one capture, and a shot discarded meanwhile is never sent.
+  const failedShotNow = useRef(failedShot);
+  failedShotNow.current = failedShot;
+  const trying = useRef(false);
   const retryShot = useCallback(async () => {
-    if (!failedShot || retryBusy) return;
+    const shot = failedShotNow.current;
+    if (!shot || trying.current) return;
+    trying.current = true;
     setRetryBusy(true);
     try {
-      await saveShot(failedShot.capture);
-      await forgetShot(failedShot.capture.id);
+      await saveShot(shot.capture);
+      await forgetShot(shot.capture.id);
       await offerNextKept();
     } catch (e) {
       // What the try settled is kept with it, so the next try sends the same.
-      void keepShot(activeSlug, failedShot.capture);
+      void keepShot(activeSlug, shot.capture, lostConnection(e));
+      if (failedShotNow.current?.capture.id === shot.capture.id) setFailedShot({ capture: shot.capture, lost: lostConnection(e) });
       noteError(e);
     } finally {
+      trying.current = false;
       setRetryBusy(false);
     }
-  }, [activeSlug, failedShot, retryBusy, saveShot, noteError, offerNextKept]);
+  }, [activeSlug, saveShot, noteError, offerNextKept]);
+  // A shot kept while the signal was gone sends itself when the signal is back,
+  // as the offline banner promises ("Changes wait until you're back"): the
+  // person who took it offline should not have to come back and press Retry
+  // (#4115). It is the same capture, so it is still filed once. A shot kept
+  // from before a reload remembers why it failed (keptShots.ts), so one taken
+  // offline still sends itself; Retry stays for a refusal and to send sooner.
+  // Only a shot that failed for want of a connection: a refusal is the person's
+  // to retry or discard, never sent again on every reconnect.
+  const retryWhenBack = useRef(retryShot);
+  retryWhenBack.current = retryShot;
+  useEffect(() => {
+    if (!failedShot || sendRestored.current !== failedShot.capture.id) return;
+    sendRestored.current = null;
+    void retryWhenBack.current();
+  }, [failedShot]);
+  useEffect(() => {
+    let down = typeof navigator !== "undefined" && navigator.onLine === false;
+    const back = () => {
+      if (failedShotNow.current?.lost) void retryWhenBack.current();
+    };
+    const offConn = subscribeConnectivity((isDown) => {
+      if (down && !isDown) back();
+      down = isDown;
+    });
+    const online = () => back();
+    window.addEventListener("online", online);
+    return () => {
+      offConn();
+      window.removeEventListener("online", online);
+    };
+  }, []);
   const discardShot = useCallback(async () => {
-    if (!failedShot) return;
+    if (!failedShot || trying.current) return;
     await forgetShot(failedShot.capture.id);
     await offerNextKept();
   }, [failedShot, offerNextKept]);

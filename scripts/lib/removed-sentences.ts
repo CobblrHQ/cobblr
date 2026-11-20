@@ -16,6 +16,9 @@ export interface Violation {
 
 /** A phrase shorter than this is a word, not a sentence a person would read. */
 export const MIN_SENTENCE = 12;
+/** The annotation on an added line that is now the one source of a sentence
+ *  several removed lines said by hand. */
+export const MOVED_HERE = /sentence-moved-here: \S/;
 
 /** The lines a unified diff removes, with the file each came from. */
 export function removedLines(diff: string): RemovedLine[] {
@@ -59,6 +62,10 @@ export function check(removed: RemovedLine[], added: RemovedLine[], specs: SpecT
     if (s.text.length < MIN_SENTENCE) continue;
     const from = removed.find((r) => r.text.includes(s.text));
     if (!from) continue;
+    // Gathered into one place that every former site now calls: the added
+    // line says so, with why, and the sentence is still said (#4115: a dozen
+    // hand-written "Nothing was changed." became one, written from a count).
+    if (added.some((l) => l.text.includes(s.text) && MOVED_HERE.test(l.text))) continue;
     if (count(removed, s.text) > count(added, s.text)) out.push({ spec: s.spec, text: s.text, file: from.file });
   }
   return out;

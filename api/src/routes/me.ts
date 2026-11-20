@@ -33,7 +33,8 @@ import { signSession } from "../auth/jwt.js";
 import * as notifications from "../platform/notifications.js";
 import { notificationKindsFor, notificationLabel } from "../platform/notification-kinds.js";
 import { onNotificationChange } from "../platform/notification-stream.js";
-import { openSse, signStreamTicket, verifyStreamTicket } from "../lib/event-stream.js";
+import { openPersonSse, signInOf, signStreamTicket, verifyStreamTicket } from "../lib/event-stream.js";
+import { announceSignInsEnded, signInsEndAt } from "../platform/sign-ins-ended.js";
 import { NOTIFICATION_STREAM_EVENT } from "@cobblr/platform-contract/notification-stream";
 import type { NotificationChannel } from "../db/schema.js";
 import { pressNotificationAction } from "../platform/notification-press.js";
@@ -407,9 +408,10 @@ meRouter.post("/me/password", requireAuth, async (req, res, next) => {
     const changedAt = new Date();
     await meta
       .updateTable("users")
-      .set({ password_hash: newHash, must_reset_password: false, tokens_valid_from: changedAt })
+      .set({ password_hash: newHash, must_reset_password: false, ...signInsEndAt(changedAt) })
       .where("id", "=", req.session!.id)
       .execute();
+    announceSignInsEnded(req.session!.id);
     const freshToken = await signSession(req.session!.id);
     // Activity-log to whichever workspace the user is a member of
     // (security-relevant action — was missing per 2026-05-25 audit).
@@ -499,9 +501,10 @@ meRouter.post("/me/sign-out-everywhere", requireAuth, async (req, res, next) => 
     const at = new Date();
     await meta
       .updateTable("users")
-      .set({ tokens_valid_from: at })
+      .set(signInsEndAt(at))
       .where("id", "=", req.session!.id)
       .execute();
+    announceSignInsEnded(req.session!.id);
     // Every other browser and phone stops taking this account's notices too:
     // a lost phone keeps its push subscription after its session ends (#7124).
     // The browser asking may keep its own.
@@ -1082,7 +1085,7 @@ const STREAM_AUD = "notifications";
 // REPLAY: a short-lived stream ticket; makes no record
 meRouter.post("/me/notifications/stream-ticket", requireAuth, async (req, res, next) => {
   try {
-    res.json({ ticket: await signStreamTicket(STREAM_AUD, req.session!.id) });
+    res.json({ ticket: await signStreamTicket(STREAM_AUD, signInOf(req.session!)) });
   } catch (err) {
     next(err);
   }
@@ -1098,7 +1101,11 @@ meRouter.get("/me/notifications/stream", async (req, res, next) => {
       res.status(401).json({ error: { code: "bad_ticket", message: "A valid stream ticket is required." } });
       return;
     }
-    const { send, stop } = openSse(res);
+    // Only while the sign-in that opened it stands: a lost phone stops ringing
+    // when its owner signs out everywhere (#4115).
+    const stream = await openPersonSse(res, who.signIn);
+    if (!stream) return;
+    const { send, stop } = stream;
     const off = onNotificationChange(who.userId, (change) => send(NOTIFICATION_STREAM_EVENT, change));
     req.on("close", () => {
       stop();
@@ -2486,6 +2493,8 @@ meRouter.delete("/me/api-tokens/:id", requireAuth, async (req, res, next) => {
         select t.id from api_tokens t join kids on t.parent_token_id = kids.id
       )
       update api_tokens set revoked_at = now() where id in (select id from kids) and revoked_at is null`.execute(meta);
+    // A stream a script holds open on this token asks again and ends (#4115).
+    announceSignInsEnded(req.session!.id);
     if (updated.org_id) {
       await activity.log({ orgId: updated.org_id, action: "api_token_revoked", ref: { module: null, entityType: "api_token", entityId: updated.id }, diff: { name: updated.name } }).catch(() => {});
     }

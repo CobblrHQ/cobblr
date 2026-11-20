@@ -61,7 +61,7 @@ export function humanizeProviderError(error: string, detail?: ProviderFailureDet
       return { code: "replay_missing_result", message: REPLAY_MISSING_RESULT_MESSAGE };
     }
     if (/no cassette matches/i.test(replayed)) {
-      return { code: "replay_missing_cassette", message: "There is no recorded reply for this request. Nothing was changed." };
+      return { code: "replay_missing_cassette", message: "There is no recorded reply for this request." };
     }
     return { code: "unknown", message: replayed };
   }
@@ -101,7 +101,7 @@ export function humanizeProviderError(error: string, detail?: ProviderFailureDet
     return {
       code: "session_limit",
       ...(resetsAt ? { resetsAt } : {}),
-      message: `Your AI subscription has used up its session allowance${resetsAt ? `; it resets at ${resetsAt}` : ""}. Nothing was changed - ask again after that.`,
+      message: `Your AI subscription has used up its session allowance${resetsAt ? `; it resets at ${resetsAt}` : ""}. Ask again after that.`,
     };
   }
   if (isProvider && (status === "429" || quota)) {
@@ -109,18 +109,18 @@ export function humanizeProviderError(error: string, detail?: ProviderFailureDet
     const tier = /free.?tier/i.test(raw) ? " (free tier)" : "";
     return {
       code: "rate_limited",
-      message: `${who} is rate-limiting this workspace${tier}: too many requests, or too much text sent, in the last minute. ${wait} Nothing was changed.`,
+      message: `${who} is rate-limiting this workspace${tier}: too many requests, or too much text sent, in the last minute. ${wait}`,
       retryAfterSec,
     };
   }
   if (isProvider && (status === "401" || status === "403" || /invalid api key|api key not valid|unauthori[sz]ed|PERMISSION_DENIED/i.test(raw))) {
-    return { code: "unauthorized", message: `${who} rejected the API key. Check it under Configuration → AI. Nothing was changed.` };
+    return { code: "unauthorized", message: `${who} rejected the API key. Check it under Configuration → AI.` };
   }
   if (isProvider && (status === "404" || /model.*not found|not found.*model|no such model/i.test(raw))) {
-    return { code: "model_missing", message: `${who} does not have the model this workspace is set to. Pick another under Configuration → AI. Nothing was changed.` };
+    return { code: "model_missing", message: `${who} does not have the model this workspace is set to. Pick another under Configuration → AI.` };
   }
   if (isProvider && (status?.startsWith("5") || /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|fetch failed|socket hang up|overloaded|UNAVAILABLE/i.test(raw))) {
-    return { code: "unavailable", message: `${who} is unavailable right now (it did not answer, or answered with a server error). Try again shortly. Nothing was changed.` };
+    return { code: "unavailable", message: `${who} is unavailable right now (it did not answer, or answered with a server error). Try again shortly.` };
   }
   if (isProvider) {
     // Unknown provider failure: the one sentence, never a status and never a

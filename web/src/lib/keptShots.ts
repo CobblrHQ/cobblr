@@ -23,6 +23,9 @@ interface KeptShot {
   blob: Blob;
   stamps: CaptureStamps;
   fileId?: string;
+  /** Its save failed for want of a connection: sent by itself when the
+   *  connection is back, after a reload too (#4115). */
+  lost?: boolean;
   batchId?: string | null;
 }
 
@@ -61,8 +64,8 @@ async function run<T>(mode: IDBTransactionMode, work: (s: IDBObjectStore) => IDB
 }
 
 /** Keep a capture whose save failed, with what its tries settled. */
-export async function keepShot(slug: string, c: Capture): Promise<void> {
-  const kept: KeptShot = { id: c.id, slug, takenAt: c.file.lastModified, blob: c.file, stamps: c.stamps, ...(c.fileId ? { fileId: c.fileId } : {}), ...(c.batchId !== undefined ? { batchId: c.batchId } : {}) };
+export async function keepShot(slug: string, c: Capture, lost = false): Promise<void> {
+  const kept: KeptShot = { id: c.id, slug, takenAt: c.file.lastModified, blob: c.file, stamps: c.stamps, ...(lost ? { lost: true } : {}), ...(c.fileId ? { fileId: c.fileId } : {}), ...(c.batchId !== undefined ? { batchId: c.batchId } : {}) };
   await run("readwrite", (s) => s.put(kept));
 }
 
@@ -72,7 +75,7 @@ export async function forgetShot(id: string): Promise<void> {
 }
 
 /** The captures kept for this workspace, oldest first, as the captures they were. */
-export async function keptShots(slug: string): Promise<Capture[]> {
+export async function keptShots(slug: string): Promise<{ capture: Capture; lost: boolean }[]> {
   const all = ((await run("readonly", (s) => s.getAll())) ?? []) as KeptShot[];
   return all
     .filter((k) => k.slug === slug)
@@ -81,6 +84,6 @@ export async function keptShots(slug: string): Promise<Capture[]> {
       const c = newCapture(k.blob, k.stamps, k.takenAt, k.id);
       if (k.fileId) c.fileId = k.fileId;
       if (k.batchId !== undefined) c.batchId = k.batchId;
-      return c;
+      return { capture: c, lost: k.lost === true };
     });
 }

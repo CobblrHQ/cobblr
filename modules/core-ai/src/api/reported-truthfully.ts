@@ -19,6 +19,8 @@
 // can move those - confirm?") is talking about the future and is not lying,
 // and a turn that changed nothing has nothing to misreport.
 
+import { saidWithChanges } from "./what-changed.js";
+
 /** The write tools, grouped by what a person would call them. */
 export type WriteClass = "create" | "update" | "delete";
 
@@ -88,6 +90,7 @@ const DONE = /\b(queued|printed|moved|renamed|updated|edited|changed|re-?filed|r
 export function claimedAfterHandBack(text: string): string | null {
   if (!text.trim() || !claimsClass(text, DONE)) return null;
   return (
+    // changed-claim-ok: said to the model, and asked only when the turn applied nothing (agent-loop.ts, applied.length === 0)
     "Nothing was changed this turn: the write you tried was handed back before it ran, with the reason in its result. " +
     "Your answer says it happened. Say what the result asked for instead (usually a question for the person), and do not say anything was done."
   );
@@ -114,6 +117,7 @@ export function claimedWithNoWrite(text: string): string | null {
   const claims = [...text.matchAll(new RegExp(CLAIMED_DONE.source, "gi"))].filter((m) => !/\b(?:not|never|nothing)\b|n['’]t\b/i.test(m[0]));
   if (!text.trim() || claims.length === 0) return null;
   return (
+    // changed-claim-ok: said to the model, and asked only when the turn applied nothing (agent-loop.ts, applied.length === 0)
     "Nothing was changed this turn: no write ran, and no change was proposed. Your answer says something was done. " +
     "If they asked for a change, make it now with the tool for it (it becomes a card they confirm); otherwise say plainly that it has not been done."
   );
@@ -133,7 +137,7 @@ export function endsHonestly(text: string, handedBack: boolean, appliedCount: nu
   if (!handedBack || appliedCount > 0) return text;
   const said = text.trim();
   if (!said || said.endsWith("?") || SAYS_NOT_DONE.test(said)) return text;
-  return `${said.replace(/[.!]*$/, ".")} Nothing was changed.`;
+  return saidWithChanges(said, appliedCount, { failed: true });
 }
 
 /** What a create in this call is called, by the kind's title field. */

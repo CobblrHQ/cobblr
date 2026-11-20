@@ -39,6 +39,7 @@ import {
   builtinDefaultPosition,
 } from "../basics-store.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
+import { saidWithChanges } from "./what-changed.js";
 
 export const basicsRouter = Router({ mergeParams: true });
 
@@ -1045,7 +1046,8 @@ async function executeCommand(req: Request, body: { message: string; selection_i
         const section = plan.sections?.find((s) => s.key === body.section);
         if (!section) {
           return { status: 409, body: {
-            error: { code: "section_gone", message: "That part of the plan is not there any more: the page has changed since it was offered. Nothing was changed." },
+            // Refused before any of it ran: none of it changed anything.
+            error: { code: "section_gone", message: saidWithChanges("That part of the plan is not there any more: the page has changed since it was offered.", 0, { failed: true }) },
           } };
         }
         operations = section.operations;

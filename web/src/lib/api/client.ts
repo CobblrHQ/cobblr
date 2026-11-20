@@ -6,7 +6,7 @@ import { getStationTokenOverride, noteStationTokenRefused } from "../station-tok
 import { sessionChanged, sessionIdentityOf } from "../session-identity";
 import { getImpersonationToken } from "../impersonation";
 import { forgetDashboardCopies } from "../../dashboard/device-copy";
-import { UploadError, noteSavedEdit, beginWrite, isAWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
+import { UploadError, noteSavedEdit, beginWrite, isAWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, ASKS_NOW_HEADER, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
 import { SHARE_VIEW_BLOCKED, SHARE_VIEW_READ_ONLY, shareViewPathAllowed } from "@cobblr/platform-contract/share-view";
 import { EDITED_FROM_HEADER, PAGE_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
@@ -333,6 +333,9 @@ async function sendRequest<T>(
   if (isPageLeaving()) return new Promise<T>(() => {});
   // A page's request says so (#9448).
   const headers: Record<string, string> = { [PAGE_HEADER]: "1", ...(extraHeaders ?? {}) };
+  // Asks for something now: never kept to send later (waiting-writes.ts).
+  const asksNow = ASKS_NOW_HEADER in headers;
+  delete headers[ASKS_NOW_HEADER];
   if (body !== undefined) headers["Content-Type"] = "application/json";
   // Kept for the blocked-action sheet: `body` is shadowed by the response
   // below, and a refusal needs the request as it was sent.
@@ -353,7 +356,7 @@ async function sendRequest<T>(
   // A person's write is kept on the device as it leaves, and forgotten when it
   // lands, so a reload before its answer sends it again as the same write
   // instead of losing it without a word (#8638).
-  const keeping = !!key && byAPerson && !impToken && !headers["x-cobblr-waited"] && keepWaitingWrite(method, path, bodyText, headers["Authorization"], headers[EDITED_FROM_HEADER], { key, orphan: !byAMutation, sending: true });
+  const keeping = !!key && byAPerson && !asksNow && !impToken && !headers["x-cobblr-waited"] && keepWaitingWrite(method, path, bodyText, headers["Authorization"], headers[EDITED_FROM_HEADER], { key, orphan: !byAMutation, sending: true });
   // Sent past the person's own earlier edits of this record still kept (#9365).
   const opened = keeping && key && headers[EDITED_FROM_HEADER] ? keptEditedFrom(key) : undefined;
   if (opened) headers[EDITED_FROM_HEADER] = encodeEditedFrom(opened);
@@ -386,7 +389,7 @@ async function sendRequest<T>(
       // A form's write (no mutation sends it again) is sent by the store when
       // the connection returns, and the form is told so: it said "couldn't"
       // under a banner counting it as waiting, and nothing sent it (#8637).
-      const kept = keeping && key ? sendingWaits(key) : byAPerson && !impToken && !headers["x-cobblr-waited"] && keepWaitingWrite(method, path, bodyText, headers["Authorization"], headers[EDITED_FROM_HEADER], { key, orphan: !byAMutation });
+      const kept = keeping && key ? sendingWaits(key) : byAPerson && !asksNow && !impToken && !headers["x-cobblr-waited"] && keepWaitingWrite(method, path, bodyText, headers["Authorization"], headers[EDITED_FROM_HEADER], { key, orphan: !byAMutation });
       if (kept && !byAMutation) throw new ApiError(0, KEPT_OFFLINE, KEPT_SENTENCE);
       throw new ApiError(0, "offline", networkFailureMessage());
     }

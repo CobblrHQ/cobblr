@@ -29,6 +29,7 @@ import { stripStageDirections } from "./stage-directions.js";
 import { actionToolCall } from "./action-tool-call.js";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { saidWithChanges } from "./what-changed.js";
 export interface LoopModelResult {
   content: string;
   tool_calls?: ToolCall[];
@@ -135,12 +136,59 @@ export type AgentLoopEvent =
 export const ROUND_CAP_NUDGE = "(You've used the maximum number of tool rounds. Answer the user now with what you've learned: no more tool calls.)";
 
 export type AgentLoopOutcome =
-  | { kind: "reply"; text: string; applied: AppliedWrite[]; failed?: FailedWrite[] }
+  /** `stopped`: the model call that failed after this turn had already
+   *  changed something. The changes are kept and reported, never lost with
+   *  the error (stopped-part-way.ts). */
+  | { kind: "reply"; text: string; applied: AppliedWrite[]; failed?: FailedWrite[]; stopped?: unknown }
   | { kind: "writes"; calls: ToolCall[]; text: string; applied: AppliedWrite[]; failed?: FailedWrite[] };
 
 /** Exported for the bench: it runs the same loop shape against the same
  *  reads, so its cap and clamp are these and not a copy. */
 export const DEFAULT_MAX_ROUNDS = 5;
+
+// A turn can never run away (#4115). A model answered "done" by the write it
+// just made can make it again, round after round, and at Auto each one
+// applied: "add 5 runaway bolts" made five. One that asks for sixty reads in
+// a breath, every round, ran three hundred. So a call the turn already made
+// is answered with what it got the first time and not run again, reads have
+// a budget per turn, and a turn stopped by either ends on words the code
+// writes, with what it changed (what-changed.ts).
+export const MAX_READS_PER_TURN = 40;
+const STOPPED = {
+  repeat: "I stopped there: the next step was one I had already taken, and taking it again would only have repeated it.",
+} as const;
+
+function canonicalArgs(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonicalArgs);
+  if (v && typeof v === "object") return Object.fromEntries(Object.keys(v as Record<string, unknown>).sort().map((k) => [k, canonicalArgs((v as Record<string, unknown>)[k])]));
+  return v;
+}
+const COUNT_WORDS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, dozen: 12, twenty: 20 };
+
+function valuesIn(v: unknown, out = new Set<number>()): Set<number> {
+  if (typeof v === "number") out.add(v);
+  else if (typeof v === "string" && /^\d+(?:\.\d+)?$/.test(v.trim())) out.add(Number(v));
+  else if (Array.isArray(v)) for (const x of v) valuesIn(x, out);
+  else if (v && typeof v === "object") for (const x of Object.values(v)) valuesIn(x, out);
+  return out;
+}
+
+/** How many of one change, alike in every argument, the person asked for in
+ *  one go: "three brackets called Bracket" is three. A number the change
+ *  itself carries ("2 doubled washers" with qty 2) is how many of the thing,
+ *  not how many records, and does not count. One when nothing says more. */
+export function alikeAskedFor(message: string, call: ToolCall): number {
+  const own = valuesIn(call.args ?? {});
+  let most = 1;
+  for (const m of message.toLowerCase().matchAll(/\b(\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|twenty)\b/g)) {
+    const n = /^\d+$/.test(m[1]!) ? Number(m[1]) : COUNT_WORDS[m[1]!]!;
+    if (!own.has(n) && n > most && n <= 50) most = n;
+  }
+  return most;
+}
+
+/** The same tool with the same arguments is the same call. */
+const callKey = (call: ToolCall): string => `${call.name}\u0000${JSON.stringify(canonicalArgs(call.args ?? {}))}`;
 // 4000 held about nine of fourteen seeded machines; a real record carries
 // more text than a seed. 12000 chars is roughly 3k tokens against a system
 // prompt that already costs ~15k, and a list is trimmed by whole records
@@ -287,9 +335,21 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   // scrubbed of ids before it reaches a person (scrub-ids.ts); knowing the
   // names is what lets "(67377d87-…)" become "(Den)" instead of vanishing.
   const seenNames = new Map<string, string>();
+  // Every call an EARLIER round made, with what it got. Calls alike in one
+  // round still each run: "three shelves called Shelf" is three creates.
+  const madeEarlier = new Map<string, string>();
+  let stoppedFor: keyof typeof STOPPED | null = null;
   for (let round = 0; round < maxRounds; round++) {
     emit({ kind: "thinking", round });
-    const r = await deps.callModel(transcript);
+    let r: LoopModelResult;
+    try {
+      r = await deps.callModel(transcript);
+    } catch (err) {
+      // Nothing done yet: the failure is the whole answer. Something done:
+      // the failure must not take the record of it along (#4115).
+      if (applied.length === 0) throw err;
+      return { kind: "reply", text: "", applied, stopped: err, ...withFailed() };
+    }
     const calls = (r.tool_calls ?? []).map((call) => actionToolCall(call, deps.actionIds ?? []));
 
     if (calls.length === 0) {
@@ -401,7 +461,49 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     let writeFailedThisRound = false;
     const ordered = deps.orderWrites ? deps.orderWrites(calls) : calls;
 
+    let repeats = 0;
+    let repeatedAWrite = false;
+    const alikeThisRound = new Map<string, number>();
+    let outOfReads = false;
     for (const call of ordered) {
+      // A change alike in every argument, more times in this round than the
+      // person asked for: the rest are the first one again (#4115).
+      const key = callKey(call);
+      if (deps.isWrite(call.name)) {
+        const n = (alikeThisRound.get(key) ?? 0) + 1;
+        alikeThisRound.set(key, n);
+        const first = turnResults.find((tr) => callKey(tr.call) === key);
+        if (n > alikeAskedFor(lastUserSaid, call) && first) {
+          repeats++;
+          repeatedAWrite = true;
+          emit({ kind: "tool-result", name: call.name, ok: true, summary: "the same change, already made in this step", handed_back: true });
+          turnResults.push({ call, text: clampJson({ ok: true, already_done: true, note: "This exact change was already made in this same step, so it was not made again. Make a change once unless the person asked for that many.", earlier: first.text }, maxChars) });
+          continue;
+        }
+      }
+      const before = madeEarlier.get(key);
+      if (before !== undefined) {
+        // Made already this turn: what it got then, never run again.
+        repeats++;
+        if (deps.isWrite(call.name)) repeatedAWrite = true;
+        const note = deps.isWrite(call.name)
+          ? "This exact change was already made earlier in this turn, so it was not made again. Do not repeat it; answer the person now."
+          : "You already read exactly this earlier in this turn; its result is below. Do not ask for it again; answer the person now.";
+        let earlier: unknown = before;
+        try {
+          earlier = JSON.parse(before);
+        } catch {
+          /* a clamped result stays text */
+        }
+        emit({ kind: "tool-result", name: call.name, ok: true, summary: "already done earlier in this turn", handed_back: true });
+        turnResults.push({ call, text: clampJson({ ok: true, already_done: true, note, earlier }, maxChars) });
+        continue;
+      }
+      if (!deps.isWrite(call.name) && readsDone >= MAX_READS_PER_TURN) {
+        outOfReads = true;
+        turnResults.push({ call, text: clampJson({ ok: false, error: "This turn has used all the reads it may make. Answer the person now with what you have." }, maxChars) });
+        continue;
+      }
       if (!deps.isWrite(call.name)) {
         // Read — always executes.
         emit({ kind: "tool", name: call.name, args: call.args, write: false });
@@ -514,6 +616,20 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
       }
       pendingProposals.push(call);
     }
+    for (const tr of turnResults) if (!madeEarlier.has(callKey(tr.call))) madeEarlier.set(callKey(tr.call), tr.text);
+    // Nothing new asked for: a repeated change ends the turn on the code's
+    // words (the model's next ones described the change it kept making); a
+    // repeated read, or reads spent, goes to the one last call that answers
+    // with what was read.
+    if (pendingProposals.length === 0 && repeats > 0 && repeats === calls.length && repeatedAWrite) {
+      stoppedFor = "repeat";
+      break;
+    }
+    if (pendingProposals.length === 0 && (outOfReads || (repeats > 0 && repeats === calls.length))) {
+      transcript.push({ role: "assistant", content: r.content, tool_calls: calls });
+      for (const tr of turnResults) transcript.push({ role: "tool", content: tr.text, tool_call_id: tr.call.id });
+      break;
+    }
 
     if (pendingProposals.length > 0 && writeFailedThisRound) {
       // "Yes please" to "make Bin 4 and move the Multimeter in?" came back as
@@ -554,6 +670,9 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     }
   }
 
+  // Stopped by a bound: the words are the code's, and say what was kept.
+  if (stoppedFor) return { kind: "reply", text: saidWithChanges(STOPPED[stoppedFor], applied.length, { failed: true }), applied, ...withFailed() };
+
   // Round cap: the model kept going without concluding. Ask it to answer
   // with what it has — one final call with tools implicitly exhausted.
   transcript.push({
@@ -561,7 +680,13 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     content:
       ROUND_CAP_NUDGE,
   });
-  const last = await deps.callModel(transcript);
+  let last: LoopModelResult;
+  try {
+    last = await deps.callModel(transcript);
+  } catch (err) {
+    if (applied.length === 0) throw err;
+    return { kind: "reply", text: "", applied, stopped: err, ...withFailed() };
+  }
   const said = stripStageDirections(scrubIds(last.content ?? "", seenNames)).trim();
   // The cap's final call can come back with no words at all (another tool
   // call, or nothing): the person still gets a sentence that says what

@@ -120,9 +120,14 @@ export function ChatRefChip({
       </a>
     );
   }
+  // Somewhere outside: where it goes is said in full beside its words, so a
+  // link a record's words steered the model into writing ("the supplier",
+  // its address carrying what Cobb read) is never one blind press (#4115).
+  const shown = textOf(children).trim();
   return (
-    <a href={href} target="_blank" rel="noreferrer" {...rest}>
+    <a href={href} target="_blank" rel="noreferrer noopener" {...rest}>
       {children}
+      {href && shown !== href ? <span className="ml-1 break-all text-xs opacity-70">({href})</span> : null}
     </a>
   );
 }

@@ -89,6 +89,9 @@ export const REPLAY_PROVIDER_ID = "replay";
 interface Round {
   content?: string;
   tool_calls?: Array<{ name: string; args?: Record<string, unknown> }>;
+  /** The provider refuses at THIS round, after the rounds before it ran: a
+   *  turn that fails part way, once something it did has already happened. */
+  refuse?: string;
 }
 interface Cassette {
   match: string;
@@ -348,13 +351,14 @@ export function register(): void {
               `replay: no cassette matches "${ask.slice(0, 60)}" and no "*" fallback in ${dir} — ${have}`,
             );
           }
-          if (cassette.refuse) {
-            const status = cassette.refuse === "quota" ? 429 : cassette.refuse === "invalid_key" ? 401 : cassette.refuse === "model_unavailable" ? 404 : 503;
-            const retry = cassette.refuse === "quota" ? 30 : undefined;
-            throw new ProviderError("replay", cassette.refuse, providerSentence(cassette.refuse, { provider: "replay", retryAfterSec: retry }), status, retry);
-          }
           const n = roundIndex(turns);
           const round = cassette.rounds[Math.min(n, cassette.rounds.length - 1)] ?? { content: "" };
+          const refuseHere = cassette.refuse ?? (typeof round.refuse === "string" && REASONS.has(round.refuse) ? (round.refuse as ProviderReason) : undefined);
+          if (refuseHere) {
+            const status = refuseHere === "quota" ? 429 : refuseHere === "invalid_key" ? 401 : refuseHere === "model_unavailable" ? 404 : 503;
+            const retry = refuseHere === "quota" ? 30 : undefined;
+            throw new ProviderError("replay", refuseHere, providerSentence(refuseHere, { provider: "replay", retryAfterSec: retry }), status, retry);
+          }
           let content = round.content ?? "";
           let tool_calls: ToolCall[] | undefined;
           try {

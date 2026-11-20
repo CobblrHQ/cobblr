@@ -4,7 +4,7 @@ import { readRecordLoan } from "@cobblr/platform-contract/loan";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
-import { SelectBox, LentChip, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, useRecordActions, useStillAsking, workspaceFetch, editOf, useCan } from "@cobblr/platform-web";
+import { SelectBox, LentChip, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, useRecordActions, useStillAsking, workspaceFetch, editOf, useCan, NearSpellings } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
@@ -893,6 +893,8 @@ export function PartsListPage() {
                     ? `Tap below to add ${withArticle(noun)} by hand, or use Scan in the top bar to add one from a label.`
                     : `No ${plural} here yet. Add your first ${noun} to get started.`}
             </p>
+            {/* "drills" found no "Cordless drill": the close spellings, asked once (#9643). */}
+            {search.trim() && <NearSpellings slug={orgSlug} kind={entityKind} q={search} noun={plural} getToken={getToken} hrefFor={(id) => `${basePath}/parts/${id}`} />}
             {!hasFilters && mayCreate && (
               <button
                 onClick={() => setAdding(true)}

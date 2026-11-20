@@ -585,6 +585,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     <DesktopDragStrip pinned={navMode === "side" && !navAutoHide} topBar={!fullSide} />
     {tour.open && <GuidedTour steps={DASHBOARD_TOUR} onClose={tour.close} />}
     <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
+      {/* capability-except html:raw: the workspace font's @font-face rule, CSS built by fontFaceCss from the skin, never a record's or an answer's words */}
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
       {/* Header + the email-verify nudge share the grid's auto row, so the
           banner doesn't consume the 1fr content row. */}

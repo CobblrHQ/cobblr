@@ -2,10 +2,20 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-20
+
+### Security
+- A picture in Cobb's answer, or anywhere Markdown is shown, is drawn only when it comes from your own Cobblr; any other picture is a link that says where it goes and loads nothing, so words written in a record can no longer have an answer send your workspace's data to another site. A link to another site now shows its full address beside its words.
+- Signing out everywhere, changing or resetting your password, or deleting your account now also cuts off live updates on every device straight away. Before, a page still open on a lost phone kept being told which records changed (which ones, never what was in them), and its notification bell kept updating, until it was closed; a page opened in the minute after could start listening again. Every other request from that phone was already refused; the live updates now stop too.
+
+### Fixes
+- A scan photo taken with no signal sends itself once the signal is back, still filed once, instead of waiting for a Retry press
+
 ## 2026-11-19
 
 ### Security
 - What you say to Cobb stays yours: the list of changes Cobb made in a workspace no longer shows another person the words they asked with.
+- Words written in a record can no longer change your workspace through Cobb: with Changes at Auto, a change applies by itself only when you asked for it and every value it writes is one you said; anything else waits on a card for you to confirm.
 
 ### Features
 - Every field you save on a record's page now offers Undo, which puts back what it held before, even from another page
@@ -16,9 +26,13 @@ User-facing changes, newest first. Dates are release dates.
 - Cobb finds a thing by what you call it inside one list too: "any drills?" finds your Cordless drill instead of telling you there are none.
 - Cobb's built-in answers name your own lists: asked how to add something in a new workspace, Cobb no longer sends you to Parts, Printers or Orders you don't have, and names the list you asked about first.
 - Cobb never gives a count, total or amount it did not read: a figure no tool returned and you did not say is sent back to be counted, or left out, before the answer reaches you.
+- Asked "what can you do?", Cobb answers from your workspace: the lists you can add to, things you can say to it, and one thing to try first.
 - Undoing a place Cobb made leaves it alone when you have put things in it since, and says what is there, instead of deleting it and losing where those things are.
 
 ## 2026-11-18
+
+### Security
+- Removing someone from a workspace now cuts them off from its live updates straight away. Before, a page they still had open kept being told which records changed after they were removed (which ones, never what was in them), and a page opened in the minute after could start listening again. Their open pages, API tokens and the kitchen QR they printed already stopped working at removal; the live updates now stop too. The same holds when someone is made a guest: a guest sees what the portal shares, so their open pages stop hearing which records changed, and a guest can no longer start listening to the workspace's record changes at all.
 
 ### Fixes
 - Following the parcels you send now follows every parcel of an order, not only the last one: the first boxes of an order sent in parts are watched too, each shows when it was delivered, and the order is delivered only when all of them are.

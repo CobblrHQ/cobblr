@@ -22,6 +22,7 @@ import { sql } from "kysely";
 import { serializeByKey, releaseKey } from "./serialize-by-key.js";
 import { insertWithSeqRetry, persistOrLog } from "./seq-retry.js";
 import type { CoreAiDB } from "../db.js";
+import { answerWithChanges, saidWithChanges } from "./what-changed.js";
 
 /** "text-delta" is the answer arriving as it is written, one piece per event.
  *  Dense like the rest, so a tab that joins late replays what it missed and
@@ -161,6 +162,17 @@ export async function finishTurn(
         resetsAt?: string;
       },
 ): Promise<void> {
+  // A failure written before anyone checked what the turn did: when it had
+  // already changed something, the turn ends on those changes, each with its
+  // undo, and the failure is said without "Nothing was changed" (#4115).
+  // Whatever the turn ends on, what it says about changes comes from the
+  // ledger's count for it (what-changed.ts).
+  if (!outcome.ok) {
+    const kept = await keptByTurn(db, turnId).catch(() => null);
+    outcome = kept ? { ok: true, result: kept(outcome.error) } : { ...outcome, error: saidWithChanges(outcome.error, 0, { failed: true }) };
+  } else {
+    outcome = { ok: true, result: answerWithChanges(outcome.result, await changesByTurn(db, turnId).catch(() => 0)) };
+  }
   // The ANSWER before the status (#4890, torn status writes): a JSON poller
   // reads the status, then the events, so a status flipped first answered
   // "done" with no done event and no result. Written in this order, "done"
@@ -218,24 +230,64 @@ export function isStranded(t: { status: string; updated_at: Date | string }): bo
  *  turn was stranded would have had to send fifty more messages to clear the
  *  spinner they were stuck behind. The person looking at it is exactly the
  *  person who should not have to wait. */
+const DONE_VERB: Record<string, string> = { create: "Added", update: "Changed", delete: "Deleted", action: "Ran an action on" };
+
+/** How many changes a turn made that still stand, from the change ledger. */
+export async function changesByTurn(db: Kysely<CoreAiDB>, turnId: string): Promise<number> {
+  const row = await db
+    .selectFrom("core_ai_chat_writes")
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("turn_id", "=", turnId)
+    .where("undo_of", "is", null)
+    .where("undone_at", "is", null)
+    .executeTakeFirst();
+  return Number(row?.n ?? 0);
+}
+
+/** What a turn changed, from the change ledger, as the reply a finished turn
+ *  carries: each change a done card with its undo. Null when it changed
+ *  nothing. The ledger, not the loop, because a turn that failed, ran out of
+ *  time or was cut by a restart has no loop left to ask. */
+export async function keptByTurn(db: Kysely<CoreAiDB>, turnId: string): Promise<((failure: string) => unknown) | null> {
+  const rows = await db
+    .selectFrom("core_ai_chat_writes")
+    .select(["id", "tool", "entity_kind", "entity_id", "entity_label"])
+    .where("turn_id", "=", turnId)
+    .where("undo_of", "is", null)
+    .where("undone_at", "is", null)
+    .orderBy("created_at", "asc")
+    .execute();
+  if (rows.length === 0) return null;
+  const applied = rows.map((r) => ({
+    summary: `${DONE_VERB[r.tool] ?? "Changed"} ${r.entity_label || "a record"}`,
+    ledger_id: r.id,
+    undoable: true,
+    ...(r.entity_id && r.entity_label ? { entity: { kind: r.entity_kind, id: r.entity_id, label: r.entity_label } } : {}),
+  }));
+  return (failure) => ({ type: "reply", text: saidWithChanges(failure, rows.length, { failed: true }), applied });
+}
+
+const RESTARTED = "the server restarted before this finished, so it was never completed. Ask again.";
+
 async function healStranded(db: Kysely<CoreAiDB>, turnId: string): Promise<void> {
+  // What it did before the restart is kept and said, with its undo, never
+  // "Nothing was changed" over changes that happened (#4115).
+  const kept = await keptByTurn(db, turnId).catch(() => null);
+  const result = kept ? kept(RESTARTED) : null;
   // state-flips-last: the row carries the failure itself (status + error); the event only wakes an open stream, and the flip is conditional on the turn still running, so it must come first
   await db
     .updateTable("core_ai_chat_turns")
-    .set({
-      status: "failed",
-      error: "the server restarted before this finished, so it was never completed. Nothing was changed - ask again.",
-      finished_at: new Date(),
-      updated_at: new Date(),
-    } as never)
+    .set(
+      result
+        ? ({ status: "done", result: JSON.stringify(result), finished_at: new Date(), updated_at: new Date() } as never)
+        : ({ status: "failed", error: saidWithChanges(RESTARTED, 0, { failed: true }), finished_at: new Date(), updated_at: new Date() } as never),
+    )
     .where("id", "=", turnId)
     .where("status", "in", ["queued", "running"])
     .execute();
   // The event log is what a subscribed tab is reading, so it needs the ending
   // too — otherwise an open stream keeps waiting on a turn the row has closed.
-  await emitTurnEvent(db, turnId, "error", {
-    message: "the server restarted before this finished, so it was never completed. Nothing was changed - ask again.",
-  }).catch(() => {
+  await emitTurnEvent(db, turnId, result ? "done" : "error", result ? { result } : { message: saidWithChanges(RESTARTED, 0, { failed: true }) }).catch(() => {
     /* the row is what matters; a missing event just means the poll finds it */
   });
 }
@@ -305,16 +357,16 @@ export async function sweepTurns(db: Kysely<CoreAiDB>): Promise<void> {
   // look at it, alive to the sweeper". It used to be an hour, which outlived
   // any reason to wait.
   const strandedBefore = new Date(Date.now() - STRANDED_AFTER_MS);
-  await db
-    .updateTable("core_ai_chat_turns")
-    .set({
-      status: "failed",
-      error: "the server restarted before this finished, so it was never completed. Nothing was changed - ask again.",
-      finished_at: new Date(),
-    } as never)
+  // Each one as the read side heals it, so one that changed something ends
+  // on those changes and never says nothing changed (#4115).
+  const stranded = await db
+    .selectFrom("core_ai_chat_turns")
+    .select("id")
     .where("status", "in", ["queued", "running"])
     .where("updated_at", "<", strandedBefore)
+    .limit(200)
     .execute();
+  for (const t of stranded) await healStranded(db, t.id);
   await db
     .deleteFrom("core_ai_chat_turns")
     .where("status", "in", ["done", "failed"])

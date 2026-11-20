@@ -89,6 +89,9 @@ export interface BuildDetail {
   shortage?: string | null;
   /** "Controller board: 2 from stock, 1 to make", per sub-assembly. */
   plan?: string[];
+  /** Made with itself through these builds: none can be built, and the
+   *  sentence says which line to take out (#4115). */
+  loop?: { builds: string[]; sentence: string };
   /** Everything counted for this build: hand logs and judged prints. */
   quality?: { good_qty: number; scrap_qty: number; yield_pct: number | null };
   /** The part a Build press adds to stock, or null: it adds nothing. */

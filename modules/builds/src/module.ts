@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.3.2",
+  version: "0.3.3",
   displayName: "Builds",
   description:
     "Describe what you make as a recipe of parts, see how many you could build right now and what runs out first, and take the parts from stock when you build one.",
@@ -28,6 +28,13 @@ export default defineModule({
   schema: {
     tablePrefix: "builds_",
     migrationsDir: "./migrations",
+  },
+
+  lifecycle: {
+    onBoot: async () => {
+      const { registerBuildLoopsCount } = await import("./heal-build-loops.js");
+      registerBuildLoopsCount();
+    },
   },
 
   api: () => import("./api/index.js"),

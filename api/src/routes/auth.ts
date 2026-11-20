@@ -58,6 +58,7 @@ import {
   currentAccountTerms,
 } from "../auth/identity-client.js";
 import { hardDeleteUser } from "../platform/delete-user.js";
+import { announceSignInsEnded, signInsEndAt } from "../platform/sign-ins-ended.js";
 import { passwordSignInOn } from "../platform/oidc.js";
 import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
@@ -1707,7 +1708,7 @@ authRouter.post("/password/reset", async (req, res, next) => {
       if (!claimed) return false;
       await trx
         .updateTable("users")
-        .set({ password_hash: newHash, must_reset_password: false, tokens_valid_from: at })
+        .set({ password_hash: newHash, must_reset_password: false, ...signInsEndAt(at) })
         .where("id", "=", row.user_id)
         .execute();
       return true;
@@ -1721,6 +1722,7 @@ authRouter.post("/password/reset", async (req, res, next) => {
         : { code: "already_consumed", message: "This reset link was already used." } });
       return;
     }
+    announceSignInsEnded(row.user_id);
 
     const firstOrg = await meta
       .selectFrom("org_memberships")

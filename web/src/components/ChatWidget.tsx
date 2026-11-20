@@ -1292,6 +1292,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       const msg = e instanceof ApiError ? e.message : "Something went wrong.";
       setBusy(false);
       saidItFailed(msg);
+      // The connection went as it left: refused there and then, never kept to
+      // send later (#9673), so the words go back in the box to send again,
+      // unless something new was typed meanwhile.
+      if (e instanceof ApiError && e.status === 0) setInput((cur) => (cur.trim() ? cur : text));
     }
   }
 

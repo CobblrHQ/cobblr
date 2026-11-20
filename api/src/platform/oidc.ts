@@ -30,6 +30,7 @@
 // through an enabled provider (passwordOffRefusal), so nobody locks the
 // instance out; `node dist/cli/password-sign-in.js on` turns it back on.
 
+import { announceRoleChanged } from "./membership-ended.js";
 import { productName } from "./product-name.js";
 import { createHash, randomBytes } from "node:crypto";
 import * as client from "openid-client";
@@ -300,6 +301,7 @@ export async function applyGroupRoles(userId: string, provider: ProviderRow, gro
     if (ORG_ROLE_RANK[r.role] > have || (r.lower && ORG_ROLE_RANK[r.role] < have)) {
       await meta.updateTable("org_memberships").set({ role: r.role }).where("org_id", "=", org.id).where("user_id", "=", userId).execute();
       await logRole(org.id, userId, m.role, r.role, provider);
+      announceRoleChanged(org.id, userId);
     }
   }
 }

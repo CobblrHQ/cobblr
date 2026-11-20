@@ -50,6 +50,7 @@ import { useDeclaredChoices } from "../components/ViewBuilder";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { fieldCurrency, formatMoney, toCents } from "@cobblr/platform-contract/money";
+import { ListNearSpellings } from "../components/ListNearSpellings";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -351,6 +352,7 @@ export function AssetsPage({
               : activeView
                 ? `Nothing in “${activeView.name}” yet. Add your first with New ${noun}.`
                 : "No matches with the current filters."}
+            {allRows.length > 0 && !activeView && <ListNearSpellings kind={entityKind} q={query} noun={nounPlural} />}
           </div>
         )
       ) : groupBy ? (

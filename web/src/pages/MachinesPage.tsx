@@ -70,6 +70,7 @@ import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 import { readRecordLoan } from "@cobblr/platform-contract/loan";
+import { ListNearSpellings } from "../components/ListNearSpellings";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -593,6 +594,7 @@ export function MachinesPage({
               : allRows.length === 0
               ? `No ${nounPlural} yet. Add one with New ${noun}.`
               : "No matches with the current filters."}
+            {machines.isSuccess && allRows.length > 0 && <ListNearSpellings kind={ENTITY_KIND} q={query} noun={nounPlural} />}
           </div>
         )
       ) : viewMode === "tiles" ? (

@@ -7,21 +7,30 @@
 import { Router } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
-import { openSse, signStreamTicket, verifyStreamTicket } from "../lib/event-stream.js";
+import { openWorkspaceSse, signInOf, signStreamTicket, verifyStreamTicket } from "../lib/event-stream.js";
 import { onRecordChange } from "../platform/record-stream.js";
 import { RECORD_STREAM_EVENT } from "@cobblr/platform-contract/record-stream";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
 export const recordStreamRouter = Router({ mergeParams: true });
 
 const STREAM_AUD = "record-changes";
+/** A guest is told no record's changes: they see the portal (#4115). */
+const RECORD_STREAM_LEAST = "member" as const;
 
 // AI-REACH: exempt: a browser tab's live refresh channel; an assistant reads
 // records directly and has no open page to keep fresh.
-// ROLE: any member (it writes nothing: the ticket opens a stream that says only
+// ROLE: member and above, never a guest (it writes nothing: the ticket opens a stream that says only
 // which record changed, and every read after it checks what this person may see)
 recordStreamRouter.post("/:slug/records/stream-ticket", requireAuth, withTenant, async (req, res, next) => {
   try {
-    res.json({ ticket: await signStreamTicket(STREAM_AUD, req.session!.id, { org: req.tenant!.org.id }) });
+    // A guest sees the portal, never which records changed (#4115); their
+    // tab does not ask (useRecordStream), and the server does not answer.
+    if (!roleSatisfies(req.tenant!.role, [RECORD_STREAM_LEAST])) {
+      res.status(403).json({ error: { code: "role_too_low", message: "Live record updates are for members and above; a guest reads what the portal shares." } });
+      return;
+    }
+    res.json({ ticket: await signStreamTicket(STREAM_AUD, signInOf(req.session!), { org: req.tenant!.org.id }) });
   } catch (err) {
     next(err);
   }
@@ -36,7 +45,11 @@ recordStreamRouter.get("/:slug/records/stream", async (req, res, next) => {
       res.status(401).json({ error: { code: "bad_ticket", message: "A valid stream ticket is required." } });
       return;
     }
-    const { send, stop } = openSse(res);
+    // Only while they are a member and above: a removed member's open tab,
+    // and one made a guest, heard which records changed after (#4115).
+    const stream = await openWorkspaceSse(res, { orgId: who.org, signIn: who.signIn }, RECORD_STREAM_LEAST);
+    if (!stream) return;
+    const { send, stop } = stream;
     const off = onRecordChange(who.org, (change) => send(RECORD_STREAM_EVENT, change));
     req.on("close", () => {
       stop();

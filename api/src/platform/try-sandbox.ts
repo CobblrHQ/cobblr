@@ -22,6 +22,7 @@ import type { SandboxLifetime } from "@cobblr/platform-contract/sandbox-lifetime
 import { randomBytes } from "node:crypto";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { announceSignInsEnded, signInsEndAt } from "./sign-ins-ended.js";
 import { announceSandboxKept, announceSandboxStarted, createAccount } from "./accounts.js";
 import { isOperatorSandbox } from "./operator-sandboxes.js";
 import { env } from "../env.js";
@@ -546,9 +547,10 @@ export async function setKeptSandboxPassword(
   const changedAt = new Date();
   await meta
     .updateTable("users")
-    .set({ password_hash: passwordHash, must_reset_password: false, tokens_valid_from: changedAt })
+    .set({ password_hash: passwordHash, must_reset_password: false, ...signInsEndAt(changedAt) })
     .where("id", "=", userId)
     .execute();
+  announceSignInsEnded(userId);
   await revokeSandboxLinksForUser(userId);
   return { changedAt };
 }

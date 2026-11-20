@@ -350,6 +350,12 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
               pending={setOutput.isPending}
               onSet={(name) => setOutput.mutate(name)}
             />
+            {/* A build made with itself builds none until one line goes: said, never run short (#4115). */}
+            {d.loop && (
+              <div role="alert" className="rounded-lg border border-ember-200 bg-ember-50 p-3 text-sm text-ember-700 dark:border-ember-900 dark:bg-ember-950/40 dark:text-ember-300">
+                {d.loop.sentence}
+              </div>
+            )}
             {/* Can-I-build readout */}
             <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50 p-3 flex flex-wrap items-center justify-between gap-3">
               <div>

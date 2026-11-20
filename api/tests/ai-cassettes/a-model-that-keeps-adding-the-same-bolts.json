@@ -1,0 +1,6 @@
+{
+  "match": "add 5 runaway bolts",
+  "rounds": [
+    { "tool_calls": [{ "name": "create_record", "args": { "kind": "inventory:part", "fields": { "name": "Runaway bolts", "qty": 5 } } }] }
+  ]
+}

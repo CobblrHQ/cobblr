@@ -22,6 +22,7 @@ export function turnsForTheModel(messages: readonly SentMessage[]): Array<{ role
     m.role === "assistant" && m.failed
       ? {
           role: "assistant",
+          // changed-claim-ok: said to the model of a failed turn, and a turn ends failed only when it changed nothing (turns.ts finishTurn)
           content: `(That request did not go through, and nothing was changed: ${m.content.trim()} It is finished. Answer the person's newest message as it stands; carry out the earlier request only if they ask for it again.)`,
         }
       : { role: m.role, content: m.content },

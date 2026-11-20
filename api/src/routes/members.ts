@@ -14,6 +14,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
+import { announceMembershipEnded, announceRoleChanged } from "../platform/membership-ended.js";
 import * as activity from "../platform/activity.js";
 import { linkOrigin } from "../platform/link-origin.js";
 import * as notifications from "../platform/notifications.js";
@@ -182,6 +183,8 @@ membersRouter.patch("/:userId", requireAuth, withTenant, async (req, res, next) 
       });
       return;
     }
+    // Their open streams ask again what this role may still hear (#4115).
+    if (outcome !== "not_found") announceRoleChanged(orgId, userId);
     if (outcome === "not_found") {
       res.status(404).json({ error: { code: "not_found", message: "Member not found." } });
       return;
@@ -273,6 +276,8 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
       return;
     }
     const { handOff } = outcome;
+    // Every stream they hold open on this workspace closes now (#4115).
+    announceMembershipEnded(orgId, userId);
     clearPeopleCache(req.tenant!.org.id);
     await activity.log({
       orgId: req.tenant!.org.id,

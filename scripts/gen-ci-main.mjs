@@ -25,7 +25,7 @@
 //     that is no longer the tip when its jobs start stands them down instead
 //     (scripts/ci/stand-down-if-superseded.sh), so only main's newest commit is
 //     tested, and a red tip names its culprit by testing the merges it skipped;
-//   - runs-on: pr-check -> main-set-check, ci-test -> ci-main.
+//   - runs-on: pr-check -> light-main, ci-test -> ci-main.
 // `name: CI` stays, so the status contexts stay `CI / typecheck (push)` and
 // `CI / test (push)`, which the release, merge-pr and deploy read.
 //
@@ -52,11 +52,7 @@ const OUT_RECHECK_FIRST = join(ROOT, ".forgejo/workflows/ci-recheck-first.yml");
 const OUT_RECHECK_RULES = join(ROOT, ".forgejo/workflows/ci-recheck-rules.yml");
 const OUT_RECHECK_FIRST_RULES = join(ROOT, ".forgejo/workflows/ci-recheck-first-rules.yml");
 
-// pr-check -> main-set-check, not light-main (2026-11-19, #6226): ci.yml's one pr-check job is typecheck, and a set
-// tip's typecheck runs every unit file. light-main's 4608 MiB runner gives the unit suite one worker (40-51 min, sets
-// 512-529); main-set-check's runners, at least 6656 MiB, give it two (20-22). A main push's typecheck stands aside on
-// its set's proof in seconds wherever it lands. scripts/ci/a-set-tips-typecheck-runs-where-unit-gets-two-workers.test.ts
-export const LANE = { "pr-check": "main-set-check", "ci-test": "ci-main" };
+export const LANE = { "pr-check": "light-main", "ci-test": "ci-main" };
 export const FAST_LANE = { "pr-check": "fast-light", "ci-test": "fast-test" };
 
 const DEPLOY_STEP = "Deploy if the images are pushed (else the image side deploys)";
@@ -175,7 +171,7 @@ const MAIN = {
   group: "ci-main-${{ github.ref }}-${{ github.sha }}",
   header: [
     "# The same CI as ci.yml, for pushes to main and bisect branches, on",
-    "# runner labels only they use (main-set-check, light-main, ci-main), so the release's green",
+    "# runner labels only they use (light-main, ci-main), so the release's green",
     "# candidate never waits behind the pull-request queue.",
   ],
   tail: [
@@ -544,6 +540,24 @@ export function withoutAdmission(body) {
   return kept;
 }
 
+/** PURE. ci.yml's jobs without `suite-wanted` and test's need of it (2026-11-19, #6226): that job only lets a pull
+ *  request's test skip with no runner in set mode, and a lane a push or a recheck starts never skips its suite. Throws
+ *  when ci.yml has no such job, or test no longer needs it in the one line this removes. */
+export function withoutSuiteWanted(body) {
+  const at = body.findIndex((l) => l === "  suite-wanted:");
+  if (at < 0) throw new Error("ci.yml has no suite-wanted job");
+  let end = body.findIndex((l, i) => i > at && /^ {2}[a-z][a-z0-9-]*:\s*$/.test(l));
+  if (end < 0) end = body.length;
+  const kept = [...body.slice(0, at), ...body.slice(end)];
+  const need = kept.findIndex((l) => l === "    needs: suite-wanted");
+  if (need < 0) throw new Error("ci.yml's test job no longer needs suite-wanted in one `needs: suite-wanted` line");
+  // The need's own comment line goes with it.
+  const from = /^ {4}# It runs only when suite-wanted did/.test(kept[need - 1] ?? "") ? need - 1 : need;
+  kept.splice(from, need - from + 1);
+  if (kept.some((l) => /suite-wanted/.test(l))) throw new Error("a ci.yml job still names suite-wanted after withoutSuiteWanted");
+  return kept;
+}
+
 /** ci-main.yml's (or, with FAST, ci-fast.yml's) text, from ci.yml's. Throws when ci.yml no longer has the shape this relies on. */
 export function generate(ci, kind = MAIN) {
   const LANE = kind.lane;
@@ -565,7 +579,7 @@ export function generate(ci, kind = MAIN) {
   const pi = lines.findIndex((l, n) => n > pr && n < conc && /^ {4}paths-ignore:\s*$/.test(l));
   if (pi >= 0) for (let i = pi + 1; i < conc && /^ {6}- /.test(lines[i]); i++) paths.push(lines[i]);
 
-  const body = withoutAdmission(lines.slice(jobs)).map((l) => {
+  const body = withoutAdmission(withoutSuiteWanted(lines.slice(jobs))).map((l) => {
     const m = /^( {4}runs-on: )(\S+)\s*$/.exec(l);
     if (!m) return l;
     const to = LANE[m[2]];

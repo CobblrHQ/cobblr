@@ -18,7 +18,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { meta } from "../db/meta.js";
-import { openSse, signStreamTicket, verifyStreamTicket } from "../lib/event-stream.js";
+import { signInOf, signStreamTicket, verifyStreamTicket, openWorkspaceSse } from "../lib/event-stream.js";
+import type { SignIn } from "../platform/sign-ins-ended.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { driveHub } from "../platform/drive-hub.js";
@@ -29,10 +30,10 @@ export const driveRouter = Router({ mergeParams: true });
 
 const TICKET_AUD = "drive-tab";
 
-const signTicket = (userId: string, orgId: string) => signStreamTicket(TICKET_AUD, userId, { org: orgId });
-async function verifyTicket(ticket: string): Promise<{ userId: string; orgId: string } | null> {
+const signTicket = (signIn: SignIn, orgId: string) => signStreamTicket(TICKET_AUD, signIn, { org: orgId });
+async function verifyTicket(ticket: string): Promise<{ userId: string; orgId: string; signIn: SignIn } | null> {
   const t = await verifyStreamTicket(TICKET_AUD, ticket);
-  return t && typeof t.org === "string" ? { userId: t.userId, orgId: t.org } : null;
+  return t && typeof t.org === "string" ? { userId: t.userId, orgId: t.org, signIn: t.signIn } : null;
 }
 
 async function getMode(userId: string, orgId: string): Promise<DriveMode> {
@@ -87,7 +88,7 @@ driveRouter.post("/:slug/drive/tab/ticket", requireAuth, withTenant, async (req,
       res.status(403).json({ error: { code: "drive_off", message: "Browser driving is off for this workspace." } });
       return;
     }
-    res.json({ ticket: await signTicket(userId, orgId) });
+    res.json({ ticket: await signTicket(signInOf(req.session!), orgId) });
   } catch (err) {
     next(err);
   }
@@ -107,7 +108,9 @@ driveRouter.get("/:slug/drive/tab/stream", async (req, res) => {
     res.status(403).json({ error: { code: "drive_off", message: "Browser driving is off for this workspace." } });
     return;
   }
-  const { send, stop } = openSse(res);
+  const stream = await openWorkspaceSse(res, { orgId: who.orgId, signIn: who.signIn });
+  if (!stream) return;
+  const { send, stop } = stream;
   const off = driveHub.connectTab(who.userId, who.orgId, browserId, sessionId, send);
   req.on("close", () => {
     stop();
@@ -180,7 +183,9 @@ driveRouter.get("/:slug/drive/driver/stream", requireAuth, withTenant, async (re
     res.status(403).json({ error: { code: "drive_off", message: "Browser driving is off for this workspace." } });
     return;
   }
-  const { send, stop } = openSse(res);
+  const stream = await openWorkspaceSse(res, { orgId, signIn: signInOf(req.session!) });
+  if (!stream) return;
+  const { send, stop } = stream;
   const off = driveHub.connectDriver(userId, orgId, send);
   req.on("close", () => {
     stop();

@@ -1,0 +1,62 @@
+{
+ "match": "add 2 doubled washers",
+ "rounds": [
+  {
+   "tool_calls": [
+    {
+     "name": "create_record",
+     "args": {
+      "kind": "inventory:part",
+      "fields": {
+       "name": "Doubled washers",
+       "qty": 2
+      }
+     }
+    },
+    {
+     "name": "create_record",
+     "args": {
+      "kind": "inventory:part",
+      "fields": {
+       "name": "Doubled washers",
+       "qty": 2
+      }
+     }
+    },
+    {
+     "name": "create_record",
+     "args": {
+      "kind": "inventory:part",
+      "fields": {
+       "name": "Doubled washers",
+       "qty": 2
+      }
+     }
+    },
+    {
+     "name": "create_record",
+     "args": {
+      "kind": "inventory:part",
+      "fields": {
+       "name": "Doubled washers",
+       "qty": 2
+      }
+     }
+    },
+    {
+     "name": "create_record",
+     "args": {
+      "kind": "inventory:part",
+      "fields": {
+       "name": "Doubled washers",
+       "qty": 2
+      }
+     }
+    }
+   ]
+  },
+  {
+   "content": "Added the doubled washers."
+  }
+ ]
+}

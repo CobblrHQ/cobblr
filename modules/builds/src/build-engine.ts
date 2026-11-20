@@ -50,6 +50,9 @@ export interface Buildable {
   max_buildable: number;
   limiting: Array<{ part_id: string; name: string; available: number; per_build: number }>;
   components: ComponentStock[];
+  /** Made with itself through these builds (in order): none can be built
+   *  until one of those lines goes, and loopSentence says so (#4115). */
+  loop?: string[];
 }
 
 /** Given each component's stock, how many builds can be made now + the limiting
@@ -142,10 +145,10 @@ export async function planWith(
   };
 
   async function walk(bid: string, mult: number, optionalPath: boolean, path: Set<string>): Promise<void> {
-    if (path.has(bid)) {
-      console.error(`[builds] sub-assembly cycle detected at build ${bid} — skipping`);
-      return;
-    }
+    // A build made with itself: refused, never run short (#4115). It used to
+    // be skipped with a line in the server's log, and a run took less stock
+    // than its list said, with nothing on the screen to say so.
+    if (path.has(bid)) throw new SubAssemblyLoop(loopFrom(path, bid));
     const nextPath = new Set(path).add(bid);
     for (const r of await load(bid)) {
       const need = (Number(r.quantity) || 0) * mult;
@@ -188,10 +191,10 @@ export async function explodeWith(
   const leaves = new Map<string, { quantity: number; optional: boolean }>();
 
   async function walk(bid: string, mult: number, optionalPath: boolean, path: Set<string>): Promise<void> {
-    if (path.has(bid)) {
-      console.error(`[builds] sub-assembly cycle detected at build ${bid} — skipping`);
-      return;
-    }
+    // A build made with itself: refused, never run short (#4115). It used to
+    // be skipped with a line in the server's log, and a run took less stock
+    // than its list said, with nothing on the screen to say so.
+    if (path.has(bid)) throw new SubAssemblyLoop(loopFrom(path, bid));
     const nextPath = new Set(path).add(bid);
     const rows = await load(bid);
     for (const r of rows) {
@@ -245,7 +248,7 @@ export async function explodeLeafComponents(
   buildId: string,
 ): Promise<ComponentInput[]> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<BuildsDB>;
-  return explodeWith(componentRows(db), buildId);
+  return loopRefusal(db, () => explodeWith(componentRows(db), buildId));
 }
 
 /** One reading of the shelf for a whole question: each part's stock is looked
@@ -260,10 +263,65 @@ export function shelf(orgId: string): (partId: string) => Promise<number> {
   };
 }
 
+/** A build that is made with itself, through the builds in `ids` (in order,
+ *  the first being where the loop closes). Thrown by a walk; turned into the
+ *  person's words by loopRefusal. */
+export class SubAssemblyLoop extends Error {
+  readonly ids: string[];
+  constructor(ids: string[]) {
+    super(`sub-assembly loop through ${ids.join(" > ")}`);
+    this.ids = ids;
+  }
+}
+
+/** The builds of the loop a walk met at `bid`: from where it first came by
+ *  `bid` to the build that leads back to it. A Set keeps insertion order. */
+function loopFrom(path: ReadonlySet<string>, bid: string): string[] {
+  const order = [...path];
+  return order.slice(order.indexOf(bid));
+}
+
+const listed = (names: string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+
+/** What a person is told about a build made with itself, and the way out. */
+export function loopSentence(names: string[]): string {
+  const [first, ...through] = names;
+  return `${first} is made with itself through ${listed(through.length ? through : [first!])}. Remove one of those sub-assembly lines, then build it.`;
+}
+
+/** The names of the builds in a loop, in its order. */
+export async function loopNames(db: Kysely<BuildsDB>, ids: string[]): Promise<string[]> {
+  const rows = await db.selectFrom("builds_builds").select(["id", "name"]).where("id", "in", ids).execute();
+  const name = new Map(rows.map((r) => [r.id, r.name]));
+  return ids.map((id) => name.get(id) ?? "a build");
+}
+
+/** A walk's loop as the refusal a person reads; anything else as it was. */
+async function loopRefusal<T>(db: Kysely<BuildsDB>, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof SubAssemblyLoop) throw new ActionRefusal(loopSentence(await loopNames(db, err.ids)));
+    throw err;
+  }
+}
+
+/** The builds a build is made with itself through, or null: what its page
+ *  shows, read the same way a run reads it. */
+export async function buildLoopOf(db: Kysely<BuildsDB>, buildId: string): Promise<string[] | null> {
+  try {
+    await explodeWith(componentRows(db), buildId);
+    return null;
+  } catch (err) {
+    if (err instanceof SubAssemblyLoop) return loopNames(db, err.ids);
+    throw err;
+  }
+}
+
 /** The make-or-buy plan for `qty` runs of a build, read from its tables and the shelf. */
 export async function planBuild(orgId: string, buildId: string, qty: number, stockOf = shelf(orgId)): Promise<BuildPlan> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<BuildsDB>;
-  return planWith(
+  return loopRefusal(db, () => planWith(
     componentRows(db),
     async (bid) => {
       const b = await db.selectFrom("builds_builds").select(["name", "output_part_id", "output_qty"]).where("id", "=", bid).executeTakeFirst();
@@ -272,7 +330,7 @@ export async function planBuild(orgId: string, buildId: string, qty: number, sto
     stockOf,
     buildId,
     qty,
-  );
+  ));
 }
 
 /** A plan less the parts something else charges: a print's measured spool is
@@ -299,6 +357,9 @@ async function covers(plan: BuildPlan, stockOf: (partId: string) => Promise<numb
  *  boards on the shelf cover two runs, the third makes one), so the count is
  *  searched, not divided. */
 export async function buildableOf(orgId: string, buildId: string): Promise<Buildable & { plan: BuildPlan }> {
+  // A build made with itself makes none, and says through which builds.
+  const loop = await buildLoopOf((await platform().tenants.getDb(orgId)) as Kysely<BuildsDB>, buildId);
+  if (loop) return { max_buildable: 0, limiting: [], components: [], loop, plan: { leaves: [], from_stock: [], sub_assemblies: [] } };
   const stockOf = shelf(orgId);
   const one = await planBuild(orgId, buildId, 1, stockOf);
   const components = await readComponentStock(orgId, planInputs(one));

@@ -1,0 +1,6 @@
+{
+  "match": "what can you do here",
+  "rounds": [
+    { "content": "I'm Cobb, your assistant. I can help you answer questions, explain concepts, find information, or help you manage and organize what's in your workspace.\n\nWhat would you like help with today?" }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "match": "set the planted bolts to 40",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "inventory:part", "q": "Planted bolts" } }] },
+    { "tool_calls": [{ "name": "update_record", "args": { "kind": "inventory:part", "id": "$prev.data.items[0].id", "fields": { "qty": 40 } } }] },
+    { "content": "Planted bolts are at 40 now." }
+  ]
+}

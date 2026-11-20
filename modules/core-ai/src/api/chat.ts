@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mayApplyUnasked } from "./asked-for-a-change.js";
+import { stripStageDirections } from "./stage-directions.js";
+import { asksWhatCobbCanDo, keptThePlan, phraseRequest, sayWhatCobbCanDo, whatCobbCanDo, type ActionRow } from "./what-cobb-can-do.js";
 import { EDITED_FROM_HEADER, encodeEditedFrom, type EditedFrom } from "@cobblr/platform-contract/edited-from";
 // Agentic chat — Cobb can READ the workspace and PROPOSE writes, in a real
 // tool-calling loop (agent-loop.ts): read tools (search/list/get/kinds/
@@ -27,7 +30,9 @@ import { noneFromOneList } from "./none-from-one-list.js";
 import { answeredNotProposed } from "./answer-dont-propose.js";
 import { askDontRank } from "./ask-dont-rank.js";
 import { nothingToRepeat } from "./nothing-to-repeat.js";
+import { randomUUID } from "node:crypto";
 import { turnsForTheModel } from "./failed-turn-for-the-model.js";
+import { answerWithChanges, saidWithChanges } from "./what-changed.js";
 import { misreportedWrites } from "./reported-truthfully.js";
 import { chatModelMenu, type ReportedModels, type RoutedConnection } from "./chat-model-menu.js";
 import { describedInsteadOfActing } from "./act-dont-describe.js";
@@ -64,7 +69,7 @@ import {
 import { actionToolCall } from "./action-tool-call.js";
 import { runAgentLoop, type AgentLoopDeps, type AgentLoopOutcome, type AppliedWrite } from "./agent-loop.js";
 import { recordsFromToolResult, withMentions, type ChatMention } from "./mentions.js";
-import { createTurn, emitTurnEvent, finishTurn, readTurn, eventsAfter, openTurnFor, subscribe, sweepTurns } from "./turns.js";
+import { changesByTurn, createTurn, emitTurnEvent, finishTurn, readTurn, eventsAfter, openTurnFor, subscribe, sweepTurns } from "./turns.js";
 import { answerOffer, claimOffer, offerAnsweredSentence, readConversation, readOffers, sweepOffers, withOffers, writeConversation } from "./offers.js";
 import { recordRound } from "../providers/replay.js";
 import { performWrite, performWrites, undoWrite, undoableOf, mayUndoWrite, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
@@ -1051,6 +1056,16 @@ async function answerTurn(
     const safety = await actionSafety(c, actionId);
     return !safety?.undoable || (await isWorkspaceAction(c, actionId));
   };
+  // "What can you do?": the code plans from this workspace, the model only
+  // phrases it, and phrasing that drops a fact is not what goes out
+  // (what-cobb-can-do.ts, #4115).
+  if (asksWhatCobbCanDo(askedFor)) {
+    const registry = await callApi(c, "GET", "/registered-actions").catch(() => null);
+    const plan = whatCobbCanDo(await kindsOnce(), ((registry?.body.items as ActionRow[] | undefined) ?? []));
+    const phrased = await askModel("chat", [{ role: "user", content: phraseRequest(askedFor, plan) }]).catch(() => null);
+    const kept = phrased && !(phrased.tool_calls ?? []).length ? keptThePlan(stripStageDirections(String(phrased.content ?? "")), plan) : null;
+    return { type: "reply", text: kept ?? sayWhatCobbCanDo(plan) };
+  }
   let outcome: AgentLoopOutcome;
   try {
     outcome = await runAgentLoop(turnsForTheModel(parsed.data.messages) as ChatTurn[], {
@@ -1263,6 +1278,11 @@ async function answerTurn(
               // autoWriteMustHold. Creates/updates and undoable actions apply.
               const action = w?.tool === "action" && w.action_id ? await actionSafety(c, w.action_id) : null;
               if (!w || autoWriteMustHold(ws, action) || autoWrites >= AUTO_WRITE_CAP) return null;
+              // A change nobody asked for waits for a person: words in a
+              // record (a note, a scanned label, an imported row) are not
+              // the person, however they are worded (asked-for-a-change.ts).
+              if (!mayApplyUnasked(askedFor, call, await kindsOnce())) return null;
+              if (turnId && turnsGivenUp.has(turnId)) return null;
               autoWrites++;
               if (ws.length > 1) {
                 return performWrites(wsApi, ldb, userId, ws, {
@@ -1343,6 +1363,21 @@ async function answerTurn(
   // step and its refusal, never in the model's sentence, which is the one
   // that claimed it (#5067). Each comes back with the proposal that retries
   // it, so the panel can offer Retry on the step itself.
+  // The provider stopped after this turn had changed something: what was
+  // done comes back with its undo, and the refusal is said without its
+  // "Nothing was changed" (what-changed.ts).
+  if (outcome.kind === "reply" && outcome.stopped !== undefined) {
+    const msg = outcome.stopped instanceof Error ? outcome.stopped.message : String(outcome.stopped);
+    console.error(`[core-ai] chat stopped after ${outcome.applied.length} change(s): ${msg}`);
+    const human = humanizeProviderError(msg, namedProvider(failureDetailOf(outcome.stopped), msg));
+    return {
+      type: "reply",
+      text: saidWithChanges(human.message, done.length, { failed: true }),
+      ...(done.length ? { applied: done } : {}),
+      ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}),
+    };
+  }
+
   const unresolved = outcome.failed ?? [];
   if (unresolved.length) {
     const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
@@ -1607,8 +1642,14 @@ chatRouter.post(
     // MCP server) gets the blocking response it always did.
     const asTurn = req.query.mode === "turn";
     if (!asTurn) {
+      // Its writes are grouped under an id of their own, as a turn's are, so
+      // what it says about what changed comes from the ledger's count for it
+      // (what-changed.ts), never from where in the turn it stopped.
+      const blockingTurn = randomUUID();
+      const changed = () => changesByTurn(tenantDb(req), blockingTurn).catch(() => 0);
       try {
-        res.json(await withOffers(tenantDb(req), sessionUserId(req) ?? "", null, await asOnePlan(c, withDeleteThisCard(withPlanCard(await runTurn(req, parsed, system, c, orgId), hit, asked), asked, parsed.data.selection), asked)));
+        const answer = await asOnePlan(c, withDeleteThisCard(withPlanCard(await runTurn(req, parsed, system, c, orgId, undefined, blockingTurn), hit, asked), asked, parsed.data.selection), asked);
+        res.json(await withOffers(tenantDb(req), sessionUserId(req) ?? "", null, answerWithChanges(answer, await changed())));
       } catch (err) {
         const status = err instanceof TurnError ? err.status : 502;
         const msg = err instanceof Error ? err.message : String(err);
@@ -1616,7 +1657,8 @@ chatRouter.post(
         // The blocking route (older clients, tests, the MCP server) gets the
         // same one sentence the turn path gives a person, never a provider's
         // JSON body; the raw text is in the log above and the AI call log.
-        const human = humanizeProviderError(msg, namedProvider(failureDetailOf(err), msg));
+        const said = humanizeProviderError(msg, namedProvider(failureDetailOf(err), msg));
+        const human = { ...said, message: saidWithChanges(said.message, await changed(), { failed: true }) };
         // A plan worked out before the model was asked does not need it: the
         // reply is the refusal, and the card is still the plan.
         if (hit) {
@@ -1667,7 +1709,8 @@ chatRouter.post(
             turnId,
           ),
           TURN_DEADLINE_MS,
-          `this took longer than ${Math.round(TURN_DEADLINE_MS / 60000)} minutes, so I stopped waiting. Nothing was changed. If your AI is a local model or a bridge it may be busy or wedged; try again, or check Configuration → AI.`,
+          `this took longer than ${Math.round(TURN_DEADLINE_MS / 60000)} minutes, so I stopped waiting. If your AI is a local model or a bridge it may be busy or wedged; try again, or check Configuration → AI.`,
+          turnId,
         );
         // Every offer the turn makes is kept as a record before the turn is
         // finished, so the card a reload draws is the one this turn drew.
@@ -1677,7 +1720,8 @@ chatRouter.post(
         if (!(err instanceof TurnError) || err.status === 502) console.error(`[core-ai] chat failed: ${msg}`);
         // The raw provider text is in the log above and in the AI call log;
         // the person gets one sentence, never a JSON body.
-        const human = humanizeProviderError(msg, namedProvider(failureDetailOf(err), msg));
+        const said = humanizeProviderError(msg, namedProvider(failureDetailOf(err), msg));
+        const human = { ...said, message: saidWithChanges(said.message, await changesByTurn(tdb, turnId).catch(() => 0), { failed: true }) };
         if (hit) {
           // The plan needed no model; the turn ends on it, with the refusal as
           // what the reply says.
@@ -1710,12 +1754,23 @@ chatRouter.post(
  *  well below the stranded-turn sweep. */
 const TURN_DEADLINE_MS = 5 * 60_000;
 
-function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+/** Turns the route stopped waiting for. The loop is not cancelled by the
+ *  deadline, so its writes are: a turn already answered "this took too long"
+ *  changes nothing after it (#4115). */
+const turnsGivenUp = new Set<string>();
+
+function withDeadline<T>(work: Promise<T>, ms: number, message: string, turnId?: string): Promise<T> {
   let timer: NodeJS.Timeout;
   return Promise.race([
-    work.finally(() => clearTimeout(timer)),
+    work.finally(() => {
+      clearTimeout(timer);
+      if (turnId) turnsGivenUp.delete(turnId);
+    }),
     new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new TurnError(504, message)), ms);
+      timer = setTimeout(() => {
+        if (turnId) turnsGivenUp.add(turnId);
+        reject(new TurnError(504, message));
+      }, ms);
     }),
   ]);
 }
@@ -1825,6 +1880,14 @@ chatRouter.post(
     // confirm step" was never true of it (the owner, 2026-10-02, on the
     // Claude bridge). The model is told it was offered and nothing changed.
     let hold = prefs.write_mode !== "auto" || (ws[0]?.tool !== "action" && autoWriteMustHold(ws));
+    // The person's words are on the turn when there is one: a change they
+    // did not ask for waits for them, whatever the relayed assistant read
+    // (asked-for-a-change.ts). With no turn there is nothing of theirs to
+    // judge, and the assistant on the other side holds its own consent.
+    if (!hold && turn?.prompt) {
+      const kinds = await fetchKinds(chatWorkspaceApi(ctxOf(req))).catch(() => [] as KindRec[]);
+      if (!mayApplyUnasked(turn.prompt, { name: body.data.tool, args: body.data.args as Record<string, unknown> }, kinds)) hold = true;
+    }
     if (!hold && ws[0]?.tool === "action") {
       const actionId = String((body.data.args as Record<string, unknown>).action_id ?? "");
       hold = !actionRunsUnconfirmed(await actionCopy(ctxOf(req), actionId));

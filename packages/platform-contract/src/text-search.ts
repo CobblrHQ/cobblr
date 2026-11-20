@@ -27,7 +27,7 @@ import { type Measure, measurePaths, measureTokens } from "@cobblr/platform-cont
  *  accept it, and the SQL it produces is what the api tests check. */
 export interface LikeFnModule {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (name: "lower" | "jsonb_path_exists" | "jsonb_path_query_array", args: any[]): any;
+  (name: "lower" | "translate" | "jsonb_path_exists" | "jsonb_path_query_array", args: any[]): any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   coalesce(...args: any[]): any;
 }
@@ -136,7 +136,21 @@ export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | unde
       ...text.map((c: string) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
       ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(eb.fn("jsonb_path_query_array", [c, eb.val(`${values} ? (!exists(@.__cobblr_secret))`)]), "text")]), "like", like)),
   ];
-  const anywhere = (word: string): any[] => anywhereLike(likeNeedle(word));
+  // A long word typed joined ("screwdriver", "allenkeyset") also matches text
+  // with its spaces and hyphens taken out, so "Screw driver" and "Allen key
+  // set" are found, beside an exact hit too: the bits matched "screwdriver"
+  // exactly and the screw driver was never shown (#9644). Text columns only,
+  // already without the ones this reader may not read; the person's own % _
+  // and \ stay literal (likeNeedle).
+  // A word typed with a hyphen ("screw-driver") is compared with it taken
+  // out too, so it finds "Screwdriver" as well as "Screw driver".
+  const joinedLike = (word: string): any[] => {
+    const joined = word.replace(/-/g, "");
+    return joined.length >= JOINED_WORD_MIN && !/\s/.test(joined)
+      ? text.map((c: string) => eb(eb.fn("translate", [eb.fn("lower", [eb.fn.coalesce(c, empty)]), eb.val(" -"), empty]), "like", likeNeedle(joined)))
+      : [];
+  };
+  const anywhere = (word: string): any[] => [...anywhereLike(likeNeedle(word)), ...joinedLike(word)];
   // Asked again because the exact search found nothing (#9624): every word
   // somewhere on the record, each long one by any spelling one edit away.
   if (nearWordsNow()) {
@@ -222,6 +236,11 @@ export function setNearWordsSource(source: () => boolean): void {
 function nearWordsNow(): boolean {
   return nearWordsSource();
 }
+
+/** Only a word this long is also matched joined up (spaces and hyphens
+ *  taken out of the text): a short one ("tape") would join two words by
+ *  accident. */
+export const JOINED_WORD_MIN = 6;
 
 /** Only a word this long is widened: a short word one edit away from
  *  everything ("cat": bat, cut, at) would match noise, not a typo. */

@@ -1,3 +1,4 @@
+// capability-except html:raw: the print sheet the labels renderer builds, every record value escaped there (renderPrintSheet.ts escapeHtml)
 import { createPortal } from "react-dom";
 import { renderPrintSheetFragment } from "./renderPrintSheet";
 import type { CustomLabelSize, Printable } from "./api";

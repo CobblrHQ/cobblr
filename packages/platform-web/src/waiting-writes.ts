@@ -35,6 +35,13 @@ const KEY = "cobblr:waiting-writes";
 const WRITES = new Set(["PUT", "PATCH", "DELETE", "POST"]);
 /** A POST whose last step only asks: nothing to keep. */
 const ASKS = /\/(?:search|lookup|look-up|preview|resolve|suggest|suggestions|match|parse|read|estimate|check|validate|dry-run|ticket|stream-ticket|answer|query|count)(?:\?|$)/;
+/** A request that asks for something NOW says so with this header, and is
+ *  never kept to send later: a message to the assistant acts the moment it
+ *  lands (at Auto, on its own), so sent by the next page hours on, "add 3
+ *  bolts" would run after the person had done it by hand (#4115). Offline it
+ *  is refused there and then, and the person sends it again if they still
+ *  mean it. The client reads it and does not send it on. */
+export const ASKS_NOW_HEADER = "x-cobblr-asks-now";
 /** The header a kept create is sent again with. */
 export const IDEMPOTENCY_KEY = "Idempotency-Key";
 

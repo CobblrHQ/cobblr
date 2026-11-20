@@ -84,6 +84,7 @@ export function PortalLayout() {
     >
       <SkipToContent />
       <RouteAnnouncer />
+      {/* capability-except html:raw: the workspace font's @font-face rule, CSS built by fontFaceCss from the skin, never a record's or an answer's words */}
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
       <header
         className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900/80 backdrop-blur"

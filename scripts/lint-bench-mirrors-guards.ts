@@ -44,6 +44,8 @@ const GUARD_MODULES = [
   "move-not-create",
   "nothing-to-repeat",
   "reported-truthfully",
+  "asked-for-a-change",
+  "what-cobb-can-do",
 ];
 
 /** Guards the bench genuinely cannot exercise, and why. Each reason has to say
@@ -51,6 +53,8 @@ const GUARD_MODULES = [
 const NOT_IN_THE_BENCH: Record<string, string> = {
   "reported-truthfully":
     "the bench never APPLIES a write - it records the proposal and stops - so a turn there can never have a ledger to misdescribe",
+  "asked-for-a-change":
+    "it decides whether an Auto write applies or waits as a card; the bench never applies a write, so every write it scores is already a proposal",
 };
 
 const chat = readFileSync(CHAT, "utf8") + readFileSync(LOOP, "utf8");

@@ -20,6 +20,7 @@ import {
   planBuild,
   planLines,
   shortfallOf,
+  loopSentence,
 } from "../build-engine.js";
 import { rollupOperation } from "../execution.js";
 import { traceBackward, lineageCodes, nameGenealogy, type GenealogyLoaders, type RunInput } from "../genealogy.js";
@@ -199,9 +200,11 @@ buildsRouter.get(
 
     // "Buildable now" takes stocked sub-assemblies first and makes the rest.
     const { plan: _bestPlan, ...buildable } = await buildableOf(ctx.org.id, build.id);
-    // How each sub-assembly line is met for the quantity asked about (1 by default).
+    // How each sub-assembly line is met for the quantity asked about (1 by
+    // default). A build made with itself has no plan: its page says which
+    // line to take out instead (buildable.loop, #4115).
     const planQty = Math.max(1, Math.floor(Number(req.query.qty ?? 1)) || 1);
-    const plan = await planBuild(ctx.org.id, build.id, planQty);
+    const plan = buildable.loop ? { leaves: [], from_stock: [], sub_assemblies: [] } : await planBuild(ctx.org.id, build.id, planQty);
     for (const c of components) {
       if (c.kind !== "subassembly") continue;
       const met = plan.sub_assemblies.find((s) => s.build_id === c.sub_assembly_build_id);
@@ -252,7 +255,7 @@ buildsRouter.get(
     // What is short to make the quantity asked about, after stocked sub-assemblies are taken.
     const planStock = await readComponentStock(ctx.org.id, [...plan.from_stock, ...plan.leaves]);
     const shortage = shortageSentence(planStock.map((c) => ({ ...c, per_build: c.quantity })), 1);
-    res.json({ build, components, buildable, operations, quality, output, plan_qty: planQty, shortage, plan: planLines(plan) });
+    res.json({ build, components, buildable, operations, quality, output, plan_qty: planQty, shortage, plan: planLines(plan), ...(buildable.loop ? { loop: { builds: buildable.loop, sentence: loopSentence(buildable.loop) } } : {}) });
   }),
 );
 

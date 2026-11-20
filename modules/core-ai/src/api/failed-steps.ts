@@ -17,6 +17,7 @@ import type { ToolCall } from "../providers/tool-wire.js";
 import type { AppliedWrite, FailedWrite } from "./agent-loop.js";
 import { WORKSPACE_TOOLS } from "@cobblr/workspace-tools";
 import { forAPerson } from "./says-something.js";
+import { saidWithChanges } from "./what-changed.js";
 
 const MAKES_A_LIST = "platform:create-instance";
 
@@ -129,7 +130,7 @@ export function personReason(error: string): string {
 /** The answer for a turn with writes that did not happen. */
 export function saidWhatFailed(failed: readonly FailedWrite[], doneCount: number, actionLabel?: (id: string) => string | undefined): string {
   const lines = failed.map((f) => `${stepSaid(f.call, actionLabel)} did not happen: ${personReason(f.error)}.`);
-  const rest = doneCount > 0 ? ` The ${doneCount === 1 ? "other step is" : "other steps are"} done, shown above.` : " Nothing was changed.";
+  const rest = doneCount > 0 ? ` The ${doneCount === 1 ? "other step is" : "other steps are"} done, shown above.` : ` ${saidWithChanges("", doneCount, { failed: true })}`;
   return `${lines.join(" ")}${rest}`;
 }
 

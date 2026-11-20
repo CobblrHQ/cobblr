@@ -8,6 +8,8 @@
 // not to do either; this is the part that does not depend on it complying,
 // the same way scrub-ids.ts takes ids out of an answer.
 
+import { saidWithChanges } from "./what-changed.js";
+
 /** The kinds a turn knows, so "inventory:part" can be said as "parts". */
 export interface KindWord {
   id: string;
@@ -16,8 +18,7 @@ export interface KindWord {
 }
 
 /** The sentence a turn ends on when it would otherwise end on nothing. */
-export const NOTHING_SAID =
-  "I couldn't put an answer together for that one. Nothing was changed. Try asking again, or in a different way.";
+export const NOTHING_SAID = saidWithChanges("I couldn't put an answer together for that one. Try asking again, or in a different way.", 0, { failed: true });
 
 const ARG = /[a-z][a-z0-9]*(?:_[a-z0-9]+)+/;
 const KIND_ID = /\b[a-z][a-z0-9-]*:[a-z][a-z0-9_-]*\b/g;
@@ -80,8 +81,8 @@ export function saysSomething(result: unknown, kinds: readonly KindWord[] = []):
 
 /** What a person reads when nothing readable is left once a tool's own words
  *  are taken out. */
-export const COULD_NOT_SAY =
-  "Something went wrong on my side, so I couldn't do that. Nothing was changed. Try again, or ask in a different way.";
+// Said of one thing that did not happen, so its count is that thing's: none.
+export const COULD_NOT_SAY = saidWithChanges("Something went wrong on my side, so I couldn't do that. Try again, or ask in a different way.", 0, { failed: true });
 
 // The shapes of text written for a program, never for a person: an error's
 // name and its sentence, a stack frame, a JSON body, an API path, a status

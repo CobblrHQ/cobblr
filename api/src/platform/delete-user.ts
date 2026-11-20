@@ -30,6 +30,7 @@
 // delete their workspace through a door; nobody could delete the account.
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { announceSignInsEnded, signInsEndAt } from "./sign-ins-ended.js";
 import { hardDeleteOrg } from "./delete-org.js";
 import { fireAccountDelete } from "./hosted-seams.js";
 import { queuePhotoRetention } from "./photo-retention.js";
@@ -110,7 +111,8 @@ export async function hardDeleteUser(
   // takes: every token dated before now is refused by requireAuth, and an
   // inactive user is refused outright.
   const at = new Date();
-  await meta.updateTable("users").set({ active: false, tokens_valid_from: at }).where("id", "=", userId).execute();
+  await meta.updateTable("users").set({ active: false, ...signInsEndAt(at) }).where("id", "=", userId).execute();
+  announceSignInsEnded(userId);
 
   // Kept item photos stop pointing at this person (photo-retention.ts). Queued
   // before the row goes: afterwards nothing could recompute the actor id.
@@ -141,7 +143,7 @@ export async function hardDeleteUser(
       identity_id: null,
       active: false,
       must_reset_password: false,
-      tokens_valid_from: at,
+      ...signInsEndAt(at),
       deleted_at: at,
     })
     .where("id", "=", userId)

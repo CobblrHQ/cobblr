@@ -1,0 +1,39 @@
+{
+ "match": "add three brackets called bracket",
+ "rounds": [
+  {
+   "tool_calls": [
+    {
+     "name": "create_record",
+     "args": {
+      "kind": "inventory:part",
+      "fields": {
+       "name": "Bracket"
+      }
+     }
+    },
+    {
+     "name": "create_record",
+     "args": {
+      "kind": "inventory:part",
+      "fields": {
+       "name": "Bracket"
+      }
+     }
+    },
+    {
+     "name": "create_record",
+     "args": {
+      "kind": "inventory:part",
+      "fields": {
+       "name": "Bracket"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "content": "Added three brackets."
+  }
+ ]
+}

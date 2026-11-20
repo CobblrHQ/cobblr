@@ -7,6 +7,7 @@ import { ApiError, idsThatFitAUrl, lookupInBody, request } from "./client";
 import type { AiChainAnswer } from "../ai-chain";
 import type { AiProviderDef } from "./integrations";
 import { dayHere } from "@cobblr/platform-contract/day";
+import { ASKS_NOW_HEADER } from "@cobblr/platform-web";
 
 /** The person's own day and zone, sent with every Cobb turn: the model has no
  *  clock, and works "due back Friday" out from what it is told (#9507). */
@@ -509,6 +510,10 @@ export type AiChatProposal =
       steps: Array<{ summary: string; proposal: Exclude<AiChatProposal, { kind: "plan" }>; undoable?: boolean | null }>;
     };
 
+/** A message to Cobb, and a Confirm on what it offered, ask for something now:
+ *  never kept offline to be sent by a later page (ASKS_NOW_HEADER, #4115). */
+const NOW = { [ASKS_NOW_HEADER]: "1" };
+
 export const aiApi = {
 
   /** The person's own default AI per job: each job's steps, their AI
@@ -772,7 +777,7 @@ export const aiApi = {
      *  Cobb's situational awareness. See web/src/lib/chat-context.ts. */
     context?: { label: string; summary?: string; kind?: string },
   ) =>
-    request<AiChatResponse>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages, ...(context ? { context } : {}), ...yourDay() }),
+    request<AiChatResponse>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages, ...(context ? { context } : {}), ...yourDay() }, NOW),
   /** The same turn, PERSISTED. Returns at once with a turn id; subscribe with
    *  aiChatTurnEvents for progress and the final response. This is what makes
    *  the widget show progress, survive a refresh, and stay in sync across
@@ -790,6 +795,7 @@ export const aiApi = {
       "POST",
       `/orgs/${slug}/modules/core-ai/chat?mode=turn`,
       { messages, ...(context ? { context } : {}), ...(selection ? { selection } : {}), ...yourDay() },
+      NOW,
     ),
   /** Is a turn already running for me in this workspace? A tab asks on open. */
   aiChatOpenTurn: (slug: string) =>
@@ -829,7 +835,7 @@ export const aiApi = {
       proposal,
       ...(offerId ? { offer_id: offerId } : {}),
       ...(prompt ? { prompt: prompt.slice(0, 2000) } : {}),
-    }),
+    }, NOW),
   /** The offers named, as the server keeps them: the plan, and what became of
    *  it. A reloaded panel redraws its cards from these. */
   aiChatOffers: (slug: string, ids: string[]) =>

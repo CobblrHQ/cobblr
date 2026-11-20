@@ -38,6 +38,7 @@ import { RecordPhoto } from "../components/RecordPhoto";
 import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
+import { ListNearSpellings } from "../components/ListNearSpellings";
 
 const ENTITY_KIND = "records:record";
 
@@ -210,6 +211,7 @@ export function RecordsPage({
             {allRows.length === 0
               ? `No ${nounPlural} yet. Add one with New ${noun}.`
               : "No matches with the current filters."}
+            {allRows.length > 0 && <ListNearSpellings kind={entityKind} q={query} noun={nounPlural} />}
           </div>
         )
       ) : viewMode === "tiles" ? (

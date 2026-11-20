@@ -1,0 +1,429 @@
+{
+ "match": "count the looping bolts",
+ "rounds": [
+  {
+   "tool_calls": [
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 1"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 2"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 3"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 4"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 5"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 6"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 7"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 8"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 9"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 10"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 11"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 12"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 13"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 14"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 15"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 16"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 17"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 18"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 19"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 20"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 21"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 22"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 23"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 24"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 25"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 26"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 27"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 28"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 29"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 30"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 31"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 32"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 33"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 34"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 35"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 36"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 37"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 38"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 39"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 40"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 41"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 42"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 43"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 44"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 45"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 46"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 47"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 48"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 49"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 50"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 51"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 52"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 53"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 54"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 55"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 56"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 57"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 58"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 59"
+     }
+    },
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Looping bolts 60"
+     }
+    }
+   ]
+  }
+ ]
+}
