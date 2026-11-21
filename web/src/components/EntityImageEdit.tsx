@@ -10,8 +10,8 @@
 // machines, pass it).
 
 import { useState } from "react";
-import { EntityPhoto, Lightbox, usePhotoPick, useToast } from "@cobblr/platform-web";
-import { api, ApiError } from "../lib/api";
+import { EntityPhoto, KeptPhotoNote, Lightbox, lostConnection, useKeptPhotos, usePhotoPick, useToast } from "@cobblr/platform-web";
+import { api, ApiError, getToken } from "../lib/api";
 
 export function EntityImageEdit({
   slug,
@@ -24,6 +24,7 @@ export function EntityImageEdit({
   autoBusy,
   suggested = false,
   className,
+  keptKey,
 }: {
   slug: string;
   src?: string | null;
@@ -44,12 +45,23 @@ export function EntityImageEdit({
    *  a suggestion, and there is nothing of the record's to Remove. */
   suggested?: boolean;
   className?: string;
+  /** Where a photo that could not be sent is kept until it lands: the record,
+   *  e.g. "part:42". Without it the record's name stands in. */
+  keptKey?: string;
 }) {
   const [viewing, setViewing] = useState(false);
-  const { upload: pick, uploading } = usePhotoUpload(slug, onChange);
+  const { send, uploading } = usePhotoUpload(slug, onChange);
+  // A photo chosen offline is kept and sent when the connection is back,
+  // never dropped (#4115, useKeptPhotos).
+  const toast = useToast();
+  const kept = useKeptPhotos(`${slug}:cover:${keptKey ?? alt}`, send, { one: true, token: getToken() });
+  const pick = (file: File) => {
+    if (file.type.startsWith("image/")) void kept.send(file);
+    else toast.error("Pick an image file.");
+  };
 
   const photo = usePhotoPick((files) => files[0] && void pick(files[0]), { title: `Photo of ${alt}`, label: `Choose a photo of ${alt}` });
-  const busy = uploading || autoBusy;
+  const busy = uploading || kept.busy || autoBusy;
   return (
     <div className={"shrink-0 " + (className ?? "")}>
       <button
@@ -76,10 +88,11 @@ export function EntityImageEdit({
         {/* TOUCH-OK: a caption overlay on a tile that is itself the button:
             tapping the image opens it, so nothing is unreachable. */}
         <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-white text-[10px] uppercase tracking-wide opacity-0 group-hover:opacity-100 transition-opacity">
-          {uploading ? "Uploading…" : src ? "View" : "Add"}
+          {uploading || kept.busy ? "Uploading…" : src ? "View" : "Add"}
         </span>
       </button>
       {photo.input}
+      <KeptPhotoNote kept={kept} />
       {viewing && src && (
         <Lightbox
           items={[{ key: src, caption: alt, src, original: src.includes("variant=medium") ? src.replace("variant=medium", "variant=original") : src }]}
@@ -124,21 +137,28 @@ export function EntityImageEdit({
 export function usePhotoUpload(slug: string, onChange: (imagePath: string) => void) {
   const [uploading, setUploading] = useState(false);
   const toast = useToast();
+  /** Stores it and hands it to the page; throws what went wrong, for a door
+   *  that keeps the photo (useKeptPhotos). A refusal is said here; a lost
+   *  connection is the kept photo's own note to say. */
+  async function send(file: File, key?: string) {
+    setUploading(true);
+    try {
+      const f = await api.uploadFile(slug, file, key ? { idempotencyKey: key } : {});
+      onChange(api.fileRawUrl(slug, f.id, "medium"));
+      toast.success("Photo updated.");
+    } catch (e) {
+      if (!lostConnection(e)) toast.error(e instanceof ApiError ? e.message : "Upload failed.");
+      throw e;
+    } finally {
+      setUploading(false);
+    }
+  }
   async function upload(file: File) {
     if (!file.type.startsWith("image/")) {
       toast.error("Pick an image file.");
       return;
     }
-    setUploading(true);
-    try {
-      const f = await api.uploadFile(slug, file);
-      onChange(api.fileRawUrl(slug, f.id, "medium"));
-      toast.success("Photo updated.");
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Upload failed.");
-    } finally {
-      setUploading(false);
-    }
+    await send(file).catch(() => {});
   }
-  return { upload, uploading };
+  return { upload, send, uploading };
 }

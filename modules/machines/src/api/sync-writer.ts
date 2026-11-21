@@ -8,6 +8,7 @@
 // wires, and the instance counters stay consistent with the HTTP path.
 
 import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
+import { storedPicture } from "@cobblr/platform-contract/image-reference";
 import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
@@ -28,7 +29,7 @@ function patchOf(fields: Record<string, unknown>): Record<string, unknown> {
   if (fields.manufacturer !== undefined) patch.manufacturer = asStr(fields.manufacturer);
   if (fields.serial_number !== undefined) patch.serial_number = asStr(fields.serial_number);
   if (fields.state !== undefined) patch.state = asStr(fields.state) ?? "functional";
-  if (fields.image_path !== undefined) patch.image_path = asStr(fields.image_path);
+  if (fields.image_path !== undefined) patch.image_path = storedPicture(fields.image_path);
   if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
   if (fields.location_id !== undefined) patch.location_id = asStr(fields.location_id);
   if (fields.excitement !== undefined && asInt(fields.excitement) !== null) patch.excitement = asInt(fields.excitement);
@@ -66,7 +67,7 @@ export function registerMachinesWriter(): void {
           manufacturer: asStr(fields.manufacturer),
           serial_number: asStr(fields.serial_number),
           state: asStr(fields.state) ?? "functional",
-          image_path: asStr(fields.image_path),
+          image_path: storedPicture(fields.image_path),
           notes: asStr(fields.notes),
           // Was missing entirely — the writer silently dropped location on
           // create/update (core-mobility return-home never worked for machines,

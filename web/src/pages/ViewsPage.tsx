@@ -25,7 +25,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { LentChip, SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, stillAsking, useViewToolbarPending, usePlatformWeb, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, runUndoSteps, undoStepsOf, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout, QueryError } from "@cobblr/platform-web";
+import { LentChip, SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, stillAsking, useViewToolbarPending, usePlatformWeb, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, runUndoSteps, undoStepsOf, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout, QueryError, NumberInput } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { kindOptionLabels } from "../lib/kind-option-labels";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
@@ -2146,8 +2146,7 @@ export function CreateViewModal({
             </div>
             <label className="block">
               <div className="text-xs text-muted mb-1">Goal line (optional)</div>
-              <input
-                type="number"
+              <NumberInput
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
                 placeholder="e.g. 80"
@@ -2436,8 +2435,7 @@ export function EditViewModal({
             </div>
             <label className="block">
               <div className="text-xs text-muted mb-1">Goal line (optional)</div>
-              <input
-                type="number"
+              <NumberInput
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
                 placeholder="e.g. 80"

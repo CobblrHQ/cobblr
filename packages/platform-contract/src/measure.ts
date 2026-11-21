@@ -8,6 +8,8 @@
 // when the person gave none, `text` what they typed. Shown with the prefix that
 // reads best ("0.0001 F" shows as "100 µF").
 
+import { foldForSearch } from "@cobblr/platform-contract/search-text";
+
 /** The units a measured value is in: catalog codes, with every spelling a
  *  person might type for them. The core-units catalog lists these same codes. */
 export const MEASURE_UNITS = [
@@ -348,8 +350,9 @@ export function valuesAnswer(values: ReadonlyArray<unknown>, q: string): boolean
       if (m) { held.push(m); texts.push(m.text); }
     }
   }
-  const hay = texts.join(" ").toLowerCase();
-  const has = (w: string) => hay.includes(w.toLowerCase());
+  // Folded as the server folds (foldForSearch): "creme" finds "Crème".
+  const hay = foldForSearch(texts.join(" "));
+  const has = (w: string) => hay.includes(foldForSearch(w));
   const read = measureTokens(q);
   if (!read) return words.every(has);
   return read.words.every(has) && read.values.every((v) =>

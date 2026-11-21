@@ -38,6 +38,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QuickCreateLocation } from "./QuickCreateLocation";
 import { LocationTreePicker } from "./LocationTreePicker";
 import { recentLocations } from "../lib/recentLocations";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 interface Props {
   value: string | null;
@@ -298,7 +299,7 @@ export function LocationChipPicker({ value, onChange, excludeId, className, sugg
         .filter((l): l is Location => !!l)
     : [];
   const q = query.trim().toLowerCase();
-  const matches = q ? all.filter((l) => nameOf(l).toLowerCase().includes(q) || l.name.toLowerCase().includes(q)) : [];
+  const matches = q ? all.filter((l) => textHas(nameOf(l), q) || textHas(l.name, q)) : [];
   const iconOf = (l: Location): "area" | "bin" => (l.kind === "container" ? "bin" : "area");
   const shortcuts = (
     <>

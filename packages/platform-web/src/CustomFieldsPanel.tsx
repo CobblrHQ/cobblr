@@ -10,9 +10,10 @@
 // learns, becomes a choice.
 
 import { AddressPicker } from "./AddressPicker";
+import { NumberInput } from "./NumberInput";
 import { SecretField } from "./SecretField";
 import { ColourInput } from "./ColourInput";
-import { useMemo, useState, type FocusEvent } from "react";
+import { useMemo, useState } from "react";
 import { useFieldDraft } from "./use-field-draft";
 import { MovedUnderNote } from "./EditField";
 import { useQuery } from "@tanstack/react-query";
@@ -477,7 +478,7 @@ function PlainRow({
   const usingFallback = isBlank(value) && !isBlank(fallbackValue);
   const fallbackStr = fallbackValue == null ? "" : String(fallbackValue);
   const { draft, setDraft, committed, mayWrite, movedTo } = useFieldDraft(initial);
-  function commit(e: FocusEvent<HTMLInputElement>) {
+  function commit(e: { target: { value: string } }) {
     const next = e.target.value;
     if (next === initial || !mayWrite()) return;
     committed(next);
@@ -505,7 +506,7 @@ function PlainRow({
         )}
       </span>
       <div className={showPreview || showUnit ? "flex items-center gap-2" : ""}>
-        <input
+        <NumberInput
           type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
           value={draft}
           placeholder={usingFallback ? fallbackStr : undefined}

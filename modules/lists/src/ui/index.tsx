@@ -1,4 +1,4 @@
-import { NumberStepper, subscribeWaitingWrites, editOf, fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb, useViewerRole } from "@cobblr/platform-web";
+import { NumberStepper, subscribeWaitingWrites, editOf, fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb, useViewerRole, RecordGone, isRecordGone } from "@cobblr/platform-web";
 // lists UI — the host mounts <ListsUI /> at /lists. A grid of lists;
 // clicking one opens a detail MODAL with check-off, add-item, and clear-done.
 // Modals (not pages) for detail/create; toasts (not dialogs) for feedback;
@@ -377,7 +377,9 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
         </form>
 
         {detail.isLoading && <div className="text-sm text-muted">Loading…</div>}
-        {detail.isError && <QueryError what="this list" onRetry={() => void detail.refetch()} />}
+        {detail.isError && (isRecordGone(detail.error)
+          ? <RecordGone slug={orgSlug} getToken={api.getToken} kind="lists:list" id={listId} noun="list" kept={!!detail.data} />
+          : <QueryError what="this list" onRetry={() => void detail.refetch()} />)}
         {items.length === 0 && waitingAdds.length === 0 && !detail.isLoading && !detail.isError && <div className="text-sm text-muted italic">Empty list.</div>}
 
         <PickToLight key={listId} lines={items.flatMap(it => it.metadata?.source_ref?.kind && it.metadata.source_ref.id ? [{ id: it.id, label: it.title, checked: it.checked, ref: { kind: it.metadata.source_ref.kind, id: it.metadata.source_ref.id } }] : [])} onCheck={id => toggle.mutateAsync({ id, checked: true, quantity: amountFor(items.find(it => it.id === id)!) ?? undefined })} />

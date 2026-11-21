@@ -16,6 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Truck, HelpCircle, PackageCheck, PackageX, Loader2 } from "lucide-react";
 import { api, type ShipmentState, type TrackingLookup } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 /** How each state reads and looks. A row per state, so a new state is a row.
  *  Delivered is the only good news and the only green; an exception is the
@@ -64,7 +65,7 @@ function when(iso: string): string {
 function LookupLink({ lookup }: { lookup: TrackingLookup }) {
   return (
     <a
-      href={lookup.url}
+      href={safeHref(lookup.url)}
       target="_blank"
       rel="noopener noreferrer"
       className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"

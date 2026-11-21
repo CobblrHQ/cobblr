@@ -58,7 +58,7 @@ import {
   currentAccountTerms,
 } from "../auth/identity-client.js";
 import { hardDeleteUser } from "../platform/delete-user.js";
-import { announceSignInsEnded, signInsEndAt } from "../platform/sign-ins-ended.js";
+import { announceSignInsEnded, endSignIns } from "../platform/sign-ins-ended.js";
 import { passwordSignInOn } from "../platform/oidc.js";
 import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
@@ -1249,7 +1249,7 @@ import {
   issueSignInLink,
 } from "../platform/sign-in-link.js";
 import { revokeSandboxLinksForUser } from "../platform/try-sandbox.js";
-import { inviteStatus, joinThroughInvite, REFUSAL } from "../platform/join-invite.js";
+import { inviteStatusNow, joinThroughInvite, REFUSAL } from "../platform/join-invite.js";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { hashPairCode, mintPairCode, pairMintRefusal, PAIR_CODE_TTL_MS } from "../platform/pair-codes.js";
 import { vapidKeys } from "../platform/push-keys.js";
@@ -1331,14 +1331,14 @@ authRouter.post("/magic/request", async (req, res, next) => {
       const invite = await meta
         .selectFrom("workspace_invites as i")
         .innerJoin("orgs as o", "o.id", "i.org_id")
-        .select(["i.id", "i.token", "i.invited_email", "i.revoked_at", "i.consumed_at", "i.expires_at", "i.reusable", "i.max_uses", "i.use_count", "i.paused_at", "o.name as org_name"])
+        .select(["i.id", "i.token", "i.org_id", "i.invited_by_user", "i.role", "i.invited_email", "i.revoked_at", "i.consumed_at", "i.expires_at", "i.reusable", "i.max_uses", "i.use_count", "i.paused_at", "o.name as org_name"])
         .where("i.token", "=", parsed.data.invite)
         .executeTakeFirst();
       if (!invite) {
         res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
         return;
       }
-      const status = inviteStatus(invite);
+      const status = await inviteStatusNow(invite);
       if (status !== "open") {
         res.status(410).json({ error: { code: status, message: REFUSAL[status] } });
         return;
@@ -1456,8 +1456,9 @@ authRouter.post("/magic/consume", async (req, res, next) => {
     const invite = row.invite_token
       ? await meta.selectFrom("workspace_invites").selectAll().where("token", "=", row.invite_token).executeTakeFirst()
       : undefined;
-    if (row.invite_token && (!invite || (!existing && inviteStatus(invite) !== "open"))) {
-      const status = invite ? inviteStatus(invite) : "revoked";
+    const inviteNow = invite ? await inviteStatusNow(invite) : "revoked";
+    if (row.invite_token && (!invite || (!existing && inviteNow !== "open"))) {
+      const status = inviteNow;
       res.status(410).json({
         error: { code: status, message: status === "open" ? REFUSAL.revoked : REFUSAL[status] },
       });
@@ -1706,11 +1707,7 @@ authRouter.post("/password/reset", async (req, res, next) => {
         .returning("id")
         .executeTakeFirst();
       if (!claimed) return false;
-      await trx
-        .updateTable("users")
-        .set({ password_hash: newHash, must_reset_password: false, ...signInsEndAt(at) })
-        .where("id", "=", row.user_id)
-        .execute();
+      await endSignIns(trx, row.user_id, at, { password_hash: newHash, must_reset_password: false });
       return true;
     });
     if (!changed) {

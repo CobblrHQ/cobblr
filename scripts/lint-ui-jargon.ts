@@ -73,7 +73,7 @@ const KIND_ID_OFFENSE =
 // go through exposableFields projection", that a filter was "resolver-
 // dependent", and that a paused link "404s" (#7874): the code's words for
 // what the person needed said plainly.
-const PHRASE_OFFENSE = /exposableFields|resolver-dependent|\b404s\b|bundle installed|bundle uninstalled|ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALLERY\b|the one that ran out|still had some|went bad|No AI to read|\(set it up\)|\bMint invite|paste a UPC|\btable on the way|Queue a QR label/;
+const PHRASE_OFFENSE = /exposableFields|resolver-dependent|\b404s\b|bundle installed|bundle uninstalled|ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALLERY\b|the one that ran out|still had some|went bad|No AI to read|\(set it up\)|\bMint invite|paste a UPC|\btable on the way|Queue a QR label|signature verification/;
 
 // The first hour on a phone (#4115): an invite was "minted", a scan inbox asked
 // for "a UPC", a first scan "set up the Tea table on the way", and a new thing's

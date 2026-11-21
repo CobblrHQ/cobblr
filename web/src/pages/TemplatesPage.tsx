@@ -14,7 +14,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { Modal, useConfirm, useToast, usePageTitle, QueryError } from "@cobblr/platform-web";
+import { Modal, useConfirm, useToast, usePageTitle, QueryError, NumberInput } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -426,9 +426,8 @@ function DefaultInput({ field, value, onChange }: { field: DefaultsField; value:
           ))}
         </select>
       ) : field.input === "number" ? (
-        <input
+        <NumberInput
           className={inputClass}
-          type="number"
           step="any"
           value={draft ?? (typeof value === "number" ? String(value) : "")}
           onChange={(e) => {

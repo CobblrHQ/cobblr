@@ -21,6 +21,7 @@ import { DEFAULT_CADENCE_MIN, ensureSyncScan } from "../sync/worker.js";
 import { CONFLICT_POLICIES, type ConflictPolicy } from "@cobblr/platform-contract/sync-merge";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { installedSyncConnectors, resolveSyncConnector } from "../sync/resolve.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const syncRouter = Router({ mergeParams: true });
 
@@ -139,7 +140,7 @@ const ConnectionCreate = z.object({
   label: z.string().min(1),
   // Optional: a fixed-baseUrl source (e.g. Ravelry) supplies its own base, so the
   // UI hides the field and this is absent — validated below against the connector.
-  base_url: z.string().url().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  base_url: webLink().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   credentials: z.record(z.unknown()).default({}),
   // "edge" routes the source fetch over the workspace's dial-out bridge (the
   // only way a hosted instance reaches a LAN source); "direct" fetches base_url
@@ -242,7 +243,7 @@ syncRouter.get(
 
 const ConnectionUpdate = z.object({
   label: z.string().min(1).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-  base_url: z.string().url().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  base_url: webLink().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   credentials: z.record(z.unknown()).optional(),
   enabled: z.boolean().optional(),
 });

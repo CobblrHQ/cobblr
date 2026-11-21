@@ -5,7 +5,7 @@ import { useRoleAtLeast } from "../lib/can";
 // job; we never live-drive the device (coordinate-not-control). Direct on the
 // LAN for self-hosted; the same connection rides the edge-bridge from cloud.
 
-import { productName, QueryError } from "@cobblr/platform-web";
+import { productName, QueryError, NumberInput } from "@cobblr/platform-web";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
@@ -768,7 +768,7 @@ function PrinterModal({
               </label>
               <label className="block">
                 <div className="text-xs text-muted mb-1">Media width (mm)</div>
-                <input className={field} type="number" step="0.1" value={btMediaWmm} onChange={(e) => setBtMediaWmm(e.target.value)} placeholder="40" />
+                <NumberInput className={field} step="0.1" value={btMediaWmm} onChange={(e) => setBtMediaWmm(e.target.value)} placeholder="40" />
                 <div className="text-[11px] text-faint mt-1">{btDerivedWidthDots} dots &middot; &asymp; {mmToInch(btMediaW).toFixed(2)} in</div>
               </label>
             </div>
@@ -784,13 +784,13 @@ function PrinterModal({
                 </label>
                 <label className="block">
                   <div className="text-xs text-muted mb-1">Label height (mm)</div>
-                  <input className={field} type="number" value={btHeightMm} onChange={(e) => setBtHeightMm(e.target.value)} />
+                  <NumberInput className={field} value={btHeightMm} onChange={(e) => setBtHeightMm(e.target.value)} />
                   <div className="text-[11px] text-faint mt-1">&asymp; {mmToInch(btLabelH).toFixed(2)} in</div>
                 </label>
                 {btFeed === "die-cut" && (
                   <label className="block">
                     <div className="text-xs text-muted mb-1">Gap (mm)</div>
-                    <input className={field} type="number" step="0.01" value={btGapMm} onChange={(e) => setBtGapMm(e.target.value)} />
+                    <NumberInput className={field} step="0.01" value={btGapMm} onChange={(e) => setBtGapMm(e.target.value)} />
                     <div className="text-[11px] text-faint mt-1">Wrong value drifts each label off the edge.</div>
                   </label>
                 )}
@@ -820,7 +820,7 @@ function PrinterModal({
                 </label>
                 <label className="block">
                   <div className="text-xs text-muted mb-1">Top margin (dots)</div>
-                  <input className={field} type="number" min={0} value={btTopMargin} onChange={(e) => setBtTopMargin(e.target.value)} />
+                  <NumberInput className={field} min={0} value={btTopMargin} onChange={(e) => setBtTopMargin(e.target.value)} />
                   <div className="text-[11px] text-faint mt-1">
                     The dead zone at the top of the label your printer physically can&apos;t print in.
                     Printing too low? Lower this and the whole print moves up
@@ -829,7 +829,7 @@ function PrinterModal({
                 </label>
                 <label className="block">
                   <div className="text-xs text-muted mb-1">Labels across</div>
-                  <input className={field} type="number" min={1} max={8} value={btAcross} onChange={(e) => setBtAcross(e.target.value)} />
+                  <NumberInput className={field} min={1} max={8} value={btAcross} onChange={(e) => setBtAcross(e.target.value)} />
                   <div className="text-[11px] text-faint mt-1">
                     {btAcrossN > 1 ? `${btAcrossN} labels of ${Number(btFaceW.toFixed(1))}mm across the ${btMediaW || "?"}mm media` : "one label per feed"}
                   </div>
@@ -961,7 +961,7 @@ function PrinterModal({
           </label>
           <label className="block">
             <div className="text-xs text-muted mb-1">Max width (in)</div>
-            <input className={field} type="number" step="0.1" min={1} value={netMaxIn} onChange={(e) => setNetMaxIn(e.target.value)} placeholder={netKind === "thermal" ? "4" : "8.5"} />
+            <NumberInput className={field} step="0.1" min={1} value={netMaxIn} onChange={(e) => setNetMaxIn(e.target.value)} placeholder={netKind === "thermal" ? "4" : "8.5"} />
             <div className="text-[11px] text-faint mt-1">Widest media it feeds. Sizes wider than this aren&rsquo;t offered.</div>
           </label>
         </div>

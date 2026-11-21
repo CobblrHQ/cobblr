@@ -10,7 +10,7 @@ import { useState } from "react";
 import type { NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, Pencil, RotateCcw, SlidersHorizontal } from "lucide-react";
-import { Modal, NounChoiceButtons, OnceQuiet, nounChoiceHeading, changeWorkspaceShape, useChangeWorkspaceShape, useRunAction, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, NounChoiceButtons, OnceQuiet, nounChoiceHeading, changeWorkspaceShape, useChangeWorkspaceShape, useRunAction, useToast, useConfirm, usePageTitle, NumberInput } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -819,8 +819,7 @@ function PresentationFields({
         <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           Nav order (optional)
         </span>
-        <input
-          type="number"
+        <NumberInput
           value={navOrder}
           onChange={(e) => setNavOrder(e.target.value)}
           placeholder="lower numbers come first"

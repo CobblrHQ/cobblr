@@ -3,7 +3,7 @@
 // invites with copy-link/revoke. A small form at the bottom mints
 // a new invite link.
 
-import { productName } from "@cobblr/platform-web";
+import { productName, NumberInput } from "@cobblr/platform-web";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Plus, Printer, Trash2, X } from "lucide-react";
@@ -550,8 +550,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                   At most, then pause
                 </span>
                 <span className="flex gap-1">
-                  <input
-                    type="number"
+                  <NumberInput
                     min={1}
                     value={paceLimit}
                     onChange={(e) => setPaceLimit(e.target.value)}
@@ -572,8 +571,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                 <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Stop after (optional)
                 </span>
-                <input
-                  type="number"
+                <NumberInput
                   min={1}
                   value={maxUses}
                   onChange={(e) => setMaxUses(e.target.value)}

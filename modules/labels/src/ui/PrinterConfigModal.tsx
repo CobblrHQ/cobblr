@@ -20,7 +20,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { DragInput, Modal, useToast } from "@cobblr/platform-web";
+import { DragInput, Modal, useToast, NumberInput } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 
 const DOTS_PER_MM = 8; // 203 dpi
@@ -98,9 +98,8 @@ export function PrinterConfigModal({
         <label className="flex flex-col gap-1">
           <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">print position</span>
           <div className="flex items-center gap-2">
-            <input
+            <NumberInput
               className={`${field} w-24`}
-              type="number"
               step="0.5"
               min={0}
               value={topMm}

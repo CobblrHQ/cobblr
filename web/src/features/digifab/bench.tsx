@@ -1,7 +1,7 @@
 import { instrumentReadingText } from "@cobblr/platform-contract/instrument-reading";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { SearchInput, useToast, useConfirm, useImageSrc, WorkspaceLink } from "@cobblr/platform-web";
+import { SearchInput, useToast, useConfirm, useImageSrc, WorkspaceLink, NumberInput } from "@cobblr/platform-web";
 import { api, type BenchReport, type BenchOperation, type BenchCapture, type PlatformResolvedEntity } from "../../lib/api";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
 import { exactTime } from "../../lib/exact-time";
@@ -66,8 +66,8 @@ export function BenchInstrument({slug,machineId,station=false}:{slug:string;mach
    {activeOrg?.role==="owner"&&<label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={instrument.control_enabled===true} disabled={busy} onChange={e=>void operate("configure",{control_enabled:e.target.checked})}/>Allow control for this instrument</label>}
    {instrument.control_enabled&&<div className="space-y-2">
     <button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm" disabled={busy} onClick={()=>void operate("output_on")}>Output on</button>
-    <label className="block text-sm">Voltage set point (V)<input className="input w-full min-h-11" type="number" min="0" max="60" step="0.01" value={voltage} onChange={e=>setVoltage(e.target.value)}/></label><button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm" disabled={busy} onClick={()=>void operate("set_voltage",{value:Number(voltage)})}>Set voltage</button>
-    <label className="block text-sm">Current limit (A)<input className="input w-full min-h-11" type="number" min="0" max="18" step="0.001" value={current} onChange={e=>setCurrent(e.target.value)}/></label><button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm" disabled={busy} onClick={()=>void operate("set_current",{value:Number(current)})}>Set current limit</button>
+    <label className="block text-sm">Voltage set point (V)<NumberInput className="input w-full min-h-11" min="0" max="60" step="0.01" value={voltage} onChange={e=>setVoltage(e.target.value)}/></label><button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm" disabled={busy} onClick={()=>void operate("set_voltage",{value:Number(voltage)})}>Set voltage</button>
+    <label className="block text-sm">Current limit (A)<NumberInput className="input w-full min-h-11" min="0" max="18" step="0.001" value={current} onChange={e=>setCurrent(e.target.value)}/></label><button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm" disabled={busy} onClick={()=>void operate("set_current",{value:Number(current)})}>Set current limit</button>
    </div>}
   </div>}
   {/* EXTERNAL-IMAGE-OK: the instrument screenshot is an inline data URI, never a stored file path. */}
@@ -75,8 +75,8 @@ export function BenchInstrument({slug,machineId,station=false}:{slug:string;mach
   {report&&<div aria-live="polite" className="space-y-2"><p className="text-sm text-muted"><time dateTime={report.at} title={report.at}>{exactTime(report.at)}</time></p><Measurements report={report}/>{report.screenshot&&<img className="max-w-full rounded" alt="Scope reading" src={`data:${report.screenshot.mime_type};base64,${report.screenshot.data_b64}`}/>}</div>}
   {instrument?.profile==="sigrok"&&<div className="space-y-2">
    <label className="block text-sm">Channels<input className="input w-full min-h-11" value={channels} onChange={e=>setChannels(e.target.value)}/></label>
-   <label className="block text-sm">Sample rate (Hz)<input className="input w-full min-h-11" type="number" value={rate} onChange={e=>setRate(e.target.value)}/></label>
-   <label className="block text-sm">Duration (ms)<input className="input w-full min-h-11" type="number" min="1" max="10000" value={duration} onChange={e=>setDuration(e.target.value)}/></label>
+   <label className="block text-sm">Sample rate (Hz)<NumberInput className="input w-full min-h-11" value={rate} onChange={e=>setRate(e.target.value)}/></label>
+   <label className="block text-sm">Duration (ms)<NumberInput className="input w-full min-h-11" min="1" max="10000" value={duration} onChange={e=>setDuration(e.target.value)}/></label>
    <label className="block text-sm">Trigger (optional)<input className="input w-full min-h-11" placeholder="D0=r" value={trigger} onChange={e=>setTrigger(e.target.value)}/></label>
    <label className="block text-sm">Protocol decoder<select className="input w-full min-h-11" value={decoder} onChange={e=>{setDecoder(e.target.value);setOptions("");}}><option value="">No decode</option>{["uart","i2c","spi","can","onewire_link"].map(d=><option key={d} value={d}>{d==="onewire_link"?"1-Wire":d.toUpperCase()}</option>)}</select></label>
    {decoder&&<label className="block text-sm">Decoder options<input className="input w-full min-h-11" placeholder="tx=D0:baudrate=115200" value={options} onChange={e=>setOptions(e.target.value)}/></label>}

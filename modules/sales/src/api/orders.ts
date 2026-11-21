@@ -42,6 +42,7 @@ ordersRouter.use("/:id/documents", documentsRouter);
 const Status = z.enum(["draft", "confirmed", "fulfilled", "shipped", "closed", "cancelled"]);
 
 import { closeDeliveredOrder, undoDeliveryClose } from "../close-delivered.js";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 const OrderCreate = z.object({
   customer_id: z.string().uuid().nullable().optional(),
@@ -54,7 +55,7 @@ const OrderCreate = z.object({
   /** When the customer wants it: an ISO date. */
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "a due date is YYYY-MM-DD").refine(isSaleDay, "That is not a day a sale can be on.").nullable().optional(),
   shipping_address: z.string().max(2_000).nullable().optional(),
-  notes: z.string().max(8_000).nullable().optional(),
+  notes: z.string().max(RECORD_NOTES_MAX).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 // Paid is read from the payments (#8838): a new order has none, so only a change can tick it.

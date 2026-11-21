@@ -32,6 +32,7 @@ import { applyRejectName } from "../../services/user-name.js";
 import { displayName, rejectedNamesOf, USER_NAME_KEY } from "@cobblr/platform-contract/display-identity";
 import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 import { INTERNAL_API, OrigCatalog, catalogMetaSet, matchItem, served } from "./shared.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const rerunRouter = Router({ mergeParams: true });
 
@@ -907,7 +908,7 @@ const RankPhotoBody = z.object({
   candidates: z
     .array(
       z.object({
-        url: z.string().url().max(2000),
+        url: webLink().max(2000),
         thumb: optionalText(2000),
         title: optionalText(300),
         source: z.string().max(200).optional(), // none-refused-ok: a column that cannot hold null
@@ -1030,7 +1031,7 @@ const CatalogImageBody = z.union([
   // is indistinguishable from a hand-pick — and Revert would restore the raw
   // first web result, throwing the AI's judgement away (reported 2026-08-11).
   z.object({
-    url: z.string().url().max(2000),
+    url: webLink().max(2000),
     ai_pick: z.boolean().optional(),
     /** The search result's own THUMBNAIL, used only if `url` cannot be fetched.
      *  A picture visible in the strip is proof that SOME url for it works: the
@@ -1039,7 +1040,7 @@ const CatalogImageBody = z.union([
      *  told "that image couldn't be used" about a picture on screen is the
      *  report this answers (2026-08-14). Lower resolution, and far better than
      *  refusing the pick. */
-    thumb_url: z.string().url().max(2000).optional(),
+    thumb_url: webLink().max(2000).optional(),
   }),
   z.object({ action: z.enum(["revert", "use_own_photo", "use_screenshot_crop"]) }),
   // "Take a nice picture" — a freshly-captured upload becomes the DISPLAY

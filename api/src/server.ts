@@ -61,6 +61,7 @@ import { mePushOrgRouter, mePushRouter } from "./routes/me-push.js";
 import { oidcAdminRouter, oidcAuthRouter, oidcMeRouter } from "./routes/oidc.js";
 import { discordInteractionsRouter } from "./routes/discord-interactions.js";
 import { testSupportRouter } from "./routes/test-support.js";
+import { testDoorsOpen } from "./db/test-doors.js";
 import { allowTestPushService } from "./platform/push-endpoints.js";
 import { fileURLToPath } from "node:url";
 import { testDoorsEnabled } from "./platform/test-doors.js";
@@ -432,10 +433,10 @@ export function createApp(): AppHandles {
   }
   // TEST-ONLY: org-pool checkout endpoints, mounted ONLY under the flag (never
   // in prod — the route mints tokens). See routes/test-support.ts.
-  if (env.COBBLR_TEST_ORG_POOL) v1.use(testSupportRouter);
+  if (testDoorsOpen(env)) v1.use(testSupportRouter);
   // The CI push service (test-support's /push-service) is this api itself.
   // loopback-ok: the address a test device subscribes with; push-delivery reaches it in-process (selfFetch), never over the socket
-  if (env.COBBLR_TEST_ORG_POOL) allowTestPushService([`http://127.0.0.1:${env.API_PORT}`, `http://localhost:${env.API_PORT}`]);
+  if (testDoorsOpen(env)) allowTestPushService([`http://127.0.0.1:${env.API_PORT}`, `http://localhost:${env.API_PORT}`]);
   // The receiving end of a trial's "bring what I built": on every deployment,
   // answering only where COBBLR_CARRY_SOURCES names somewhere to read from.
   v1.use(carryRouter);

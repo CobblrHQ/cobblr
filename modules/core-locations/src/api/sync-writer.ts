@@ -9,6 +9,7 @@ import { planProblem } from "@cobblr/platform-contract/plan-clearance";
 import { hasSomethingToRead } from "./util.js";
 import { duplicateSiblingMessage, siblingNamed } from "./siblings.js";
 import { DuplicateRecordError, findRowIdByKey, imageId, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
+import { storedPicture } from "@cobblr/platform-contract/image-reference";
 import { sql, type Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
 import { deletePlace, restoreDeletedPlace } from "./place-delete.js";
@@ -65,6 +66,7 @@ export function registerLocationsWriter(): void {
           metadata: sql`${JSON.stringify(fields.metadata ?? {})}::jsonb` as never,
           description: asStr(fields.description),
           notes: asStr(fields.notes),
+          image_path: storedPicture(fields.image_path),
         })
         .returning("id")
         .executeTakeFirstOrThrow();
@@ -100,7 +102,7 @@ export function registerLocationsWriter(): void {
       if (fields.kind !== undefined) patch.kind = normalizeKind(fields.kind);
       if (fields.description !== undefined) patch.description = asStr(fields.description);
       if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
-      if (fields.image_path !== undefined) patch.image_path = asStr(fields.image_path);
+      if (fields.image_path !== undefined) patch.image_path = storedPicture(fields.image_path);
       if (fields.metadata !== undefined) {
         patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
       }

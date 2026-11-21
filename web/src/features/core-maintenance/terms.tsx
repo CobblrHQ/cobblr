@@ -52,6 +52,7 @@ function TermEditor({ slug, term, close, refresh }: { slug: string; term: Mainte
     cost_cents: moneyHidden ? undefined : term.cost_cents, currency: Object.hasOwn(term, "currency") ? term.currency ?? main : undefined, reference: term.reference, quantity: term.quantity }));
   const [draft, setDraft] = useState<MaintenanceTermPatch>(opened);
   const save = useMutation({ mutationFn: async () => {
+    // photo-not-kept: the document stays in this form until its Save lands; a failed Save says so and keeps the form open.
     const uploaded = file ? await api.uploadFile(slug, file) : null;
     // Through the action, so the correction carries its Undo (#5808).
     return runWithUndo({ actionId: "core-maintenance:update-term", args: { term_id: term.id, ...draft, [EDITED_FROM_ARG]: Object.fromEntries(Object.entries(opened).filter(([, v]) => v !== undefined)), ...(uploaded ? { file_id: uploaded.id } : {}) } }, `${term.name} updated.`);

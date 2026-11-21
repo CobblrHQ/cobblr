@@ -5,6 +5,10 @@ export const OFFLINE_SENTENCE = "You're offline. This will work again when you'r
 /** What a form says when what it sent is kept on the device and goes by
  *  itself once the connection returns (#8637). */
 export const KEPT_SENTENCE = "You're offline. It's kept on this device and goes by itself when you're back online.";
+/** What a form says when its sign-in ended before the write was answered: it
+ *  is kept on the device for the same person and goes once they sign in again
+ *  (#4115). A different person signing in never sends it. */
+export const KEPT_SIGNED_OUT_SENTENCE = "You were signed out. This is kept on this device and saves when you sign in again.";
 /** The code a door's error carries when the write it could not send is kept. */
 export const KEPT_OFFLINE = "kept_offline";
 

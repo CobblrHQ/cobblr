@@ -30,6 +30,7 @@ import { fetchGithubJson, fetchGithubBuffer } from "../lib/github-registry.js";
 import * as sharedCache from "../platform/shared-cache.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { webLink } from "@cobblr/platform-contract/web-link";
 export const sandboxInstallRouter = Router();
 sandboxInstallRouter.use(requireAuth, requirePlatformAdmin);
 
@@ -38,7 +39,7 @@ const InstallBody = z.object({
   version: z.string().min(1).max(64),
   /** Override the registry URL. Defaults to the operator-curated
    *  cobblrhq/registry. Useful for testing against a local fixture. */
-  registry_url: optionalField(z.string().url()),
+  registry_url: optionalField(webLink()),
   /** TOFU override: a module's signing key is pinned on first install;
    *  an update signed by a DIFFERENT key is rejected unless this is set
    *  (the operator re-consents to the key change). */

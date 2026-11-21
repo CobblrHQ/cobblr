@@ -34,7 +34,7 @@ import * as notifications from "../platform/notifications.js";
 import { notificationKindsFor, notificationLabel } from "../platform/notification-kinds.js";
 import { onNotificationChange } from "../platform/notification-stream.js";
 import { openPersonSse, signInOf, signStreamTicket, verifyStreamTicket } from "../lib/event-stream.js";
-import { announceSignInsEnded, signInsEndAt } from "../platform/sign-ins-ended.js";
+import { announceSignInsEnded, endSignIns } from "../platform/sign-ins-ended.js";
 import { NOTIFICATION_STREAM_EVENT } from "@cobblr/platform-contract/notification-stream";
 import type { NotificationChannel } from "../db/schema.js";
 import { pressNotificationAction } from "../platform/notification-press.js";
@@ -72,6 +72,7 @@ import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 import { REPLY_ACTION_ID, REPLY_MAX } from "@cobblr/platform-contract/notifications";
 import { replayAccountWrite } from "../platform/request-replays.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const meRouter = Router();
 meRouter.use(endApiTokensRouter);
@@ -406,11 +407,7 @@ meRouter.post("/me/password", requireAuth, async (req, res, next) => {
     // by stamping the cutoff, then re-mint a fresh token for THIS device so
     // the user isn't logged out by their own password change. Audit #6.
     const changedAt = new Date();
-    await meta
-      .updateTable("users")
-      .set({ password_hash: newHash, must_reset_password: false, ...signInsEndAt(changedAt) })
-      .where("id", "=", req.session!.id)
-      .execute();
+    await endSignIns(meta, req.session!.id, changedAt, { password_hash: newHash, must_reset_password: false });
     announceSignInsEnded(req.session!.id);
     const freshToken = await signSession(req.session!.id);
     // Activity-log to whichever workspace the user is a member of
@@ -499,11 +496,7 @@ meRouter.post("/me/email", requireAuth, async (req, res, next) => {
 meRouter.post("/me/sign-out-everywhere", requireAuth, async (req, res, next) => {
   try {
     const at = new Date();
-    await meta
-      .updateTable("users")
-      .set(signInsEndAt(at))
-      .where("id", "=", req.session!.id)
-      .execute();
+    await endSignIns(meta, req.session!.id, at);
     announceSignInsEnded(req.session!.id);
     // Every other browser and phone stops taking this account's notices too:
     // a lost phone keeps its push subscription after its session ends (#7124).
@@ -1222,23 +1215,19 @@ const ChannelConfigSchemas: Record<NotificationChannel, z.ZodTypeAny> = {
   // The person's own linked Discord account; nothing to configure here.
   discord_dm: z.object({}).strict(),
   discord: z.object({
-    webhook_url: z
-      .string()
-      .url()
+    webhook_url: webLink()
       .regex(/^https:\/\/discord\.com\/api\/webhooks\//, {
         message: "must be a https://discord.com/api/webhooks/... URL",
       }),
   }),
   slack: z.object({
-    webhook_url: z
-      .string()
-      .url()
+    webhook_url: webLink()
       .regex(/^https:\/\/hooks\.slack\.com\//, {
         message: "must be a https://hooks.slack.com/... URL",
       }),
   }),
   webhook: z.object({
-    url: z.string().url(),
+    url: webLink(),
     headers: z.record(z.string(), z.string()).optional(),
   }),
   // Pick a delivery provider; SMTP or an HTTP transactional API. `provider`

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { LocationPicker, Modal, useCan, useFieldPresentation, usePhotoPick, usePlatformWeb, useRunAction } from "@cobblr/platform-web";
+import { LocationPicker, Modal, useCan, useFieldPresentation, usePhotoPick, usePlatformWeb, useRunAction, NumberInput } from "@cobblr/platform-web";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { useInventory } from "./context";
 import type { FamilyPayload } from "./api";
@@ -103,12 +103,12 @@ export function ReceivePackage({ data }: { data: FamilyPayload }) {
             {/* base-noun-ok: a distributor's label names an electronic part and its MPN */}
             <label>Manufacturer part number<input required className={input} value={mpn} onChange={e => setMpn(e.target.value)} /></label>
             <label>{label("manufacturer", "Manufacturer")}<input className={input} value={manufacturer} onChange={e => setManufacturer(e.target.value)} /></label>
-            <label>Package quantity<input required type="number" min="1" step="1" className={input} value={quantity} onChange={e => setQuantity(e.target.value)} /></label>
+            <label>Package quantity<NumberInput required min="1" step="1" className={input} value={quantity} onChange={e => setQuantity(e.target.value)} /></label>
             <label>Packaging<select className={input} value={packaging} onChange={e => setPackaging(e.target.value)}>{["reel", "cut tape", "tray", "tube"].map(p => <option key={p}>{p}</option>)}</select></label>
             <label>MSL<select className={input} value={msl} onChange={e => setMsl(e.target.value)}><option value="">Not known</option>{["1", "2", "2a", "3", "4", "5", "5a", "6"].map(v => <option key={v}>{v}</option>)}</select></label>
-            <label>Attrition (%)<input type="number" min="0" max="100" step="any" className={input} value={attrition} onChange={e => setAttrition(e.target.value)} /></label>
+            <label>Attrition (%)<NumberInput min="0" max="100" step="any" className={input} value={attrition} onChange={e => setAttrition(e.target.value)} /></label>
             <label>Storage<select className={input} value={storage} onChange={e => setStorage(e.target.value)}>{["sealed", "dry", "open"].map(v => <option key={v}>{v}</option>)}</select></label>
-            <label>Earlier exposure (hours)<input type="number" min="0" step="any" className={input} value={exposed} onChange={e => setExposed(e.target.value)} /></label>
+            <label>Earlier exposure (hours)<NumberInput min="0" step="any" className={input} value={exposed} onChange={e => setExposed(e.target.value)} /></label>
             <LocationPicker label="Location" value={location || null} onChange={(id) => setLocation(id ?? "")} noneLabel="Choose later" placeholder="Choose later" />
             <label>Receive into<select className={input} value={topUp} onChange={e => setTopUp(e.target.value)}><option value="">New package</option>{packages.filter(p => String(p.metadata.mpn ?? "").toLowerCase() === mpn.toLowerCase()).map(p => <option key={p.id} value={p.id}>{p.name} · {p.metadata.lot_code ? String(p.metadata.lot_code) : "no lot"} · {p.qty} left</option>)}</select></label>
           </div>

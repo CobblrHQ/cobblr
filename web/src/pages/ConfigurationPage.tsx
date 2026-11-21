@@ -32,6 +32,7 @@ import { isFocused } from "../lib/api";
 import { useBundleUpdates } from "../lib/useBundleUpdates";
 import { useBundleDetail } from "../components/useBundleDetail";
 import { MetaParts } from "../components/MetaParts";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 export function ConfigurationPage() {
   usePageTitle("Configuration");
@@ -69,7 +70,7 @@ export function ConfigurationPage() {
   // name, the hierarchy is in the way.
   const hits = q ? all.filter((d) => destinationMatches(d, q)) : [];
   const hostedHits = q
-    ? panels.filter((p) => p.label.toLowerCase().includes(q.toLowerCase()))
+    ? panels.filter((p) => textHas(p.label, q.toLowerCase()))
     : [];
 
   const sections = CONFIG_SECTION_ORDER.map((id) => ({

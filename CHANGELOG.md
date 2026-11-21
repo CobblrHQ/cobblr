@@ -2,14 +2,35 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-21
+
+### Security
+- A link field takes only a web address (http or https), so a supplier link, a vendor's website or an order's link can no longer be saved as a javascript: or data: link, and a page never links a stored value that would run script
+- A record's picture is a file in the workspace or an https address, through the page, the API, Cobb and imports alike, so a plain http, javascript: or data: address, or another site's address, is refused, and a page never draws one saved before
+- An outside link in record text shows its full address and opens in a new tab without passing on the page, as in Cobb's answers
+
+### Fixes
+- A name typed without its accents finds the record on the search page, in a collection's own search and through Cobb, not only in a page's filter
+- A note longer than a field takes says the limit as you type and is kept in the box until it fits, never refused on save and lost
+- A word typed without its accents finds the thing that has them, in every search and filter a page runs and in what Cobb looks up
+
 ## 2026-11-20
 
 ### Security
 - A picture in Cobb's answer, or anywhere Markdown is shown, is drawn only when it comes from your own Cobblr; any other picture is a link that says where it goes and loads nothing, so words written in a record can no longer have an answer send your workspace's data to another site. A link to another site now shows its full address beside its words.
+- Signing out everywhere or changing your password now also ends every password-reset link, sign-in link and phone pairing code sent before it, so a link still sitting in an inbox can no longer get back into the account.
 - Signing out everywhere, changing or resetting your password, or deleting your account now also cuts off live updates on every device straight away. Before, a page still open on a lost phone kept being told which records changed (which ones, never what was in them), and its notification bell kept updating, until it was closed; a page opened in the minute after could start listening again. Every other request from that phone was already refused; the live updates now stop too.
+- An invite or join link that makes someone an admin or an editor now works only while the person who made it is still an owner or admin of the workspace. Before, an admin who was demoted or removed kept every admin link they had made, and a join link runs until it is revoked, so they could walk a second account back in as an admin. A member's link, like a wall QR, keeps working when whoever printed it leaves, and a workspace the operator has turned off now takes nobody in through any link.
 
 ### Fixes
+- A sign-in that has ended now says "You were signed out. Sign in again." everywhere, including the assistant and other apps, instead of a technical message.
 - A scan photo taken with no signal sends itself once the signal is back, still filed once, instead of waiting for a Retry press
+- A create form you start but do not finish on a phone keeps what you typed through a reload, a closed tab or a stray close, for you in that workspace, until it is created
+- A list keeps its search and filters when you open a record and go back, on a phone too, scrolled to where you were
+- A phone unlocked after a moment shows what changed while it was locked, and keeps what you were typing and where you had scrolled
+- A photo or file added to a record offline is kept on the device and sends itself when you are back, after a reload too, instead of being dropped
+- A record someone else deletes while you have it open says who deleted it and when, keeps what you typed, and offers Restore (or whom to ask), never a raw not found
+- A change saved after your sign-in ended is kept on the device and sent once you sign in again, never as someone else
 
 ## 2026-11-19
 
@@ -27,6 +48,7 @@ User-facing changes, newest first. Dates are release dates.
 - Cobb's built-in answers name your own lists: asked how to add something in a new workspace, Cobb no longer sends you to Parts, Printers or Orders you don't have, and names the list you asked about first.
 - Cobb never gives a count, total or amount it did not read: a figure no tool returned and you did not say is sent back to be counted, or left out, before the answer reaches you.
 - Asked "what can you do?", Cobb answers from your workspace: the lists you can add to, things you can say to it, and one thing to try first.
+- A number typed on a phone is read the way its language writes it: 1,5 is never kept as 15, and 1.500 in German is fifteen hundred, said back before it is kept.
 - Undoing a place Cobb made leaves it alone when you have put things in it since, and says what is there, instead of deleting it and losing where those things are.
 
 ## 2026-11-18

@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { EntityPhoto } from "@cobblr/platform-web";
+import { EntityPhoto, NumberInput } from "@cobblr/platform-web";
 import { api, ApiError, type ServiceJob } from "../lib/api";
 import { openAuthedFile } from "../lib/authed-file";
 import { ImageLightbox } from "./ImageLightbox";
@@ -188,7 +188,7 @@ function NeedsInput({ slug, needs, busy, onAnswer }: { slug: string; needs: Need
               ) : p.type === "boolean" ? (
                 <input type="checkbox" className="ml-2" checked={!!values[key]} onChange={(e) => setValues({ ...values, [key]: e.target.checked })} />
               ) : (
-                <input
+                <NumberInput
                   type={p.type === "string" ? "text" : "number"}
                   className="block mt-0.5 w-full rounded border border-line dark:border-slate-700 bg-transparent px-2 py-1"
                   value={String(values[key] ?? "")}

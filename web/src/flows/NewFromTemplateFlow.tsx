@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNewRecordBarcode, fieldNeed, FieldPack, RecordFormModal, RelationSelect, useToast, type TemplateCreateArgs } from "@cobblr/platform-web";
+import { useNewRecordBarcode, fieldNeed, FieldPack, RecordFormModal, RelationSelect, useToast, type TemplateCreateArgs, NumberInput } from "@cobblr/platform-web";
 import { api, type EntityTemplate, type PlatformEntityKind } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -14,6 +14,7 @@ export function NewFromTemplateFlow({ args, onClose }: { args: Record<string, un
   const kinds = useQuery({ queryKey: ["entity-kinds", activeSlug], queryFn: () => api.listEntityKinds(activeSlug), enabled: !!activeSlug });
   const items = templates.data?.items ?? [];
   const kindLabel = (id: string) => kinds.data?.items.find((k) => k.id === id)?.display_name ?? id.split(":").pop();
+  // draft-not-kept: the values come from the template; only a few blanks are typed.
   return (
     <RecordFormModal open onClose={onClose} title="New from template">
       {picked ? <TemplateItemForm key={picked.id} template={picked} kind={kinds.data?.items.find((k) => k.id === picked.target_kind)} instance={instance} scanItemId={scanItemId} seed={seed} onClose={onClose} onBack={() => setPicked(null)} /> : (
@@ -117,5 +118,5 @@ function TemplateValue({ label, value, required, onChange }: { label: string; va
   if (typeof value === "boolean") return <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />{words}</label>;
   if (label === "project id") return <label className="block text-sm">Project<RelationSelect refKind="projects:project" label="Project" value={value} onChange={onChange} /></label>;
   if (label === "location id") return <label className="block text-sm">Location<RelationSelect refKind="core-locations:location" label="Location" value={value} onChange={onChange} /></label>;
-  return <label className="block text-sm">{words}<input className="input mt-1" required={required} type={valueType === "number" ? "number" : "text"} step={valueType === "number" ? "any" : undefined} value={value == null ? "" : String(value)} onChange={(e) => onChange(valueType === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value)} /></label>;
+  return <label className="block text-sm">{words}<NumberInput className="input mt-1" required={required} type={valueType === "number" ? "number" : "text"} step={valueType === "number" ? "any" : undefined} value={value == null ? "" : String(value)} onChange={(e) => onChange(valueType === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value)} /></label>;
 }

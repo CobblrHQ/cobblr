@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal } from "@cobblr/platform-web";
+import { Modal, NumberInput } from "@cobblr/platform-web";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
 import { api } from "../../lib/api";
 
@@ -47,7 +47,7 @@ export function DesignMakeDialog({ makeId, onClose }: { makeId: string; onClose:
         }}><option value="">Choose a template</option>{templates.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}</select></label>
         {template?.summary && <p className="text-sm text-muted">{template.summary}</p>}
         {Object.entries(template?.params_schema?.properties ?? {}).map(([key, field]) => <label key={key} className="block text-sm">{field.title ?? key.replace(/_/g, " ")}
-          {field.type === "boolean" ? <input type="checkbox" className="ml-2" checked={params[key] === true} onChange={(e) => setParams({ ...params, [key]: e.target.checked })} /> : field.enum ? <select required={template?.params_schema?.required?.includes(key)} className={inputClass} value={String(params[key] ?? "")} onChange={(e) => setParams({ ...params, [key]: field.enum!.find((v) => String(v) === e.target.value) })}><option value="">Choose…</option>{field.enum.map((v) => <option key={String(v)} value={String(v)}>{String(v)}</option>)}</select> : <input className={inputClass} type={field.type === "number" || field.type === "integer" ? "number" : "text"} step={field.type === "integer" ? 1 : "any"} min={field.minimum} max={field.maximum} required={template?.params_schema?.required?.includes(key)} value={String(params[key] ?? "")} onChange={(e) => {
+          {field.type === "boolean" ? <input type="checkbox" className="ml-2" checked={params[key] === true} onChange={(e) => setParams({ ...params, [key]: e.target.checked })} /> : field.enum ? <select required={template?.params_schema?.required?.includes(key)} className={inputClass} value={String(params[key] ?? "")} onChange={(e) => setParams({ ...params, [key]: field.enum!.find((v) => String(v) === e.target.value) })}><option value="">Choose…</option>{field.enum.map((v) => <option key={String(v)} value={String(v)}>{String(v)}</option>)}</select> : <NumberInput className={inputClass} type={field.type === "number" || field.type === "integer" ? "number" : "text"} step={field.type === "integer" ? 1 : "any"} min={field.minimum} max={field.maximum} required={template?.params_schema?.required?.includes(key)} value={String(params[key] ?? "")} onChange={(e) => {
             const next = { ...params };
             if (!e.target.value) delete next[key];
             else next[key] = field.type === "number" || field.type === "integer" ? Number(e.target.value) : e.target.value;

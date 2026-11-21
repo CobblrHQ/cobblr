@@ -16,7 +16,7 @@ import { ReminderControls, ReminderPicker, CadencePicker } from "./renewals";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, History, Loader2, Pencil, Trash2 } from "lucide-react";
-import { ChoiceCombobox, useRunWithUndo, useToast, type ChoiceOption } from "@cobblr/platform-web";
+import { ChoiceCombobox, useRunWithUndo, useToast, type ChoiceOption, NumberInput } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { EDITED_FROM_ARG } from "@cobblr/platform-contract/edited-from";
 import { scheduleAsOpened } from "./schedule-as-opened";
@@ -305,8 +305,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-content dark:text-slate-200">Service every</span>
-          <input
-            type="number"
+          <NumberInput
             inputMode="decimal"
             min={1}
             aria-label="How many"
@@ -386,7 +385,7 @@ function EditSchedule({
       <ChoiceCombobox label="What needs doing" value={name || null} options={jobs} onCommit={(v) => setName(v ?? "")} live />
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm">Every</span>
-        <input type="number" inputMode="decimal" min={1} aria-label="How many" value={n} onChange={(e) => setN(e.target.value)} className={`${input} w-20`} />
+        <NumberInput inputMode="decimal" min={1} aria-label="How many" value={n} onChange={(e) => setN(e.target.value)} className={`${input} w-20`} />
         <select aria-label="Of what" value={unit} onChange={(e) => setUnit(e.target.value)} className={input}>
           {UNITS.map((u) => (
             <option key={u.value} value={u.value}>{num === 1 ? u.one : u.many}</option>

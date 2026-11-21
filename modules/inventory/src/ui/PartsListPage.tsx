@@ -4,7 +4,7 @@ import { readRecordLoan } from "@cobblr/platform-contract/loan";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
-import { SelectBox, LentChip, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, useRecordActions, useStillAsking, workspaceFetch, editOf, useCan, NearSpellings } from "@cobblr/platform-web";
+import { SelectBox, LentChip, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, useRecordActions, useStillAsking, workspaceFetch, editOf, useCan, useListSearch, NearSpellings } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
@@ -41,6 +41,7 @@ import { strayRecords } from "@cobblr/platform-contract/instance-for-category";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { unappliedSentence } from "@cobblr/platform-contract/view-caveats";
 import { PART_FIELD_LABELS } from "../part-field-labels";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 /** One of this module's lists, as `GET /instances?module=inventory` describes it. */
 interface SiblingList {
@@ -79,9 +80,10 @@ export function PartsListPage() {
   const { id: detailId } = useParams<{ id?: string }>();
   const navigate = useNavigate();
   const closeDetail = useCloseToOrigin(basePath);
-  const [search, setSearch] = useState("");
-  const [categoryId, setCategoryId] = useState<string>("");
-  const [locationId, setLocationId] = useState<string>("");
+  // Kept with this page in the history, so Back from a record finds the list as it was left (#4115, useListSearch).
+  const [search, setSearch] = useListSearch("q");
+  const [categoryId, setCategoryId] = useListSearch("category");
+  const [locationId, setLocationId] = useListSearch("place");
   const [state, setState] = useState<StateFilter>("active");
   const [lowOnly, setLowOnly] = useState(false);
   const [archivedFilter, setArchivedFilter] = useState<"hide" | "include" | "only">("hide");
@@ -1487,7 +1489,7 @@ function PartsTable({
                   >
                     {p.supplier_url ? (
                       <a
-                        href={/^https?:\/\//i.test(p.supplier_url) ? p.supplier_url : undefined}
+                        href={safeHref(p.supplier_url)}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}

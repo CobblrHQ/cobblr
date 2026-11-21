@@ -9,7 +9,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, Clock, Plus, X } from "lucide-react";
 import { ApiError, api, type WorkspaceLinkItem } from "../lib/api";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, NumberInput } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import { ORG_ROLES, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
@@ -498,8 +498,7 @@ function CreateLinkModal({
           <div className="text-xs text-muted mb-1">
             Expires after (days, optional)
           </div>
-          <input
-            type="number"
+          <NumberInput
             min="1"
             step="1"
             value={expiryDays}

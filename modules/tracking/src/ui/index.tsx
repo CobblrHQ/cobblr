@@ -1,4 +1,4 @@
-import { fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, useToast, useConfirm, usePageTitle, editOf, useRoleAtLeast, useRecordAsOpened } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, useToast, useConfirm, usePageTitle, editOf, useRoleAtLeast, useRecordAsOpened, NumberInput } from "@cobblr/platform-web";
 import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 // tracking UI — host mounts <TrackingUI /> at /tracking. A grid of metrics
 // (each with a progress bar + sparkline); clicking one opens a detail MODAL to
@@ -120,10 +120,9 @@ function MetricCard({ metric, api, orgSlug, onOpen, onDelete }: { metric: Metric
       <div className="mt-2"><ProgressBar p={metric.progress} /></div>
       {/* Quick-log: one number, no modal — the "three seconds" path. */}
       <form className="mt-2 flex gap-1.5" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); if (val !== "") log.mutate(Number(val)); }}>
-        <input
+        <NumberInput
           value={val}
           onChange={(e) => setVal(e.target.value)}
-          type="number"
           step="any"
           placeholder={`quick log${metric.unit ? ` (${metric.unit})` : ""}…`}
           aria-label={`Quick-log a value for ${metric.name}`}
@@ -163,13 +162,14 @@ export function MetricFormModal({ api, orgSlug, metric: shown, onClose }: { api:
   });
 
   const field = "w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm";
+  // draft-not-kept: a metric's name and unit, two short fields.
   return (
     <RecordFormModal open onClose={onClose} title={metric ? "Edit metric" : "New metric"}>
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (name.trim()) create.mutate(); }}>
         <FieldPack maxCols={3} items={[
           { need: fieldNeed("name", { control: "text", label: "Name" }), node: <input aria-label="Name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Weight" className={field} /> },
           { need: fieldNeed("unit", { control: "text", label: "Unit" }), node: <input aria-label="Unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="unit (kg, km, reps…)" className={field} /> },
-          { need: fieldNeed("goal", { control: "number", label: "Goal" }), node: <input aria-label="Goal" value={goal} onChange={(e) => setGoal(e.target.value)} type="number" step="any" placeholder="goal" className={field} /> },
+          { need: fieldNeed("goal", { control: "number", label: "Goal" }), node: <NumberInput aria-label="Goal" value={goal} onChange={(e) => setGoal(e.target.value)} step="any" placeholder="goal" className={field} /> },
         ]} />
         <label className="block">
           <div className="text-xs text-muted mb-1">Goal direction</div>
@@ -267,7 +267,7 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
       <div className="space-y-3">
         {!d && <div className="text-sm text-muted">Loading…</div>}
         {d && <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (val !== "") log.mutate(Number(val)); }}>
-          <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} type="number" step="any" aria-label={`Log a value for ${d.name}`} placeholder={`Log a value${d.unit ? ` (${d.unit})` : ""}…`} className="min-w-0 flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
+          <NumberInput autoFocus value={val} onChange={(e) => setVal(e.target.value)} step="any" aria-label={`Log a value for ${d.name}`} placeholder={`Log a value${d.unit ? ` (${d.unit})` : ""}…`} className="min-w-0 flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
           <button type="submit" disabled={val === "" || log.isPending} className="px-3 py-2 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Log</button>
           <button type="button" onClick={() => setEditing(true)} className="inline-flex items-center gap-1 px-3 py-2 text-xs rounded bg-subtle dark:bg-slate-800"><Pencil size={12} /> Edit</button>
         </form>}

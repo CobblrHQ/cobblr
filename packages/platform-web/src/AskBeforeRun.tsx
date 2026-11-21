@@ -11,6 +11,7 @@
 // for it (pressStillNeeds), so what the sheet sends is never refused (#3865).
 
 import { useState } from "react";
+import { NumberInput } from "./NumberInput";
 import { pressStillNeeds, type PressAsk } from "@cobblr/platform-contract/action-args";
 import { Modal } from "./Modal";
 import { isShortcut } from "./shortcuts";
@@ -86,7 +87,7 @@ function AskSheet({ asking }: { asking: Asking }) {
                   <input {...common} type="text" inputMode="decimal" data-money-input="" onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))} />
                 </span>
               ) : q.kind === "number" ? (
-                <input {...common} type="number" inputMode="decimal" onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))} />
+                <NumberInput {...common} inputMode="decimal" onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))} />
               ) : (
                 <textarea
                   {...common}

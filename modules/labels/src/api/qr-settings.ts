@@ -7,6 +7,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { qrTenantDb, getQrTokenStyle, getQrLabelBaseUrl } from "./qr-db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const qrSettingsRouter = Router({ mergeParams: true });
 
@@ -29,7 +30,7 @@ qrSettingsRouter.get(
 const SettingsUpdate = z
   .object({
     token_style: z.enum(["descriptive", "opaque"]).optional(),
-    label_base_url: z.union([z.string().trim().url(), z.literal("")]).nullable().optional(),
+    label_base_url: z.union([webLink(z.string().trim()), z.literal("")]).nullable().optional(),
   })
   .refine((v) => v.token_style !== undefined || v.label_base_url !== undefined, {
     message: "no settings fields provided",

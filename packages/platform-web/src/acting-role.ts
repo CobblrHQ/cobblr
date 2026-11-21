@@ -24,7 +24,7 @@ import { sharedRead } from "./shared-reads";
 import { networkFailureMessage } from "./network-failure";
 import { EDITED_FROM_HEADER, PAGE_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
 import { browserOffline, keepWaitingWrite, keptEditedFrom, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites } from "./waiting-writes";
-import { KEPT_OFFLINE, KEPT_SENTENCE } from "./network-failure";
+import { KEPT_OFFLINE, KEPT_SENTENCE, KEPT_SIGNED_OUT_SENTENCE } from "./network-failure";
 import { beginWrite, outcomeOf } from "./write-identity";
 import { noteSavedEdit } from "./saved-edit-undo";
 
@@ -154,6 +154,12 @@ export async function workspaceFetch(input: string | URL | Request, init?: Reque
       if (kept && !byAMutation) throw Object.assign(new Error(KEPT_SENTENCE, { cause: e }), { code: KEPT_OFFLINE });
       if (!path.startsWith("/orgs/") || (e && typeof e === "object" && "name" in e && e.name === "AbortError")) throw e;
       throw new Error(networkFailureMessage(), { cause: e });
+    }
+    // Signed out (the sign-in ended while the page was open): the write is not
+    // answered, so it stays kept for this person and goes once they sign in
+    // again, as the same write under its key. Every other answer lands it (#4115).
+    if (sentKey !== null && res.status === 401 && sendingWaits(sentKey)) {
+      throw Object.assign(new Error(KEPT_SIGNED_OUT_SENTENCE), { code: KEPT_OFFLINE, status: 401 });
     }
     if (keeps && method !== "GET") landedWrite(method, path, authorization, sentKey ?? undefined);
     // A page's save of a record's fields is offered back (saved-edit-undo.ts).

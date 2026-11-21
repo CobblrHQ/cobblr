@@ -1,0 +1,43 @@
+{
+ "match": "note the twin washers as checked",
+ "rounds": [
+  {
+   "tool_calls": [
+    {
+     "name": "list_records",
+     "args": {
+      "kind": "inventory:part",
+      "q": "Twin washers"
+     }
+    }
+   ]
+  },
+  {
+   "tool_calls": [
+    {
+     "name": "invoke_action",
+     "args": {
+      "action_id": "platform:set-field-on-records",
+      "args": {
+       "records": [
+        {
+         "kind": "inventory:part",
+         "id": "$prev.data.items[0].id"
+        },
+        {
+         "kind": "inventory:part",
+         "id": "$prev.data.items[1].id"
+        }
+       ],
+       "field": "notes",
+       "value": "checked"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "content": "Both twin washers are noted as checked."
+  }
+ ]
+}

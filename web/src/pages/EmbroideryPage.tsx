@@ -3,7 +3,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { NumberField, OnceQuiet, SearchInput, usePageTitle, useRunAction } from "@cobblr/platform-web";
+import { NumberField, OnceQuiet, SearchInput, usePageTitle, useRunAction, NumberInput } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api } from "../lib/api";
 import { useCan } from "../lib/can";
@@ -1105,9 +1105,8 @@ export function EmbroideryPage() {
                 <label key={stop.index}>
                   Colour {stop.index + 1}:{" "}
                   {pending.plan.threads[String(stop.index)]?.name} · used metres
-                  <input
+                  <NumberInput
                     className={control}
-                    type="number"
                     min={0}
                     max={100000}
                     step={0.001}

@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.12.7",
+  version: "0.12.8",
   displayName: "Locations",
   description:
     "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
@@ -47,7 +47,11 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
   lifecycle: {
-    onBoot: async () => { (await import("./lights.js")).registerLights(); },
+    onBoot: async () => {
+      (await import("./lights.js")).registerLights();
+      const { registerLocationsNonPicturesCount } = await import("./count-non-pictures.js");
+      registerLocationsNonPicturesCount();
+    },
   },
   contributes: {
     wires: ["shown", "found", "picked", "put-away", "label-scanned"].map(reason => ({

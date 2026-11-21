@@ -10,10 +10,10 @@ import { useRef, useState } from "react";
 import { openAuthedFile } from "../lib/authed-file";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Plus, Star, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
-import { ApiError, api, type PaperworkConflict, type TagRecord } from "../lib/api";
+import { ApiError, api, type PaperworkConflict, type TagRecord, getToken } from "../lib/api";
 import { PaperworkConflicts, paperworkNoun, useAnnouncePaperwork } from "./PaperworkConflicts";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, EntityPhoto, usePasteImage, SelectableTile, PhotoSourceBadge, undoStepsOf, useRunIssuedUndo } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, EntityPhoto, usePasteImage, SelectableTile, PhotoSourceBadge, undoStepsOf, useRunIssuedUndo, KeptPhotoNote, lostConnection, useKeptPhotos } from "@cobblr/platform-web";
 import type { PhotoSource } from "@cobblr/platform-contract/photo-source";
 import { isImageAttachment, recordPhotos } from "@cobblr/platform-contract/record-photos";
 import { FilePreview, DocThumb, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
@@ -382,10 +382,14 @@ export function FilesSection({
   const announcePaperwork = useAnnouncePaperwork(activeSlug, record, refreshFields);
 
   const uploadAndAttach = useMutation({
-    mutationFn: async (file: File) => {
+    // The kept-photo door below does the waiting (useKeptPhotos): a failure is
+    // told to it at once, never held in memory until the connection is back.
+    networkMode: "always",
+    retry: false,
+    mutationFn: async ({ file, key }: { file: File; key?: string }) => {
       // Snapshot BEFORE the upload: does the entity have an available cover?
       const hadCover = !!list.data?.main;
-      const f = await api.uploadFile(activeSlug, file);
+      const f = await api.uploadFile(activeSlug, file, key ? { idempotencyKey: key } : {});
       // Then attach to this entity.
       const res = await fetch(
         `/api/v1/orgs/${activeSlug}/modules/core-files/attachments`,
@@ -406,7 +410,8 @@ export function FilesSection({
           }),
         },
       );
-      if (!res.ok) throw new Error(`attach failed ${res.status}`);
+      // 409: attached already, by a send whose answer was lost.
+      if (!res.ok && res.status !== 409) throw new Error(`attach failed ${res.status}`);
       // A document is read for what it says about this record (a bill of
       // sale's price, date, seller; a vehicle's VIN): its empty fields are
       // filled and any disagreement is asked about (#4523). A manual or a
@@ -445,8 +450,16 @@ export function FilesSection({
       });
       refreshRecord();
     },
-    onError: (e) => toast.error(`Upload failed: ${(e as Error).message}`),
+    // A lost connection is the kept file's own note to say (below).
+    onError: (e) => {
+      if (!lostConnection(e)) toast.error(`Upload failed: ${(e as Error).message}`);
+    },
   });
+  // A file added offline is kept on the device and sent when the connection
+  // is back, never dropped (#4115, useKeptPhotos).
+  const kept = useKeptPhotos(`${activeSlug}:files:${sourceModule}:${sourceType}:${sourceId}`, async (file, key) => {
+    await uploadAndAttach.mutateAsync({ file, key });
+  }, { token: getToken() });
 
   const detach = useMutation({
     mutationFn: async (attachmentId: string) => {
@@ -473,13 +486,7 @@ export function FilesSection({
   });
 
   async function uploadFiles(files: File[]) {
-    for (const f of files) {
-      try {
-        await uploadAndAttach.mutateAsync(f);
-      } catch {
-        /* toast already fired */
-      }
-    }
+    for (const f of files) await kept.send(f);
   }
   async function handleFiles(files: FileList | null) {
     if (!files) return;
@@ -588,7 +595,7 @@ export function FilesSection({
 
   const uploadStatus = uploadAndAttach.isPending && uploadAndAttach.variables ? (
     <span role="status" className="block mt-2 text-xs text-muted break-all">
-      Adding {uploadAndAttach.variables.name}…
+      Adding {uploadAndAttach.variables.file.name}…
     </span>
   ) : null;
 
@@ -601,6 +608,7 @@ export function FilesSection({
           <Upload size={10} /> File
         </button>
         <input ref={fileInput} type="file" multiple disabled={uploadAndAttach.isPending} className="hidden" onChange={(e) => void handleFiles(e.target.files)} />
+        <KeptPhotoNote kept={kept} noun="file" />
         {uploadStatus}
       </>
     );
@@ -750,6 +758,7 @@ export function FilesSection({
           className="hidden"
           onChange={(e) => void handleFiles(e.target.files)}
         />
+        <KeptPhotoNote kept={kept} noun="file" />
       </div>
       {uploadStatus}
       {paperwork && (

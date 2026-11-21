@@ -44,7 +44,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "bricklink-connector",
-  version: "0.3.0",
+  version: "0.3.1",
   displayName: "BrickLink",
   description:
     "Bring in BrickLink wanted lists and orders, and see which pieces from a wanted list you already have.",

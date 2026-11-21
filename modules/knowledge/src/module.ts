@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "knowledge",
-  version: "0.1.12",
+  version: "0.1.13",
   maturity: "beta",
   displayName: "Knowledge Base",
   description:
@@ -69,4 +69,10 @@ export default defineModule({
   },
 
   subscribes: [],
+  lifecycle: {
+    onBoot: async () => {
+      const { registerKnowledgeNonPicturesCount } = await import("./count-non-pictures.js");
+      registerKnowledgeNonPicturesCount();
+    },
+  },
 });

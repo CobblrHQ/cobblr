@@ -1,4 +1,5 @@
 import { type Measure, measurePaths, measureTokens } from "@cobblr/platform-contract/measure";
+import { foldForSearch } from "@cobblr/platform-contract/search-text";
 
 // ── text search over a list's columns ─────────────────────────────────────
 // Lives here rather than in its own file: the contract is loaded buildless by
@@ -27,9 +28,13 @@ import { type Measure, measurePaths, measureTokens } from "@cobblr/platform-cont
  *  accept it, and the SQL it produces is what the api tests check. */
 export interface LikeFnModule {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (name: "lower" | "translate" | "jsonb_path_exists" | "jsonb_path_query_array", args: any[]): any;
+  (name: "lower" | "translate" | "replace" | "regexp_replace" | "pg_catalog.normalize" | "jsonb_path_exists" | "jsonb_path_query_array", args: any[]): any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   coalesce(...args: any[]): any;
+  /** `any(array)` (Kysely's builder has it; a hand-written fake may not, and
+   *  then each pattern is its own compare). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  any?(arg: any): any;
 }
 export interface LikeBuilder {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,6 +121,40 @@ export function likeNeedle(q: string): string {
   return `%${likeEscape(q.toLowerCase())}%`;
 }
 
+/** The needle as textSearchWhere matches it: folded the way foldForSearch
+ *  folds (no case, no accents), escaped, and matched anywhere. */
+export function foldedNeedle(q: string): string {
+  return `%${likeEscape(foldForSearch(q))}%`;
+}
+
+// ── the same fold, in the database ─────────────────────────────────────────
+// "creme" has to find "Crème brûlée" on the server too: the search page, a
+// module's list and Cobb's search_records all ask textSearchWhere, and a
+// lowercased compare found nothing there. foldForSearch is lowercase, NFKD,
+// combining marks (U+0300 to U+036F) gone, then a few letters spelled out;
+// the SQL takes the same steps with what Postgres has built in, no extension:
+// lower, normalize(…, NFKD) (called as pg_catalog.normalize, since the bare
+// keyword takes no parameter), regexp_replace of the marks, then translate
+// for the letters that spell as one and replace for the ones that spell as
+// two. The letters come from foldForSearch itself, and
+// a-search-folds-accents-the-way-a-page-does.test.ts holds the two to the
+// same answer letter by letter.
+
+/** Letters NFKD leaves whole, which foldForSearch spells out. */
+export const SPELLED_LETTERS = "ßæœøłđðþı";
+const MARKS = `[${String.fromCharCode(0x300)}-${String.fromCharCode(0x36f)}]`;
+const spelled = [...SPELLED_LETTERS].map((c) => [c, foldForSearch(c)] as const);
+const ONE = spelled.filter(([, to]) => to.length === 1);
+const TWO = spelled.filter(([, to]) => to.length > 1);
+
+/** A text expression folded the way foldForSearch folds a string. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function foldedSql<EB extends LikeBuilder>(eb: EB, expr: any): any {
+  const unmarked = eb.fn("regexp_replace", [eb.fn("pg_catalog.normalize", [eb.fn("lower", [expr]), eb.val("NFKD")]), eb.val(MARKS), eb.val(""), eb.val("g")]);
+  const one = eb.fn("translate", [unmarked, eb.val(ONE.map(([c]) => c).join("")), eb.val(ONE.map(([, to]) => to).join(""))]);
+  return TWO.reduce((e, [c, to]) => eb.fn("replace", [e, eb.val(c), eb.val(to)]), one);
+}
+
 /**
  * The where-expression for `q` over the listed columns, or null when `q` is
  * empty (so a resolver can write `const w = textSearchWhere(...); if (w) query =
@@ -132,9 +171,10 @@ export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | unde
   // could say what that column holds.
   const readings = text.length === columns.text.length ? columns.readings : undefined;
   const values = readableValuesPath(hidden);
-  const anywhereLike = (like: string): any[] => [
-      ...text.map((c: string) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
-      ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(eb.fn("jsonb_path_query_array", [c, eb.val(`${values} ? (!exists(@.__cobblr_secret))`)]), "text")]), "like", like)),
+  // Both sides folded (foldedSql, foldedNeedle): "creme" finds "Crème".
+  const anywhereLike = (like: unknown): any[] => [
+      ...text.map((c: string) => eb(foldedSql(eb, eb.fn.coalesce(c, empty)), "like", like)),
+      ...(columns.json ?? []).map((c: string) => eb(foldedSql(eb, eb.cast(eb.fn("jsonb_path_query_array", [c, eb.val(`${values} ? (!exists(@.__cobblr_secret))`)]), "text")), "like", like)),
   ];
   // A long word typed joined ("screwdriver", "allenkeyset") also matches text
   // with its spaces and hyphens taken out, so "Screw driver" and "Allen key
@@ -147,14 +187,18 @@ export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | unde
   const joinedLike = (word: string): any[] => {
     const joined = word.replace(/-/g, "");
     return joined.length >= JOINED_WORD_MIN && !/\s/.test(joined)
-      ? text.map((c: string) => eb(eb.fn("translate", [eb.fn("lower", [eb.fn.coalesce(c, empty)]), eb.val(" -"), empty]), "like", likeNeedle(joined)))
+      ? text.map((c: string) => eb(eb.fn("translate", [foldedSql(eb, eb.fn.coalesce(c, empty)), eb.val(" -"), empty]), "like", foldedNeedle(joined)))
       : [];
   };
-  const anywhere = (word: string): any[] => [...anywhereLike(likeNeedle(word)), ...joinedLike(word)];
+  const anywhere = (word: string): any[] => [...anywhereLike(foldedNeedle(word)), ...joinedLike(word)];
   // Asked again because the exact search found nothing (#9624): every word
   // somewhere on the record, each long one by any spelling one edit away.
   if (nearWordsNow()) {
-    const per = nearQueryPatterns(needle).map((patterns) => eb.or(patterns.flatMap((p) => anywhereLike(p))));
+    // Each column folded once per word and held to all of its patterns
+    // (like any): folding it again for each of up to 64 patterns made this
+    // ask nine times slower than an unfolded one.
+    const per = nearQueryPatterns(needle).map((patterns) =>
+      eb.or(patterns.length > 1 && eb.fn.any ? anywhereLike(eb.fn.any(eb.val(patterns))) : patterns.flatMap((p) => anywhereLike(p))));
     if (!text.length && !(columns.json ?? []).length) return null;
     return per.length === 1 || !eb.and ? per[0] : eb.and(per);
   }
@@ -251,10 +295,10 @@ export const NEAR_WORDS_MAX = 2;
 export const NEAR_PATTERNS_MAX = 64;
 
 /** Every LIKE pattern one edit from `word`, the person's own `%`, `_` and
- *  `\` made literal so only these wildcards are wildcards. Lower-cased, and
+ *  `\` made literal so only these wildcards are wildcards. Folded (foldForSearch), and
  *  matched anywhere (`%…%`). The word itself is first. */
 export function nearWordPatterns(word: string): string[] {
-  const chars = [...word.toLowerCase()];
+  const chars = [...foldForSearch(word)];
   const lit = (cs: readonly string[]) => cs.map((c) => likeEscape(c)).join("");
   const out = new Set<string>([lit(chars)]);
   if (chars.length >= NEAR_WORD_MIN) {
@@ -281,7 +325,7 @@ export function nearQueryPatterns(q: string): string[][] {
   const widened = new Set([...words].sort((a, b) => b.length - a.length).slice(0, NEAR_WORDS_MAX));
   let budget = NEAR_PATTERNS_MAX;
   return words.map((w) => {
-    const all = widened.has(w) ? nearWordPatterns(w) : [likeNeedle(w)];
+    const all = widened.has(w) ? nearWordPatterns(w) : [foldedNeedle(w)];
     const take = all.slice(0, Math.max(1, budget));
     budget -= take.length;
     return take;

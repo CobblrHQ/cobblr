@@ -3,7 +3,7 @@ import { BoardRevisionCard } from "./BoardRevisions.js";
 import type { BoardRevision } from "../api/board-revisions.js";
 export { BuildsApi } from "./api.js";
 export { BoardProjectPanel } from "./BoardRevisions.js";
-import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, QueryError } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, QueryError, NumberInput } from "@cobblr/platform-web";
 // builds UI — the host mounts <BuildsUI /> at /builds. A grid of builds;
 // clicking one opens a detail MODAL with its bill-of-materials, a live
 // "can I build N right now / limiting component" readout, and a Build button
@@ -814,6 +814,7 @@ export function AddComponentRow({
   onAddSub: (subBuildId: string, qty: number) => void;
 }) {
   const [mode, setMode] = useState<"part" | "sub">("part");
+  // search-not-kept: a component picker inside a build, not the list's search.
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<PartOption | null>(null);
   const [qty, setQty] = useState(1);
@@ -948,7 +949,7 @@ function OpLogRow({
           <option value="machine">machine</option>
           <option value="setup">setup</option>
         </select>
-        <input type="number" min={0} step="any" value={minutes} disabled={savingTime} onChange={(e) => setMinutes(e.target.value)} placeholder="min" className={inCls} aria-label="Minutes" />
+        <NumberInput min={0} step="any" value={minutes} disabled={savingTime} onChange={(e) => setMinutes(e.target.value)} placeholder="min" className={inCls} aria-label="Minutes" />
         <button type="submit" disabled={savingTime || !(Number(minutes) > 0)} className="px-2 py-1 text-[11px] rounded bg-cobble-600 text-white disabled:opacity-40">Log time</button>
       </form>
       {/* Log quantity */}
@@ -975,7 +976,7 @@ function OpLogRow({
           <option value="scrap">scrap</option>
           <option value="rework">rework</option>
         </select>
-        <input type="number" min={0} step="any" value={qty} disabled={savingQty} onChange={(e) => setQty(e.target.value)} placeholder="qty" className={inCls} aria-label="Quantity" />
+        <NumberInput min={0} step="any" value={qty} disabled={savingQty} onChange={(e) => setQty(e.target.value)} placeholder="qty" className={inCls} aria-label="Quantity" />
         {qtyKind !== "good" && (
           <input value={reason} disabled={savingQty} onChange={(e) => setReason(e.target.value)} placeholder="reason (optional)" className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs" aria-label="Reason" />
         )}
@@ -1022,6 +1023,7 @@ function HistorySection({ buildId, api }: { buildId: string; api: BuildsApi }) {
 }
 
 export function RunGenealogy({ runId, api }: { runId: string; api: BuildsApi }) {
+  // record-gone-ok: a panel inside the run's own page, which is the record a person keeps open; a gone run empties it.
   const g = useQuery({ queryKey: ["builds-genealogy", runId], queryFn: () => api.getGenealogy(runId) });
   if (g.isLoading) return <div className="px-3 py-2 text-xs text-muted">Loading as-built…</div>;
   if (!g.data) return null;
@@ -1064,6 +1066,7 @@ function GenealogyTree({ node, depth }: { node: GenealogyNode; depth: number }) 
 
 function TraceBox({ api }: { api: BuildsApi }) {
   const [code, setCode] = useState("");
+  // search-not-kept: the trace box's own lookup, not a list's search.
   const [query, setQuery] = useState("");
   const res = useQuery({ queryKey: ["builds-trace", query], queryFn: () => api.trace(query), enabled: query.length > 0 });
   const r = res.data;

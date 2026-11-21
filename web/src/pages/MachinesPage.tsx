@@ -1,6 +1,6 @@
 import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { useCan, useRoleAtLeast } from "../lib/can";
-import { SelectBox, useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, SegmentedChoice, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem, productName, useRecordEdits } from "@cobblr/platform-web";
+import { SelectBox, useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, SegmentedChoice, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem, productName, useRecordEdits, CreateDraftNote, useCreateDraft, useListSearch } from "@cobblr/platform-web";
 // /machines — list view for the machines module, with a detail
 // modal launched per row. URL pattern:
 //
@@ -21,7 +21,7 @@ import { ModuleInstanceChooser, namedInstances } from "../components/ModuleInsta
 import { queueLabelsBulk } from "../lib/queue-label";
 import { usePersistedState } from "../lib/use-persisted-state";
 import { usePublishChatContext } from "../lib/chat-context";
-import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type SavedView, type BambuDiscoveredDevice, type DigifabConnection, type DigifabDevice, type DigifabFleetDevice } from "../lib/api";
+import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type SavedView, type BambuDiscoveredDevice, type DigifabConnection, type DigifabDevice, type DigifabFleetDevice, getToken } from "../lib/api";
 import { fleetStatusChip, indexFleetByMachine } from "../lib/fleet-status";
 import { ContributedPageTab, ContributedDetailPanels, hasPageTab } from "../panels/registry";
 import { DirectManagerConnect } from "../components/DirectManagerConnect";
@@ -38,6 +38,7 @@ import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { BambuPrinterPicker } from "../components/BambuPrinterPicker";
 import { resolvePrinterKind, hiddenPrinterFields } from "../lib/printerKind";
 import { capitalise, machineKindOf, machineKindForRecord, machineWordsFor, type MachineWords } from "../lib/machine-words";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 // Printer "kind" options for the detail-modal selector (same ids as the
 // New-3D-printer picker). The kind drives which spec fields are relevant.
@@ -71,6 +72,7 @@ import { LocationTreePicker } from "../components/LocationTreePicker";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 import { readRecordLoan } from "@cobblr/platform-contract/loan";
 import { ListNearSpellings } from "../components/ListNearSpellings";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -222,7 +224,8 @@ export function MachinesPage({
       )
     : allRows;
 
-  const [query, setQuery] = useState("");
+  // Kept with this page in the history, so Back from a record finds the list as it was left (#4115, useListSearch).
+  const [query, setQuery] = useListSearch("q");
   // Generic, data-driven state filter: hide whatever machine states you don't
   // want to see (e.g. "shelved", or "sold"). The states come from the data
   // itself — not a hardcoded list — and your choice persists per view. (A bundle
@@ -292,7 +295,7 @@ export function MachinesPage({
     ? stateVisible.filter((m) =>
         [m.name, m.manufacturer, m.family, m.type, m.short_name]
           .filter(Boolean)
-          .some((v) => v!.toLowerCase().includes(query.toLowerCase())),
+          .some((v) => textHas(v!, query.toLowerCase())),
       )
     : stateVisible;
 
@@ -1475,7 +1478,7 @@ export function MachineDetailModal({
             )}
           </div>
           {(m.notes || notesOpen) && (
-            <EditField label="Notes" value={m.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
+            <EditField label="Notes" value={m.notes ?? ""} multiline maxLength={RECORD_NOTES_MAX} onCommit={(v) => update.mutate({ notes: v || null })} />
           )}
             </div>
           </div>
@@ -1737,6 +1740,23 @@ export function NewMachineModal({
     { name: "image_path", label: "Photo", key: "image_url", value: barcodeImage, setValue: setBarcodeImage },
   ] });
   useEffect(() => { if (open) { setBarcodeMetadata({}); setBarcodeImage(""); } }, [open]);
+  // After the resets above, so what was typed before a reload or a stray close
+  // comes back over them, per workspace and person, until it is made (#4115).
+  // Only what is typed: a connection chosen is looked up again, never kept.
+  const draft = useCreateDraft({
+    form: `machines:new-machine:${instance ?? ""}`,
+    slug: activeSlug,
+    token: getToken(),
+    open,
+    values: { name, manufacturer, family, locationId },
+    empty: { name: "", manufacturer: "", family: "", locationId: null },
+    restore: (v) => {
+      setName(String(v.name ?? ""));
+      setManufacturer(String(v.manufacturer ?? ""));
+      setFamily(String(v.family ?? ""));
+      setLocationId(typeof v.locationId === "string" ? v.locationId : null);
+    },
+  });
 
   const create = useMutation({
     mutationFn: async () => {
@@ -1771,6 +1791,7 @@ export function NewMachineModal({
       return m;
     },
     onSuccess: (m) => {
+      draft.clear();
       toast.success(`${(noun ?? "machine").charAt(0).toUpperCase()}${(noun ?? "machine").slice(1)} added.`);
       void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["digifab-links", activeSlug] });
@@ -1849,6 +1870,7 @@ export function NewMachineModal({
   return (
     <RecordFormModal open={open} onClose={onClose} title={`New ${noun ?? "machine"}`}>
       <form onSubmit={submit} className="space-y-3">
+        <CreateDraftNote draft={draft} />
         {barcode.controls}
         {barcodeImage && <div className="flex items-center gap-2"><EntityThumb src={barcodeImage} alt="Photo from barcode" size={96} /><button type="button" className="text-sm text-accent underline" onClick={() => setBarcodeImage("")}>Remove photo</button></div>}
         {printerFlow && (

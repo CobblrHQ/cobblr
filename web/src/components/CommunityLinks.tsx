@@ -13,6 +13,7 @@ import { BookOpen, ExternalLink, Github, MessageCircle, Users, type LucideIcon }
 import type { CommunityLinkId } from "@cobblr/platform-contract/community-links";
 import { communityLinksFor } from "../lib/community-links";
 import type { CommunityLink } from "../lib/api";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 /** The heading every menu puts over the places. */
 export const COMMUNITY_HEADING = "Join the community";
@@ -66,7 +67,7 @@ export function CommunityLinks({
         return (
           <a
             key={l.id}
-            href={l.url}
+            href={safeHref(l.url)}
             target="_blank"
             rel="noopener noreferrer"
             onClick={onNavigate}

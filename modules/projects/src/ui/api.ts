@@ -106,7 +106,8 @@ export class ProjectsApi {
     const parsed = await res.json().catch(() => null);
     if (!res.ok) {
       const err = (parsed as { error?: { code?: string; message?: string } } | null)?.error;
-      throw new Error(err?.message ?? `HTTP ${res.status}`);
+      // The status goes with it, so a page can tell a deleted record from a failed read (isRecordGone).
+      throw Object.assign(new Error(err?.message ?? `HTTP ${res.status}`), { status: res.status, code: err?.code });
     }
     if (wrote) noteWorkspaceWrite(url, res);
     return parsed as T;

@@ -16,13 +16,14 @@ import { platform } from "@cobblr/platform-contract";
 import { sessionUserId, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const matchToCatalogRouter = Router({ mergeParams: true });
 
 const Body = z.object({
   catalog_id: z.string().uuid(),
   user_entity: z.record(z.unknown()),
-  image_url: optionalField(z.string().url()),
+  image_url: optionalField(webLink()),
   /** Override the configured default for this capability. */
   provider_id: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   model: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here

@@ -455,31 +455,32 @@ testSupportRouter.post("/test-support/runtime-module", async (req, res, next) =>
     next(err);
   }
 });
-// The next record moves die between their two commits (#9071). Body: { times }.
+// The next record moves in one workspace die between their two commits (#9071). Body: { slug, times }.
 testSupportRouter.post("/test-support/move-fails", async (req, res, next) => {
   try {
-    const { times } = (req.body ?? {}) as { times?: number };
-    if (typeof times !== "number") {
-      res.status(400).json({ error: { code: "bad_body", message: "times required" } });
+    const { slug, times } = (req.body ?? {}) as { slug?: string; times?: number };
+    const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
+    if (!o || typeof times !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace + times required" } });
       return;
     }
     const { failMoveBetweenCommitsForTests } = await import("../platform/move-records.js");
-    failMoveBetweenCommitsForTests(times);
+    failMoveBetweenCommitsForTests(o.id, times);
     res.json({ ok: true });
   } catch (err) {
     next(err);
   }
 });
-// The next invite sign-ups die after their account is made (#9071). Body: { times }.
+// The next sign-ups through one invite die after their account is made (#9071). Body: { token, times }.
 testSupportRouter.post("/test-support/invite-signup-fails", async (req, res, next) => {
   try {
-    const { times } = (req.body ?? {}) as { times?: number };
-    if (typeof times !== "number") {
-      res.status(400).json({ error: { code: "bad_body", message: "times required" } });
+    const { token, times } = (req.body ?? {}) as { token?: string; times?: number };
+    if (typeof token !== "string" || !token || typeof times !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "token of an invite + times required" } });
       return;
     }
     const { failInviteSignupForTests } = await import("./members.js");
-    failInviteSignupForTests(times);
+    failInviteSignupForTests(token, times);
     res.json({ ok: true });
   } catch (err) {
     next(err);

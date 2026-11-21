@@ -7,6 +7,7 @@ import { tenantContext } from "../../db.js";
 import { asyncHandler, badBody, requireRole } from "../util.js";
 import { guardedImageFetch, isUnusablePictureUrl } from "../../services/enrich.js";
 import { RecordRef, putPaperworkOn } from "./shared.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const resolveRouter = Router({ mergeParams: true });
 
@@ -16,10 +17,10 @@ export const resolveRouter = Router({ mergeParams: true });
 // address is the person's search result, so it goes through the image fetch's
 // own guard (no private addresses, every redirect checked).
 const ImageProxyQuery = z.object({
-  url: z.string().url().max(4000),
+  url: webLink().max(4000),
   /** The page the result was found on, for sites that serve their pictures
    *  only to their own pages. */
-  page: z.string().url().max(4000).optional(),
+  page: webLink().max(4000).optional(),
 });
 resolveRouter.get(
   "/image-proxy",

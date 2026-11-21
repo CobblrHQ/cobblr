@@ -13,6 +13,7 @@ import { CUSTOMER_SEARCH } from "../search-columns.js";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 export const customersRouter = Router({ mergeParams: true });
 
@@ -23,7 +24,7 @@ const CustomerCreate = z.object({
   email: z.string().trim().max(320).refine((text) => !text || z.string().email().safeParse(text).success, "That is not an email address.").transform((text) => text || null).nullable().optional(),
   phone: blankIsNone(80),
   address: z.string().max(2_000).nullable().optional(),
-  notes: z.string().max(8_000).nullable().optional(),
+  notes: z.string().max(RECORD_NOTES_MAX).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 const CustomerUpdate = CustomerCreate.partial();

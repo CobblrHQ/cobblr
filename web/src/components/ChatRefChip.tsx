@@ -11,7 +11,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { List } from "lucide-react";
 import type { AnchorHTMLAttributes, ReactNode } from "react";
-import { useToast } from "@cobblr/platform-web";
+import { MarkdownOutsideLink, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
 import { recordOfHref } from "../lib/entity-chips";
@@ -123,13 +123,8 @@ export function ChatRefChip({
   // Somewhere outside: where it goes is said in full beside its words, so a
   // link a record's words steered the model into writing ("the supplier",
   // its address carrying what Cobb read) is never one blind press (#4115).
-  const shown = textOf(children).trim();
-  return (
-    <a href={href} target="_blank" rel="noreferrer noopener" {...rest}>
-      {children}
-      {href && shown !== href ? <span className="ml-1 break-all text-xs opacity-70">({href})</span> : null}
-    </a>
-  );
+  // Drawn by the one outside-link component every Markdown surface uses.
+  return <MarkdownOutsideLink href={href} className={rest.className} title={rest.title}>{children}</MarkdownOutsideLink>;
 }
 
 /** The words inside the chip, for the sentence that says the record is gone. */

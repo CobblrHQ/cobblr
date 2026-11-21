@@ -11,6 +11,7 @@ import { type Paging } from "./paging.js";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 import { scanHistoryLines, type ScanHistoryEntryStored } from "@cobblr/platform-contract/scan-history-words";
+import { foldForSearch } from "@cobblr/platform-contract/search-text";
 
 /** An action's description down to its first sentence: what it does, for a
  *  list; the rest is for when the model picks it. */
@@ -108,8 +109,9 @@ export function significantWords(q: string): string[] {
  *  any word: "PLA offcuts" must not match the spool, which is PLA and is not
  *  offcuts. */
 export function textMatches(text: string, q: string): boolean {
-  const hay = text.toLowerCase();
-  const needle = q.trim().toLowerCase();
+  // Folded as a page's search is, so "creme" finds "Crème fraîche" for Cobb too (#4115).
+  const hay = foldForSearch(text);
+  const needle = foldForSearch(q.trim());
   if (!needle) return true;
   if (hay.includes(needle)) return true;
   const words = significantWords(needle);

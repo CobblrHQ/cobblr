@@ -26,7 +26,7 @@ import { buildAuthResponse } from "./auth.js";
 import { canActOnRole } from "../auth/capability.js";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
-import { REFUSAL, claimJoinUse, inviteStatus, joinThroughInvite } from "../platform/join-invite.js";
+import { REFUSAL, claimJoinUse, inviteStatusNow, joinThroughInvite } from "../platform/join-invite.js";
 import { clearPeopleCache, linkPersonToUser, listPeople, personForUser } from "../platform/people.js";
 import { accountEmailFor } from "../platform/account-emails.js";
 import { handOffThings, type HandOffResult } from "../platform/person-things.js";
@@ -647,6 +647,8 @@ invitesRootRouter.get("/invites/:token", async (req, res, next) => {
       .innerJoin("users as u", "u.id", "i.invited_by_user")
       .select([
         "i.id",
+        "i.org_id",
+        "i.invited_by_user",
         "i.role",
         "i.invited_email",
         "i.expires_at",
@@ -667,7 +669,7 @@ invitesRootRouter.get("/invites/:token", async (req, res, next) => {
       res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
       return;
     }
-    res.json({ ...invite, status: inviteStatus(invite) });
+    res.json({ ...invite, status: await inviteStatusNow(invite) });
   } catch (err) {
     next(err);
   }
@@ -818,7 +820,7 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
       res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
       return;
     }
-    const status = inviteStatus(invite);
+    const status = await inviteStatusNow(invite);
     if (status !== "open") {
       res.status(410).json({ error: { code: status, message: REFUSAL[status] } });
       return;
@@ -867,7 +869,7 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
       }
       // Create the user (no own-org provisioning) + the membership.
       const id = await createAccount(trx, { email, password_hash, display_name }, { via: "invite" }, { announceLater: true });
-      inviteSignupDiesHereForTests();
+      inviteSignupDiesHereForTests(token);
       await trx.insertInto("org_memberships").values({ user_id: id, org_id: invite.org_id, role: invite.role }).execute();
       if (invite.reusable) {
         await trx.insertInto("workspace_invite_uses").values({ invite_id: invite.id, user_id: id, new_account: true }).execute();
@@ -907,14 +909,19 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
 
 void sql; // re-exported earlier; keep typecheck quiet
 
-/** Test-only: the next invite sign-ups die after their account is made and
- *  before their membership, as a crash or a refused write would (#9071). */
-let inviteSignupFailures = 0;
-export function failInviteSignupForTests(times: number): void {
-  inviteSignupFailures = Math.max(0, times);
+/** Test-only: the next sign-ups through one invite die after their account
+ *  is made and before their membership, as a crash or a refused write would
+ *  (#9071). Kept per invite: a failure any sign-up could take landed on
+ *  another test's sign-up running at the same moment (#9737, #9738). */
+const inviteSignupFailures = new Map<string, number>();
+export function failInviteSignupForTests(token: string, times: number): void {
+  if (times > 0) inviteSignupFailures.set(token, times);
+  else inviteSignupFailures.delete(token);
 }
-function inviteSignupDiesHereForTests(): void {
-  if (inviteSignupFailures <= 0) return;
-  inviteSignupFailures--;
+function inviteSignupDiesHereForTests(token: string): void {
+  const left = inviteSignupFailures.get(token) ?? 0;
+  if (left <= 0) return;
+  if (left === 1) inviteSignupFailures.delete(token);
+  else inviteSignupFailures.set(token, left - 1);
   throw new Error("the sign-up stopped after its account was made (a test's injected failure)");
 }

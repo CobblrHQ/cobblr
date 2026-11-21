@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useStockWrites } from "./stock-writes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MutationError, useCan } from "@cobblr/platform-web";
+import { MutationError, useCan, NumberInput } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 export function MaterialPanel({ id }: { id: string }) {
@@ -48,7 +48,7 @@ export function MaterialPanel({ id }: { id: string }) {
             </select>
           </label>
           <label className="min-w-0 max-w-full text-sm">{mode === "gross_g" ? "Scale reading (g)" : "Used length (mm)"}
-            <input aria-label={mode === "gross_g" ? "Scale reading (g)" : "Used length (mm)"} type="number" min="0" step="any" required value={value} onChange={(e) => setValue(e.target.value)} className="block w-40 max-w-full rounded border border-line bg-surface p-2" />
+            <NumberInput aria-label={mode === "gross_g" ? "Scale reading (g)" : "Used length (mm)"} min="0" step="any" required value={value} onChange={(e) => setValue(e.target.value)} className="block w-40 max-w-full rounded border border-line bg-surface p-2" />
           </label>
           <button type="submit" disabled={!value || save.isPending} className="rounded bg-cobble-600 text-white px-3 py-2 text-sm">Record measurement</button>
           <MutationError mutation={save} />

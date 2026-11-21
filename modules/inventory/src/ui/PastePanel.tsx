@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { FieldPack, fieldNeed, NumberField, QueryError, useRunAction } from "@cobblr/platform-web";
+import { FieldPack, fieldNeed, NumberField, QueryError, useRunAction, NumberInput } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 const button = "rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 export function PastePanel({ id }: { id: string }) {
@@ -35,7 +35,7 @@ export function PastePanel({ id }: { id: string }) {
         { need: fieldNeed("lot", { control: "text", label: "Paste lot" }), node: <label className="block text-sm">Paste lot<input className="input block w-full" aria-label="Paste lot" required value={lot} onChange={e => setLot(e.target.value)} /></label> },
         { need: fieldNeed("expiry", { control: "date", label: "Shelf expiry" }), node: <label className="block text-sm">Shelf expiry<input className="input block w-full" aria-label="Shelf expiry" type="date" required value={expires} onChange={e => setExpires(e.target.value)} /></label> },
         { need: fieldNeed("warmup", { control: "number", label: "Warm-up hours" }), node: <label className="block text-sm">Warm-up hours<NumberField className="input block w-full" label="Warm-up hours" required min={0.01} max={72} value={warmup} onChange={setWarmup} /></label> },
-        { need: fieldNeed("work-life", { control: "number", label: "Work life out of cold storage (hours)" }), node: <label className="block text-sm">Work life out of cold storage (hours)<input className="input block w-full" aria-label="Work life out of cold storage (hours)" type="number" required min={0.01} max={8760} step="any" value={workLife} onChange={e => setWorkLife(e.target.value)} /></label> },
+        { need: fieldNeed("work-life", { control: "number", label: "Work life out of cold storage (hours)" }), node: <label className="block text-sm">Work life out of cold storage (hours)<NumberInput className="input block w-full" aria-label="Work life out of cold storage (hours)" required min={0.01} max={8760} step="any" value={workLife} onChange={e => setWorkLife(e.target.value)} /></label> },
       ]} />
       <button type="submit" disabled={operation.isPending} className={button}>Record refrigerated jar</button>
     </form> : <>

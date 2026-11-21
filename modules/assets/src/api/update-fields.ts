@@ -11,6 +11,7 @@ import { AssetDate } from "./asset-date.js";
 import { platform, type EntityUpdateContext, type EntityUpdateResult } from "@cobblr/platform-contract";
 import { coerceMetadata, splitFieldsForUpdate, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import type { AssetsDB } from "../db.js";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 const EditableNative = z
   .object({
@@ -27,7 +28,7 @@ const EditableNative = z
     vendor: z.string().max(200).nullable(),
     warranty_until: AssetDate,
     last_service_at: AssetDate,
-    notes: z.string().max(8_000).nullable(),
+    notes: z.string().max(RECORD_NOTES_MAX).nullable(),
     location_id: z.string().uuid().nullable(),
     flags: z.array(z.string()),
   })

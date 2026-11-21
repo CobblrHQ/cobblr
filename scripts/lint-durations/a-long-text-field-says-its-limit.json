@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-long-text-field-says-its-limit",
+  "run": "node scripts/lint-a-long-text-field-says-its-limit.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 524,
+  "recorded": "2026-11-21",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -14,7 +14,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Undo2 } from "lucide-react";
-import { MoneyInput, useToast } from "@cobblr/platform-web";
+import { MoneyInput, useToast, NumberInput } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { receivedPurchaseQty } from "@cobblr/platform-contract/purchase-line-actions";
 import { REFUND_ALREADY_RECORDED, suggestedPurchaseRefund } from "@cobblr/platform-contract/purchase-refund";
@@ -131,7 +131,7 @@ function StartReturnForm({ slug, order, items, returns, lineId, onDone }: { slug
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <label className="block">
           <span className="block text-xs text-muted mb-1">How many</span>
-          <input type="number" inputMode="decimal" min="0" max={max || undefined} step="any" value={qty} onChange={(e) => setQty(e.target.value)} className="input" />
+          <NumberInput inputMode="decimal" min="0" max={max || undefined} step="any" value={qty} onChange={(e) => setQty(e.target.value)} className="input" />
         </label>
         <label className="block sm:col-span-2">
           <span className="block text-xs text-muted mb-1">Why (optional)</span>

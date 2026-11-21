@@ -119,7 +119,7 @@ export { MoneyInput, MoneyValueInput, type MoneyInputProps } from "./MoneyInput"
 export { AddressPicker, AddressView, type AddressPickerProps } from "./AddressPicker";
 export { packFields, fieldNeed, MIN_COL_PX, GAP_PX, type FieldNeed, type FieldSpace, type FieldPacking, type PackedCell, type PackOptions } from "./field-pack";
 export { FieldPack, fieldPackControlClass, type FieldPackItem } from "./FieldPack";
-export { EditField, EditSelect, FieldLabel, LabeledField, MovedUnderNote, editFieldNeed, editFieldItem, editFieldText, moneyFieldItem, usedValueFieldItem, type EditFieldProps } from "./EditField";
+export { EditField, EditSelect, FieldLabel, LabeledField, MovedUnderNote, editFieldNeed, editFieldItem, editFieldText, lengthNote, moneyFieldItem, usedValueFieldItem, type EditFieldProps } from "./EditField";
 export { relativeTime } from "./relativeTime";
 export { FieldRenderer, boolLabel, boolTruthy, NoImage } from "./FieldRenderer";
 export {
@@ -133,6 +133,7 @@ export {
 } from "./field-note";
 export { Markdown, MarkdownText, stripMarkdown } from "./Markdown";
 export { MarkdownEditor } from "./MarkdownEditor";
+export { MarkdownOutsideLink, isOutsideLink } from "./markdown-link";
 export { QrCode } from "./QrCode";
 export { SelectBox } from "./SelectBox";
 // The wall QR sheet, shared with every app on the engine so its warning cannot drift (#6738).
@@ -225,6 +226,7 @@ export { RecordFormModal } from "./RecordFormModal";
 export { SHORTCUTS, isShortcut, keyCap, typingIn, OPEN_SHORTCUTS_EVENT, type Shortcut, type KeyLike } from "./shortcuts";
 export { lockPageScroll, useLockPageScroll } from "./scrollLock";
 export { ContentsPanel, useHoldsContents } from "./ContentsPanel";
+export { RecordGone, isRecordGone } from "./RecordGone";
 export { ToastProvider, useToast, ERROR_WITHOUT_WORDS } from "./ToastContext";
 export { ConfirmProvider, useConfirm } from "./ConfirmContext";
 export { usePhotoPick, usePhotoCaptureHost, requestCapturedPhoto, photoFile, type PhotoRequest } from "./photo-capture";
@@ -391,7 +393,8 @@ export { MoneyTotalNotice } from "./MoneyTotalNotice";
 export { NewItemMenu, NewFromTemplateButton, type TemplateCreateArgs } from "./NewItemMenu";
 
 export { ActionDescription, firstActionSentence } from "./ActionDescription";
-export { NumberField, readNumber, type NumberFieldProps } from "./NumberField";
+export { NumberField, readNumber, typingLocale, type NumberFieldProps } from "./NumberField";
+export { NumberInput, type NumberInputEvent, type NumberInputProps } from "./NumberInput";
 
 export { SendRecords } from "./SendRecords";
 export type { WorkspaceSendRequest, WorkspaceSendPreview, WorkspaceSendTargets } from "./SendRecords";
@@ -414,5 +417,9 @@ export { ASKS_NOW_HEADER, IDEMPOTENCY_KEY, asAPersonsWrite, browserOffline, forg
 export { StatusRow, type StatusRowProps } from "./StatusRow";
 export { configureProductName, productName } from "./product-name";
 export { beginWrite, isAWrite, outcomeOf, resetWriteIdentities, type WriteOutcome } from "./write-identity";
-export { isKeptOffline, KEPT_OFFLINE, KEPT_SENTENCE, networkFailureMessage, OFFLINE_SENTENCE } from "./network-failure";
+export { isKeptOffline, KEPT_OFFLINE, KEPT_SENTENCE, networkFailureMessage, OFFLINE_SENTENCE, KEPT_SIGNED_OUT_SENTENCE } from "./network-failure";
+export { CreateDraftNote, draftKey, forgetCreateDrafts, useCreateDraft, type CreateDraft, type DraftValues } from "./useCreateDraft";
+export { useListSearch } from "./useListSearch";
+export { forgetKeptPhotos, forgetPhoto, keepPhoto, keptPhotos, lostConnection, type KeptPhoto } from "./kept-photos";
+export { KeptPhotoNote, useKeptPhotos, type KeptPhotoState } from "./useKeptPhoto";
 export { NearSpellings, nearSpellings } from "./NearSpellings";

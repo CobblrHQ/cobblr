@@ -10,6 +10,7 @@ import type { InventoryDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const spoolmanRouter = Router({ mergeParams: true });
 
@@ -67,7 +68,7 @@ spoolmanRouter.get(
 
 const ConnCreate = z.object({
   label: z.string().min(1).max(120),
-  base_url: z.string().url().max(500),
+  base_url: webLink().max(500),
   api_key: optionalText(500),
 });
 // AI-REACH: exempt — takes a Spoolman's address and API key; the assistant

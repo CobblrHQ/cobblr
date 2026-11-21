@@ -15,7 +15,7 @@ import { parcelWords } from "../features/purchases/parcelWords";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2, ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
-import { MoneyInput, editOf, useMoneyCurrency, RelationSelect, useConfirm, useToast } from "@cobblr/platform-web";
+import { MoneyInput, editOf, useMoneyCurrency, RelationSelect, useConfirm, useToast, NumberInput } from "@cobblr/platform-web";
 import { ApiError, api, type Order, type OrderItem } from "../lib/api";
 import { StartReturnButton } from "./OrderReturns";
 import { usePurchaseLineActions } from "./purchaseLineActions";
@@ -105,7 +105,7 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
       <div className="grid grid-cols-2 gap-2">
         <label className="block">
           <span className="block text-xs text-muted mb-1">How many</span>
-          <input type="number" inputMode="decimal" min="0" step="any" value={qty} onChange={(e) => setQty(e.target.value)} className="input" />
+          <NumberInput inputMode="decimal" min="0" step="any" value={qty} onChange={(e) => setQty(e.target.value)} className="input" />
         </label>
         <label className="block">
           <span className="block text-xs text-muted mb-1">Cost each</span>
@@ -413,8 +413,7 @@ export function OrderLineControls({ slug, order, item, onStartReturn }: { slug: 
       </label>
       <label>
         <span className="block text-xs text-muted mb-1">How many</span>
-        <input
-          type="number"
+        <NumberInput
           inputMode="decimal"
           min="0"
           step="any"

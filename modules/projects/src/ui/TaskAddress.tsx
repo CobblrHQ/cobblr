@@ -15,6 +15,7 @@ export function TaskAddress() {
   const { api } = useProjects();
   // Back to where the task was opened from, else the projects list (#6266).
   const close = useCloseToOrigin(useResolvedPath("../..", { relative: "path" }).pathname);
+  // record-gone-ok: a failed read opens TaskSheet, which says who deleted the task and the way back.
   const task = useQuery({ queryKey: taskKey(taskId ?? ""), queryFn: () => api.getTask(taskId!), enabled: !!taskId });
   if (task.data?.project_id) return <Navigate to={`../../${task.data.project_id}?task=${task.data.id}`} relative="path" replace />;
   return (

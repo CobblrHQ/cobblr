@@ -1,4 +1,4 @@
-import { productName, AllergenPills } from "@cobblr/platform-web";
+import { productName, AllergenPills, NumberInput } from "@cobblr/platform-web";
 import { sessionSaidCategory, sessionSaidPlace, sessionSaidVendor, sessionSharesWhy, type SessionSays } from "../lib/sessionSays";
 import { NumberStepper, RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
 import { RAN_OUT_HINT, RAN_OUT_LABEL, useRanOut } from "./scanRanOut";
@@ -78,6 +78,7 @@ import { ChipFields, type ChipFieldDef, type ChipFieldType } from "../components
 import { useAiStatus, aiStatusLine, aiReach } from "../components/AiStatusNotice";
 import { filingLabel } from "../lib/scanFiling";
 import { measureDevice, photoPressAction } from "../lib/photoDevice";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 import { useHandheld } from "../lib/useHandheld";
 import { SHEET_ACTION_CLASS, SheetActionLabel, type ScanItemSheetNav } from "./ScanItemSheet";
 import { } from "./ScanInboxMenu";
@@ -3287,7 +3288,7 @@ export function InboxCard({
                 if (host)
                   segs.push(
                     <a
-                      href={item.source_url}
+                      href={safeHref(item.source_url)}
                       target="_blank"
                       rel="noreferrer"
                       onClick={(e) => e.stopPropagation()}
@@ -5856,7 +5857,7 @@ function ConfirmForm({
                 className="min-h-10 w-full min-w-0 max-w-full appearance-none rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-800 px-2.5 text-sm text-content dark:text-mortar-100"
               />
             ) : (
-              <input
+              <NumberInput
                 id={`scan-${item.id}-${f.key}`}
                 type={f.type === "number" ? "number" : "text"}
                 inputMode={f.type === "number" ? "numeric" : undefined}
@@ -6206,7 +6207,7 @@ function ScanFieldInput({
           className={fieldPackControlClass + " text-sm"}
         />
       ) : (
-        <input
+        <NumberInput
           id={inputId}
           data-field={def.name}
           type={def.type === "number" ? "number" : def.type === "date" ? "date" : def.type === "url" ? "url" : "text"}

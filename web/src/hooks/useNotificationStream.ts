@@ -13,10 +13,9 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { notificationKeys } from "../lib/notification-keys";
+import { openLiveStream } from "../lib/live-stream";
 import { NOTIFICATION_STREAM_EVENT } from "@cobblr/platform-contract/notification-stream";
 
-const RETRY_MIN_MS = 5_000;
-const RETRY_MAX_MS = 60_000;
 /** How long the stream outlives its last bell. The shell can be drawn twice as
  *  a page loads, every bell going and coming back at once, and the stream shut
  *  as the last went and opened again as the first came: two tickets asked for
@@ -39,44 +38,14 @@ function setUp(next: boolean) {
 }
 
 function open(): () => void {
-  let closed = false;
-  let es: EventSource | null = null;
-  let retry: ReturnType<typeof setTimeout> | undefined;
-  let wait = RETRY_MIN_MS;
-  const again = () => {
-    if (closed) return;
-    retry = setTimeout(() => void connect(), wait);
-    wait = Math.min(wait * 2, RETRY_MAX_MS);
-  };
-  const connect = async () => {
-    let ticket: string;
-    try {
-      ticket = (await api.meNotificationStreamTicket()).ticket;
-    } catch {
-      again();
-      return;
-    }
-    if (closed) return;
-    es = new EventSource(`/api/v1/me/notifications/stream?ticket=${encodeURIComponent(ticket)}`);
-    es.onopen = () => {
-      wait = RETRY_MIN_MS;
-      setUp(true);
-    };
-    es.addEventListener(NOTIFICATION_STREAM_EVENT, () => listeners.forEach((l) => l.changed()));
-    es.onerror = () => {
-      es?.close();
-      es = null;
-      setUp(false);
-      again();
-    };
-  };
-  void connect();
-  return () => {
-    closed = true;
-    clearTimeout(retry);
-    es?.close();
-    setUp(false);
-  };
+  return openLiveStream({
+    ticket: () => api.meNotificationStreamTicket(),
+    url: (ticket) => `/api/v1/me/notifications/stream?ticket=${encodeURIComponent(ticket)}`,
+    on: { [NOTIFICATION_STREAM_EVENT]: () => listeners.forEach((l) => l.changed()) },
+    // A notification that came or went in the gap: the bell reads again.
+    back: () => listeners.forEach((l) => l.changed()),
+    live: setUp,
+  });
 }
 
 /** Returns whether the stream is up (so a caller can relax its poll). */

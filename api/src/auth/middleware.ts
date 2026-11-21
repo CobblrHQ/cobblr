@@ -363,6 +363,9 @@ declare module "express-serve-static-core" {
   }
 }
 
+/** What a person is told when their sign-in has ended or never verified. */
+const SIGNED_OUT = "You were signed out. Sign in again.";
+
 export async function requireAuth(
   req: Request,
   res: Response,
@@ -455,7 +458,7 @@ export async function requireAuth(
       const cutoffSec = new Date(user.tokens_valid_from).getTime() / 1000;
       if (tokenIssuedAt < cutoffSec) {
         res.status(401).json({
-          error: { code: "session_revoked", message: "Session expired — please sign in again." },
+          error: { code: "session_revoked", message: SIGNED_OUT },
         });
         return;
       }
@@ -629,10 +632,15 @@ export async function requireAuth(
     // "timeout exceeded when trying to connect" and a starving api read as
     // every session expiring at once (#3033). That is a 503, counted as an
     // error and named in the log, never a logout.
-    if (err instanceof joseErrors.JOSEError || err instanceof TokenRefused) {
-      res.status(401).json({
-        error: { code: "unauthenticated", message: err.message },
-      });
+    // The token library's words ("signature verification failed", "jwt
+    // expired") are never the answer: a screen, the assistant or an MCP
+    // client prints this message as it stands (#9688).
+    if (err instanceof joseErrors.JOSEError) {
+      res.status(401).json({ error: { code: "signed_out", message: SIGNED_OUT } });
+      return;
+    }
+    if (err instanceof TokenRefused) {
+      res.status(401).json({ error: { code: "unauthenticated", message: err.message } });
       return;
     }
     console.error("[auth] the session could not be checked:", (err as Error).message);

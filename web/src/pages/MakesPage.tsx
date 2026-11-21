@@ -14,8 +14,8 @@ import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Circle, CircleDashed, FileText, Loader2, RotateCcw, Sparkles, Upload, XCircle } from "lucide-react";
-import { RecordFormModal, CustomFieldsPanel, EntityPhoto, FilePreview, Modal, SearchInput, useConfirm, useFilePreviewRegistry, useMayDelete, usePageTitle, usePasteImage, useToast, editOf } from "@cobblr/platform-web";
-import { api, ApiError, MAKE_STEPS, type MakeDetail, type MakeFileRole, type MakeStepName, type MakeStepRecord, type MakeSummary } from "../lib/api";
+import { RecordFormModal, CustomFieldsPanel, EntityPhoto, FilePreview, Modal, SearchInput, useConfirm, useFilePreviewRegistry, useMayDelete, usePageTitle, usePasteImage, useToast, editOf, CreateDraftNote, useCreateDraft } from "@cobblr/platform-web";
+import { api, ApiError, MAKE_STEPS, type MakeDetail, type MakeFileRole, type MakeStepName, type MakeStepRecord, type MakeSummary, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useEnabledModules } from "../lib/useEnabledModules";
 import { openAuthedFile } from "../lib/authed-file";
@@ -155,18 +155,33 @@ function NewMakeModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  // What was asked for, typed before a reload or a stray close, comes back
+  // until the make is started (#4115, useCreateDraft). A file is never kept.
+  const draft = useCreateDraft({
+    form: "digifab:new-make",
+    slug: activeSlug,
+    token: getToken(),
+    values: { name, prompt },
+    empty: { name: "", prompt: "" },
+    restore: (v) => {
+      setName(String(v.name ?? ""));
+      setPrompt(String(v.prompt ?? ""));
+    },
+  });
   const brought = file ? stepForFile(file.name) : null;
 
   const start = useMutation({
     mutationFn: async () => {
       if (file) {
         if (!brought) throw new Error("A make starts from a model (STL, STEP or 3MF) or from G-code.");
+        // photo-not-kept: a model or G-code file chosen from the device, still on it; the dialog stays open with it and says why it failed.
         const stored = await api.uploadFile(activeSlug, file);
         return api.createMake(activeSlug, { name: name.trim() || nameFromFile(file.name), start_at: brought.step, files: [{ file_id: stored.id, role: brought.role }] });
       }
       return api.createMake(activeSlug, { name: name.trim() || prompt.trim().slice(0, 80), prompt: prompt.trim() });
     },
     onSuccess: (m) => {
+      draft.clear();
       void qc.invalidateQueries({ queryKey: makeKeys.all(activeSlug) });
       onClose();
       navigate(`/makes/${m.id}`);
@@ -178,6 +193,7 @@ function NewMakeModal({ onClose }: { onClose: () => void }) {
   return (
     <RecordFormModal open onClose={onClose} title="New make">
       <div className="space-y-3">
+        <CreateDraftNote draft={draft} />
         <label className="block text-sm">
           <span className="text-muted">What to make</span>
           <textarea

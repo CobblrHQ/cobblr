@@ -1,4 +1,4 @@
-import { RecordFormModal, editOf, useRecordAsOpened, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, OnceQuiet, stillAsking, useRecordActions, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob, useOnceQuiet } from "@cobblr/platform-web";
+import { RecordFormModal, editOf, useRecordAsOpened, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, OnceQuiet, stillAsking, useRecordActions, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob, useOnceQuiet, NumberInput } from "@cobblr/platform-web";
 // /locations/:id — full-entity detail view.
 //
 // Locations are now first-class entities (Punch-list #1 from
@@ -774,8 +774,7 @@ function EditLocationModal({
         {kind === "container" && (
           <Field label="Interior size (mm) - optional">
             <div className="flex items-center gap-2">
-              <input
-                type="number"
+              <NumberInput
                 min={1}
                 value={dimX}
                 onChange={(e) => setDimX(e.target.value)}
@@ -784,8 +783,7 @@ function EditLocationModal({
                 aria-label="Interior length in millimeters"
               />
               <span className="text-faint">×</span>
-              <input
-                type="number"
+              <NumberInput
                 min={1}
                 value={dimY}
                 onChange={(e) => setDimY(e.target.value)}
@@ -794,8 +792,7 @@ function EditLocationModal({
                 aria-label="Interior width in millimeters"
               />
               <span className="text-faint">×</span>
-              <input
-                type="number"
+              <NumberInput
                 min={1}
                 value={dimZ}
                 onChange={(e) => setDimZ(e.target.value)}

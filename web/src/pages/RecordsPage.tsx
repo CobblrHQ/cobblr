@@ -1,4 +1,4 @@
-import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces, NewItemMenu, useStillAsking, useRecordEdits } from "@cobblr/platform-web";
+import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces, NewItemMenu, useStillAsking, useRecordEdits, CreateDraftNote, useCreateDraft, useListSearch } from "@cobblr/platform-web";
 // /records — list + detail modal for the records module, the neutral
 // generic-record substrate. Same shape as AssetsPage minus the domain
 // columns: a record carries ONLY the universal base (name, image, notes,
@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Album, ChevronRight, Image as ImageIcon, Plus, Trash2 } from "lucide-react";
-import { ApiError, api, type RecordItem, type PlatformFieldDef } from "../lib/api";
+import { ApiError, api, type RecordItem, type PlatformFieldDef, getToken } from "../lib/api";
 import { ModuleInstanceChooser, namedInstances } from "../components/ModuleInstanceChooser";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
@@ -39,6 +39,8 @@ import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/ph
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { ListNearSpellings } from "../components/ListNearSpellings";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 const ENTITY_KIND = "records:record";
 
@@ -129,9 +131,10 @@ export function RecordsPage({
   const customCols: PlatformFieldDef[] = fieldDefs.data?.items ?? [];
 
   const allRows = list.data?.items ?? [];
-  const [query, setQuery] = useState("");
+  // Kept with this page in the history, so Back from a record finds the list as it was left (#4115, useListSearch).
+  const [query, setQuery] = useListSearch("q");
   const filtered = query
-    ? allRows.filter((r) => r.name.toLowerCase().includes(query.toLowerCase()))
+    ? allRows.filter((r) => textHas(r.name, query.toLowerCase()))
     : allRows;
 
   const [newOpen, setNewOpen] = useState(false);
@@ -485,7 +488,7 @@ export function RecordDetailModal({
                 ctx={{ slug: activeSlug, entityId: r.id, entityTitle: r.name, hints: { collection: instance ? `${instance}:item` : undefined } }}
               />
               <EntityAttachments kind={ENTITY_KIND} entityId={r.id} collection={instance ? `${instance}:item` : undefined} omit={["tags", "discussion", "pairings"]} />
-              <FieldPack className="text-xs" items={[editFieldItem("notes", { label: fp.label("notes", "Notes"), value: r.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) })]} />
+              <FieldPack className="text-xs" items={[editFieldItem("notes", { label: fp.label("notes", "Notes"), value: r.notes ?? "", multiline: true, maxLength: RECORD_NOTES_MAX, onCommit: (v) => update.mutate({ notes: v || null }) })]} />
             </div>
           </div>
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
@@ -553,6 +556,20 @@ function NewRecordModal({
     { name: "image_path", label: "Photo", key: "image_url", value: barcodeImage, setValue: setBarcodeImage },
   ] });
   useEffect(() => { if (open) { setBarcodeMetadata({}); setBarcodeImage(""); } }, [open]);
+  // After the resets above, so a name typed before a reload or a stray close
+  // comes back over them, per workspace and person, until it is made (#4115).
+  const draft = useCreateDraft({
+    form: `records:new-record:${instance ?? ""}`,
+    slug: activeSlug,
+    token: getToken(),
+    open,
+    values: { name, locationId },
+    empty: { name: "", locationId: null },
+    restore: (v) => {
+      setName(String(v.name ?? ""));
+      setLocationId(typeof v.locationId === "string" ? v.locationId : null);
+    },
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -563,6 +580,7 @@ function NewRecordModal({
         location_id: locationId,
       }, instance),
     onSuccess: (r) => {
+      draft.clear();
       toast.success(`${noun[0]!.toUpperCase()}${noun.slice(1)} added.`);
       void qc.invalidateQueries({ queryKey: ["records", activeSlug] });
       onClose();
@@ -582,6 +600,7 @@ function NewRecordModal({
   return (
     <RecordFormModal open={open} onClose={onClose} title={`New ${noun}`}>
       <form onSubmit={submit} className="space-y-3">
+        <CreateDraftNote draft={draft} />
         {barcode.controls}
         {barcodeImage && <div className="flex items-center gap-2"><EntityThumb src={barcodeImage} alt="Photo from barcode" size={96} /><button type="button" className="text-sm text-accent underline" onClick={() => setBarcodeImage("")}>Remove photo</button></div>}
         <FieldPack items={[

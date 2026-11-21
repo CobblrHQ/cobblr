@@ -1,4 +1,5 @@
 // The capture drawer's one line for an item: what it is, the colourway when
+import { textHas } from "@cobblr/platform-contract/search-text";
 // the name does not already say it, the lot, the year it was made, and how
 // many (#3731, #3802): "Charisma Yarn, Dark Blue · lot 6127 · ×3",
 // "Château Filhot · 2008". Everything here is the row's own fields,
@@ -10,7 +11,7 @@ export function capturedLine(name: string, item: { quantity?: number | null; sug
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
   const colourway = str(fields.colorway) ?? str(fields.colourway);
   // "J7 Dark Blue" beside "Charisma Yarn Dark Blue" says nothing new.
-  const said = (v: string) => name.toLowerCase().includes(v.replace(/^[A-Z]?\d+\s+/i, "").toLowerCase());
+  const said = (v: string) => textHas(name, v.replace(/^[A-Z]?\d+\s+/i, "").toLowerCase());
   const head = colourway && !said(colourway) ? `${name}, ${colourway}` : name;
   // The lot read off the label is the row's own fact (`lot`), whichever field
   // of the destination will carry it; a value already on the route shows too.

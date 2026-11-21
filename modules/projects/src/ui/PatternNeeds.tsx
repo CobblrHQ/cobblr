@@ -1,4 +1,4 @@
-import { FieldPack, fieldNeed, RecordFormModal, MutationError, useUnits, useSentWords } from "@cobblr/platform-web";
+import { FieldPack, fieldNeed, RecordFormModal, MutationError, useUnits, useSentWords, NumberInput } from "@cobblr/platform-web";
 // What this pattern needs: each yarn and each hook or needle, read from the
 // pattern PDF and kept on the pattern (pattern-needs.ts on the server).
 //
@@ -394,10 +394,9 @@ function YarnMatch({
               <span className="block text-xs text-muted mb-0.5">
                 How much of {m.chosen.name} have you used? It stays on its balls; the rest moves to the new yarn.
               </span>
-              <input
+              <NumberInput
                 value={usedSoFar}
                 onChange={(e) => setUsedSoFar(e.target.value)}
-                type="number"
                 min={0}
                 step="any"
                 inputMode="decimal"
@@ -616,9 +615,14 @@ function NeedEditor({
   const field = (label: string, k: keyof typeof f, props: Record<string, unknown> = {}) => (
     <label className="block">
       <span className="block text-xs text-muted mb-0.5">{label}</span>
-      <input value={f[k]} onChange={set(k)} className="input text-sm" {...props} />
+      {props.type === "number" ? (
+        <NumberInput value={f[k]} onChange={set(k)} className="input text-sm" {...props} />
+      ) : (
+        <input value={f[k]} onChange={set(k)} className="input text-sm" {...props} />
+      )}
     </label>
   );
+  // draft-not-kept: a yarn, notion or hook read off the pattern the person still has open; a few short fields.
   return (
     <RecordFormModal open onClose={onClose} title={existing ? "Change what the pattern needs" : kind === "yarn" ? "Add a yarn" : kind === "notion" ? "Add a notion" : "Add a hook or needle"}>
       <div className="space-y-2.5">

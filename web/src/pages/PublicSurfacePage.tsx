@@ -28,6 +28,7 @@ import {
   type PublicAppPayload,
   type PublicAppData,
 } from "../components/PublicAppPlayer";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 interface SurfaceItem {
   kind: string;
@@ -165,7 +166,7 @@ export function PublicSurfacePage({ token: given, missing }: { token?: string; m
         <PublicPageView token={token!} layout={data.page.layout} items={(data.items ?? []) as unknown as PublicRecord[]} refreshedAt={surface.dataUpdatedAt} />
         {data.page.contact && (
           <p className="mt-6 text-center">
-            <a href={data.page.contact} rel="noopener noreferrer" target="_blank" className="inline-flex rounded-lg bg-cobble-600 px-3 py-2 text-sm font-medium text-white">
+            <a href={safeHref(data.page.contact)} rel="noopener noreferrer" target="_blank" className="inline-flex rounded-lg bg-cobble-600 px-3 py-2 text-sm font-medium text-white">
               Get in touch
             </a>
           </p>

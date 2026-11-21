@@ -52,12 +52,14 @@ function* walk(dir: string): Generator<string> {
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
   const out: Violation[] = [];
-  if (/\/(NumberField|NumberStepper|TypeableNumber)\.tsx$/.test(file)) return out;
+  if (/\/(NumberField|NumberStepper|TypeableNumber|NumberInput)\.tsx$/.test(file)) return out;
   const lines = src.split("\n");
-  for (const m of src.matchAll(/<input\b/g)) {
+  // A NumberInput (#4115) is a number box whatever its type says: it hands "" for an emptied box too.
+  for (const m of src.matchAll(/<(input|NumberInput)\b/g)) {
     const end = src.indexOf("/>", m.index!);
     const el = src.slice(m.index!, end < 0 ? m.index! + 800 : end + 2);
-    if (!/\btype=["{]*["']number["']/.test(el)) continue;
+    if (m[1] === "input" && !/\btype=["{]*["']number["']/.test(el)) continue;
+    if (m[1] === "NumberInput" && /\btype=\{/.test(el)) continue;
     if (!/\b(Number|parseFloat|parseInt)\(|\+\s*e\.target\.value/.test(el)) continue;
     const startLine = src.slice(0, m.index!).split("\n").length;
     const span = lines.slice(Math.max(0, startLine - 2), startLine + el.split("\n").length).join("\n");

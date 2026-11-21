@@ -95,6 +95,7 @@ export function useBrowserDrive(slug: string | undefined, mode: DriveMode): Brow
       const url =
         `/api/v1/orgs/${encodeURIComponent(slug!)}/drive/tab/stream` +
         `?ticket=${encodeURIComponent(ticket)}&browser_id=${encodeURIComponent(browserId.current)}`;
+      // stream-gap-ok: a drive offer or command is of the moment; the assistant asks again, nothing on screen is stale.
       const es = new EventSource(url);
       esRef.current = es;
       es.addEventListener("drive-offer", () => setState((s) => (s === "active" ? s : "offer")));

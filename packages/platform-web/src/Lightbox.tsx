@@ -24,6 +24,7 @@ import { usePasteImage } from "./usePasteImage";
 import { useImageSrc } from "./useImageSrc";
 import { useEscapeToClose } from "./useEscapeToClose";
 import { isShortcut, typingIn } from "./shortcuts";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 export interface LightboxItem {
   key: string;
@@ -250,7 +251,7 @@ export function Lightbox({ items, index, onIndex = () => {}, onClose, searchSlot
         <div className="flex items-center justify-between gap-3">
           {current.caption ? (
             current.href ? (
-              <a href={current.href} target="_blank" rel="noreferrer" className="text-[11px] text-white/60 hover:text-white truncate">
+              <a href={safeHref(current.href)} target="_blank" rel="noreferrer" className="text-[11px] text-white/60 hover:text-white truncate">
                 {current.caption}
               </a>
             ) : (

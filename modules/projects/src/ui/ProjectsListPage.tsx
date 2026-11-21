@@ -1,4 +1,4 @@
-import { SelectBox, RecordFormModal, NewItemMenu, SnippetText, workspaceFetch, PhoneRecordList, usePhoneLayout, QueryError } from "@cobblr/platform-web";
+import { SelectBox, RecordFormModal, NewItemMenu, SnippetText, workspaceFetch, PhoneRecordList, usePhoneLayout, QueryError, useListSearch } from "@cobblr/platform-web";
 // Projects index. Status-grouped list + search + new-project form.
 
 import { useDeferredValue, useMemo, useState, type FormEvent } from "react";
@@ -18,6 +18,7 @@ import type { Project } from "./api";
 import { countOf } from "@cobblr/platform-contract";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { dayLabel } from "@cobblr/platform-contract/day";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 type SavedViewLite = {
   id: string;
@@ -57,7 +58,8 @@ export function ProjectsListPage() {
   // PATTERN, not just a name (a713 / f65ba15b: "cannot add patterns to Designs").
   const [creating, setCreating] = useState(false);
   const [newMeta, setNewMeta] = useState<Record<string, unknown>>({});
-  const [query, setQuery] = useState("");
+  // Kept with this page in the history, so Back from a record finds the list as it was left (#4115, useListSearch).
+  const [query, setQuery] = useListSearch("q");
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -145,8 +147,8 @@ export function ProjectsListPage() {
     const q = query.toLowerCase();
     return items.filter(
       (p) =>
-        p.name.toLowerCase().includes(q) ||
-        (p.description ?? "").toLowerCase().includes(q),
+        textHas(p.name, q) ||
+        textHas((p.description ?? ""), q),
     );
   }, [items, query, deferred, searched.data]);
 

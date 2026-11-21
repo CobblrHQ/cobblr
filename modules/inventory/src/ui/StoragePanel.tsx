@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useRunAction } from "@cobblr/platform-web";
+import { useRunAction, NumberInput } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { randomId } from "@cobblr/platform-contract";
 
@@ -63,18 +63,18 @@ export function StoragePanel({ id }: { id: string }) {
     {view.state.bake && <p className="text-xs text-muted">Bake: {view.state.bake.minutes} minutes at {view.state.bake.temperature_c} °C. Ready after {new Date(Date.parse(view.state.bake.started_at) + view.state.bake.minutes * 60_000).toLocaleString()}. {view.state.bake.instruction}</p>}
     {bake && view.state.mode !== "baking" && <form className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm" onSubmit={e => { e.preventDefault(); void change("start-bake", { minutes: Number(minutes), temperature_c: Number(temperature), instruction }).then(changed => { if (changed) setBake(false); }); }}>
       <p className="sm:col-span-2 text-muted">Use the component manufacturer’s bake instruction. Check that the reel or tray tolerates its temperature.</p>
-      <label>Duration (minutes)<input required type="number" min="1" className={input} value={minutes} onChange={e => setMinutes(e.target.value)} /></label>
-      <label>Temperature (°C)<input required type="number" min="1" max="500" className={input} value={temperature} onChange={e => setTemperature(e.target.value)} /></label>
+      <label>Duration (minutes)<NumberInput required min="1" className={input} value={minutes} onChange={e => setMinutes(e.target.value)} /></label>
+      <label>Temperature (°C)<NumberInput required min="1" max="500" className={input} value={temperature} onChange={e => setTemperature(e.target.value)} /></label>
       <label className="sm:col-span-2">Manufacturer instruction<input required className={input} value={instruction} onChange={e => setInstruction(e.target.value)} /></label>
       <button disabled={busy} type="submit" className="rounded bg-cobble-600 text-white px-3 py-2">Start bake timer</button>
     </form>}
     <details className="space-y-3"><summary className="cursor-pointer text-sm">Count and placements</summary>
     <form className="flex flex-wrap gap-2 items-end text-sm" onSubmit={e => { e.preventDefault(); void act("inventory:set-stock", { qty: Number(count), reason: "Counted package" }); }}>
-      <label>I counted it<input type="number" required min="0" step="1" className={input} value={count} onChange={e => setCount(e.target.value)} /></label>
+      <label>I counted it<NumberInput required min="0" step="1" className={input} value={count} onChange={e => setCount(e.target.value)} /></label>
       <button disabled={busy} type="submit" className="rounded border border-line px-3 py-2">Record count</button>
     </form>
     <form className="space-y-2 text-sm" onSubmit={e => { e.preventDefault(); void act("inventory:consume-with-loss", { sourceId: runId, lines: [{ partId: id, placements: Number(placements) }] }); }}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><label>Placements<input required type="number" min="1" step="1" className={input} value={placements} onChange={e => setPlacements(e.target.value)} /></label><label>Run identifier<input required className={input} value={runId} onChange={e => setRunId(e.target.value)} /></label></div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><label>Placements<NumberInput required min="1" step="1" className={input} value={placements} onChange={e => setPlacements(e.target.value)} /></label><label>Run identifier<input required className={input} value={runId} onChange={e => setRunId(e.target.value)} /></label></div>
       <p className="text-xs text-muted">The package’s attrition percentage is added to placements. Keep the same run identifier when retrying a completion.</p>
       <button disabled={busy || !view.usable} type="submit" className="rounded border border-line px-3 py-2">Record placements</button>
     </form>

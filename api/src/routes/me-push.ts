@@ -31,6 +31,7 @@ import {
 import type { NotificationPriority } from "../db/schema.js";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { webLink } from "@cobblr/platform-contract/web-link";
 export const mePushRouter = Router();
 
 const Priority = z.enum(["low", "normal", "high", "urgent"]);
@@ -38,7 +39,7 @@ const b64urlBytes = (n: number) =>
   z.string().refine((s) => decodeBase64urlExact(s)?.length === n, `must be ${countOf(n, "byte")}, base64url`);
 
 const Subscribe = z.object({
-  endpoint: z.string().url().max(2048),
+  endpoint: webLink().max(2048),
   keys: z.object({ p256dh: b64urlBytes(65), auth: b64urlBytes(16) }),
   label: z.string().trim().min(1).max(80).optional(),
   user_agent: z.string().max(400).optional(),
@@ -65,7 +66,7 @@ const HandoffBody = z
   })
   .strict();
 
-const Forget = z.object({ endpoint: z.string().url().max(2048) });
+const Forget = z.object({ endpoint: webLink().max(2048) });
 
 const Settings = z
   .object({

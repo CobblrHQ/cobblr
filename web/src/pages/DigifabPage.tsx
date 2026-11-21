@@ -1,5 +1,5 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { productName, useSentWords, editOf, QueryError } from "@cobblr/platform-web";
+import { productName, useSentWords, editOf, QueryError, NumberInput } from "@cobblr/platform-web";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { useEnabledModules } from "../lib/useEnabledModules";
 import { bridgeDisplayName } from "../lib/bridge-choice";
@@ -29,6 +29,7 @@ import { useReprint } from "../features/digifab/useReprint";
 import { dayLabel } from "@cobblr/platform-contract/day";
 import { centsFromAmount, formatMoney } from "@cobblr/platform-contract/money";
 import { HourRateEditor } from "../features/digifab/HourRate";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 /** What a Start confirm says: that it starts a machine, and how to stop it. It said a print "can't be stopped
  *  from here" beside a job that offers Pause and Cancel (#6785). */
@@ -2330,6 +2331,7 @@ function NewJobModal({
     : !routeValid ? ({ machine: "Choose a linked machine to queue this job.", printer: "Choose a printer to queue this job.", tag: "Enter a printer group tag to queue this job.", pool: "Choose a pool to queue this job.", file: "" })[routeBy]
     : null;
 
+  // draft-not-kept: a print job is a chosen file and machine; nothing long is typed.
   return (
     <RecordFormModal open onClose={onClose} title="New print job">
       <form
@@ -2475,8 +2477,7 @@ function NewJobModal({
                     allowClear
                     className="flex-1"
                   />
-                  <input
-                    type="number"
+                  <NumberInput
                     min="0"
                     step="any"
                     value={materialGrams}
@@ -2517,8 +2518,7 @@ function NewJobModal({
             {buildId && (
               <label className="mt-1.5 flex flex-wrap items-center gap-2 text-[13px] text-content dark:text-mortar-200">
                 <span>How many builds?</span>
-                <input
-                  type="number"
+                <NumberInput
                   min="1"
                   step="1"
                   value={buildQty}
@@ -2884,7 +2884,7 @@ function PoolMemberAdder({
 
   const filtered = available.filter((d) => {
     const s = q.trim().toLowerCase();
-    return !s || d.name.toLowerCase().includes(s) || d.connLabel.toLowerCase().includes(s);
+    return !s || textHas(d.name, s) || textHas(d.connLabel, s);
   });
   const toggle = (key: string) =>
     setSel((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });

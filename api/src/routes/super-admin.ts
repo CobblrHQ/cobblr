@@ -73,6 +73,7 @@ import { instantFromInput } from "@cobblr/platform-contract/day";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 import { replayAccountWrite } from "../platform/request-replays.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const superAdminRouter = Router();
 
@@ -1819,7 +1820,7 @@ const IngestFeedback = z.object({
   // for a while; the first message did not, which is the one most likely to
   // carry them — a UI report is usually a picture and a sentence.
   images: z
-    .array(z.object({ url: z.string().url().max(2000), name: z.string().max(200).optional() }))
+    .array(z.object({ url: webLink().max(2000), name: z.string().max(200).optional() }))
     .max(8)
     .default([]),
   origin_ref: z.object({
@@ -1946,7 +1947,7 @@ const AppendFeedback = z.object({
   records_only: z.boolean().default(false),
   text: z.string().trim().max(5000).default(""),
   images: z
-    .array(z.object({ url: z.string().url().max(2000), name: z.string().max(255).optional() }))
+    .array(z.object({ url: webLink().max(2000), name: z.string().max(255).optional() }))
     .max(8)
     .default([]),
 });
@@ -2024,7 +2025,7 @@ superAdminRouter.post("/feedback/append", replayAccountWrite, async (req, res, n
 // (beta feedback, 2026-07-15). Either way the DM is never dropped — not-a-reply just opens
 // its own item. Images ride along too. Same feedback:ingest scope as /append.
 const DmImages = z
-  .array(z.object({ url: z.string().url().max(2000), name: z.string().max(255).optional() }))
+  .array(z.object({ url: webLink().max(2000), name: z.string().max(255).optional() }))
   .max(8)
   .default([]);
 const AppendDm = z.object({
@@ -2305,7 +2306,7 @@ superAdminRouter.get("/announce-settings", async (_req, res, next) => {
 const AnnounceSettingPatch = z.object({
   enabled: z.boolean().optional(),
   // null clears the per-category channel override (falls back to the default).
-  webhook_url: z.string().url().max(500).nullable().optional(),
+  webhook_url: webLink().max(500).nullable().optional(),
 });
 
 superAdminRouter.patch("/announce-settings/:category", async (req, res, next) => {

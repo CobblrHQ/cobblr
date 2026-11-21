@@ -1,0 +1,8 @@
+{
+  "match": "set the twin bolts m4 to 40",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "inventory:part", "q": "Twin bolts M4" } }] },
+    { "tool_calls": [{ "name": "update_record", "args": { "kind": "inventory:part", "id": "$prev.data.items[0].id", "fields": { "qty": 40 } } }] },
+    { "content": "Twin bolts M4 are at 40 now." }
+  ]
+}

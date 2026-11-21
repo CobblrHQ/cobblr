@@ -13,6 +13,8 @@
 // writes. The draft follows the record while the field is untouched, so an
 // action that moves the record shows here at once (#3615).
 import { useRef, type ReactNode } from "react";
+import { readLocaleNumber, writeLocaleNumber } from "@cobblr/platform-contract/locale-number";
+import { typingLocale } from "./NumberField";
 import { fieldNeed, type FieldNeed } from "./field-pack";
 import { fieldPackControlClass, type FieldPackItem } from "./FieldPack";
 import { movedUnderSentence, useFieldDraft } from "./use-field-draft";
@@ -62,6 +64,19 @@ export interface EditFieldProps {
   placeholder?: string;
   /** Extra classes on the control (a mono font for a code). */
   className?: string;
+  /** The most characters the save takes (the route's own limit, from the
+   *  contract): said as the text nears it, and text past it is kept here,
+   *  never sent to a save that would refuse it (#4115). */
+  maxLength?: number;
+}
+
+/** What a field says as its text nears or passes its limit, or null well under it. */
+export function lengthNote(length: number, max: number | undefined): { text: string; over: boolean } | null {
+  if (max == null || length < Math.floor(max * 0.9)) return null;
+  const n = (v: number) => v.toLocaleString();
+  return length > max
+    ? { text: `${n(length)} of ${n(max)} characters: take out ${n(length - max)} to save it.`, over: true }
+    : { text: `${n(length)} of ${n(max)} characters.`, over: false };
 }
 
 /** The text an EditField shows for a value: "" for none, and a number
@@ -81,18 +96,32 @@ export function editFieldText(value: string | number | null | undefined, numeric
   return String(value);
 }
 
-export function EditField({ label, value, onCommit, numeric, fractionDigits, multiline, type, placeholder, className }: EditFieldProps) {
+/** What a typed number will be kept as, said only when the text could be read another way. */
+function SavesAs({ text }: { text: string }) {
+  const said = readLocaleNumber(text, typingLocale());
+  if (!said.ambiguous || said.value === null) return null;
+  return <span className="block text-[11px] text-muted mt-0.5" role="status">Saves as {said.value.toLocaleString(typingLocale())}</span>;
+}
+
+export function EditField({ label, value, onCommit, numeric, fractionDigits, multiline, type, placeholder, className, maxLength }: EditFieldProps) {
   const Cmp = multiline ? "textarea" : "input";
   const initial = editFieldText(value, numeric, type, fractionDigits);
-  const f = useFieldDraft(initial);
+  // A number is shown the way the person types one ("1,5" on a German phone).
+  const shown = numeric && initial !== "" ? writeLocaleNumber(Number(initial), typingLocale()) : initial;
+  const f = useFieldDraft(shown);
   // Escape leaves without writing; the blur it causes must not write the draft.
   const leaving = useRef(false);
+  const note = lengthNote(f.draft.length, maxLength);
   return (
     <label className="block min-w-0">
       <FieldLabel>{label}</FieldLabel>
       <Cmp
-        type={multiline ? undefined : type ?? (numeric ? "number" : "text")}
-        step={numeric && !multiline ? "any" : undefined}
+        // A number is typed as text on the decimal keypad and read the way
+        // the person's locale writes it: an <input type="number"> dropped the
+        // comma of a German "1,5" and kept 15 (#4115, locale-number.ts).
+        type={multiline ? undefined : type ?? "text"}
+        inputMode={numeric && !multiline ? "decimal" : undefined}
+        data-number-input={numeric && !multiline ? "" : undefined}
         value={f.draft}
         onChange={(e) => f.setDraft(e.target.value)}
         placeholder={placeholder}
@@ -101,9 +130,24 @@ export function EditField({ label, value, onCommit, numeric, fractionDigits, mul
             leaving.current = false;
             return;
           }
-          const v = e.target.value;
+          let v = e.target.value;
+          // Past the limit the save would refuse it: the text stays here, said, until it fits.
+          if (maxLength != null && v.length > maxLength) return;
+          let typedAs = v;
+          if (numeric && v.trim() !== "") {
+            const read = readLocaleNumber(v, typingLocale()).value;
+            // Not a number: the record's value comes back, nothing is written.
+            if (read === null) {
+              f.reset();
+              return;
+            }
+            // The record is written a plain "1.5"; the field keeps the person's "1,5".
+            v = String(read);
+            typedAs = writeLocaleNumber(read, typingLocale());
+            f.setDraft(typedAs);
+          }
           if (v !== initial && f.mayWrite()) {
-            f.committed(v);
+            f.committed(typedAs);
             onCommit(v);
           }
         }}
@@ -118,8 +162,15 @@ export function EditField({ label, value, onCommit, numeric, fractionDigits, mul
           }
         }}
         rows={multiline ? 3 : undefined}
+        aria-invalid={note?.over || undefined}
         className={"input " + fieldPackControlClass + (className ? " " + className : "")}
       />
+      {note && (
+        <span role={note.over ? "alert" : "status"} data-testid="length-note" className={"mt-1 block text-xs " + (note.over ? "text-ember-600 dark:text-ember-400" : "text-muted")}>
+          {note.text}
+        </span>
+      )}
+      {numeric && <SavesAs text={f.draft} />}
       <MovedUnderNote movedTo={f.movedTo} />
     </label>
   );

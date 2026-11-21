@@ -9,7 +9,14 @@
 //
 // In-process, like the streams it closes. A door that does not announce is
 // caught by the stream's own check before it sends, seconds later at most.
+//
+// A way back in still waiting to be used ends with them: a reset link in the
+// inbox, a sign-in link, a phone's pairing code. Whoever read the inbox kept a
+// reset link through the owner's "sign out everywhere" and chose the next
+// password with it (#4115).
+import type { Kysely, Updateable } from "kysely";
 import { meta } from "../db/meta.js";
+import type { MetaDB, UsersTable } from "../db/schema.js";
 
 /** The sign-in a stream was opened by: whose, when its session token was
  *  minted (null for an API token), and the API token it was, if one. */
@@ -19,10 +26,23 @@ export interface SignIn {
   apiTokenId: string | null;
 }
 
-/** The column that ends every sign-in this account had before `at`. Every
- *  write of tokens_valid_from goes through here (code:sign-ins-end); the door
- *  then calls announceSignInsEnded once its write is committed. */
-export const signInsEndAt = (at: Date): { tokens_valid_from: Date } => ({ tokens_valid_from: at });
+/** End every sign-in this account had before `at`, and every way back in
+ *  sent before it, in one transaction (the caller's, when it hands one in),
+ *  writing `alsoSet` on the account with it. Every write of tokens_valid_from
+ *  goes through here (code:sign-ins-end); the door then calls
+ *  announceSignInsEnded once its write is committed. */
+export async function endSignIns(db: Kysely<MetaDB>, userId: string, at: Date, alsoSet: Updateable<UsersTable> = {}): Promise<void> {
+  const run = async (trx: Kysely<MetaDB>) => {
+    // The address before alsoSet moves it: the links were sent to that one.
+    const user = await trx.selectFrom("users").select("email").where("id", "=", userId).executeTakeFirst();
+    await trx.updateTable("users").set({ ...alsoSet, tokens_valid_from: at }).where("id", "=", userId).execute();
+    await trx.updateTable("auth_password_reset_tokens").set({ consumed_at: at }).where("user_id", "=", userId).where("consumed_at", "is", null).execute();
+    if (user) await trx.updateTable("auth_magic_tokens").set({ consumed_at: at }).where("email", "=", user.email.toLowerCase()).where("consumed_at", "is", null).execute();
+    await trx.updateTable("auth_pair_codes").set({ revoked_at: at }).where("user_id", "=", userId).where("claimed_at", "is", null).where("revoked_at", "is", null).execute();
+  };
+  if (db.isTransaction) await run(db);
+  else await db.transaction().execute(run);
+}
 
 type Listener = () => void;
 const listeners = new Map<string, Set<Listener>>();

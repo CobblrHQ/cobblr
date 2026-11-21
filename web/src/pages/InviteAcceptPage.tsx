@@ -117,6 +117,8 @@ export function InviteAcceptPage() {
       expired: "This invite has expired.",
       full: "This join link has already let in everyone it was made for. Ask the workspace for a new one.",
       paused: "This join link is paused for now: more people joined than it allows in a short time. The workspace has been told and can turn it back on.",
+      maker_cannot: "The person who made this invite can no longer give that role. Ask the workspace for a new one.",
+      workspace_disabled: "This workspace has been turned off, so it isn't taking anyone in.",
     };
     return (
       <CenteredCard tone="error" title="Invite unavailable">

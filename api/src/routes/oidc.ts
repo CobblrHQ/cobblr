@@ -41,6 +41,7 @@ import { buildAuthResponse, provisionOrgForUser } from "./auth.js";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { replayAccountWrite } from "../platform/request-replays.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 const startLimiter = makeIpLimiter(60_000, 30);
 const redeemLimiter = makeIpLimiter(60_000, 30);
@@ -210,7 +211,7 @@ oidcAdminRouter.use(requireAuth, requirePlatformAdmin);
 const ProviderBody = z.object({
   slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "Lowercase letters, digits and dashes."),
   display_name: readableNameField(60),
-  issuer: z.string().url().max(500),
+  issuer: webLink().max(500),
   client_id: z.string().min(1).max(500),
   /** Write-only. Omitted on an update: unchanged. "" clears it (a public client). */
   client_secret: optionalText(2000),

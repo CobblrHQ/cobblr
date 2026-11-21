@@ -43,6 +43,7 @@ import { WINDOWS_INSTALL_SCRIPT } from "../platform/edge-bridge-install-windows-
 import { INSTALL_SCRIPT } from "../platform/edge-bridge-install-script.js";
 import { makeIpLimiter, overLimit, rateLimited } from "../platform/ip-limiter.js";
 import { edgeBridgeName, edgeChannelKey, parseBridgeReport, parsePollLanes, parseRelayResponse } from "@cobblr/platform-contract/edge-channel";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const edgeRouter = Router({ mergeParams: true });
 edgeRouter.use(requireAuth, withTenant);
@@ -355,7 +356,7 @@ const DriverDecl = z.object({
   kind: z.string().min(1).max(64),
   version: z.string().min(1).max(64),
   sha256: z.string().regex(/^[0-9a-f]{64}$/, "sha256 must be 64 hex characters"),
-  source: z.string().url(),
+  source: webLink(),
   bridgeId: z.string().max(60).nullable().optional(),
 });
 

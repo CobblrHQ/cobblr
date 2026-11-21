@@ -17,6 +17,7 @@
 // See docs/modules/sync-sources.md.
 
 import { z } from "zod";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 /** Operators a `$.path|<op>` extract may carry. `last`: the final segment of a
  *  URL/IRI value, for sources that express a foreign key as a link. */
@@ -194,7 +195,7 @@ export const SyncSourceManifest = z.object({
   /** Fixed source base URL (e.g. "https://api.ravelry.com"). When set, the source
    *  needs no user-entered base URL — the UI hides the field and the engine uses
    *  this. Omit for sources the user points at their own host (a self-hosted app). */
-  baseUrl: z.string().url().max(200).optional(),
+  baseUrl: webLink().max(200).optional(),
   /** Named credential inputs the "Add connection" form renders: key → { label,
    *  secret }. Basic auth needs two (e.g. access_key + personal_key). Omit for the
    *  single-token default (one secret field named per `credentialLabel`). */

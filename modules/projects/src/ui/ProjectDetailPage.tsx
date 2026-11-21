@@ -1,4 +1,4 @@
-import { NewItemMenu, editOf, useRecordEdits, QueryError } from "@cobblr/platform-web";
+import { NewItemMenu, editOf, useRecordEdits, QueryError, RecordGone, isRecordGone, NumberInput } from "@cobblr/platform-web";
 // Project detail — header + inline tasks list. Tasks are added,
 // checked off, deleted inline. Cross-module dependencies render as
 // pill chips on the task row.
@@ -152,7 +152,7 @@ function DescriptionField({ value, onCommit }: { value: string; onCommit: (v: st
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { api, orgSlug, entityKind, instance, displayName, holdsPatterns, noun } = useProjects();
+  const { api, orgSlug, getToken, entityKind, instance, displayName, holdsPatterns, noun } = useProjects();
   const Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
   // Route "back" to the collection the user actually came from: a Designs (or
   // any named) instance lives at /instances/<name>, not the empty base
@@ -235,7 +235,9 @@ export function ProjectDetailPage() {
   }
 
   if (project.isLoading) return <div className="text-sm text-faint dark:text-slate-500">loading…</div>;
-  if (!project.data) return <div className="text-sm text-ember-500">{Noun} not found.</div>;
+  // Deleted elsewhere while open: the page stays under a line saying who and the way back (#4115).
+  const goneNotice = isRecordGone(project.error) ? <RecordGone slug={orgSlug} getToken={getToken} kind={entityKind} id={id!} noun={noun} kept={!!project.data} /> : null;
+  if (!project.data) return goneNotice ?? <div className="text-sm text-ember-500">{Noun} not found.</div>;
   const listed = (project.data.metadata as Record<string, unknown> | null)?.hooks_needed;
   const hooksNeeded = Array.isArray(listed) ? (listed as string[]) : [];
   // The collection's presentation decides the fields; nothing generic is drawn
@@ -250,6 +252,7 @@ export function ProjectDetailPage() {
 
   return (
     <div className="space-y-5 max-w-3xl">
+      {goneNotice}
       <Link to={backPath} className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent">
         <ArrowLeft size={12} /> back to {backLabel}
       </Link>
@@ -782,10 +785,9 @@ function MaterialsPanel({
             placeholder="Search yarn / material…"
             describe={(p) => `(${[p.available_qty, units.suffix(p.unit)].filter(Boolean).join(" ")} free)`}
           />
-          <input
+          <NumberInput
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            type="number"
             min="0"
             step="any"
             placeholder="amount"

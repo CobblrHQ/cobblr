@@ -26,6 +26,10 @@ export const SEARCH_CORPUS_RECORDS: readonly CorpusRecord[] = [
   { name: "Torque wrench", serial_number: "SER7724-00025" },
   { name: "M3 x 10 bolts" },
   { name: "M3 x 16 bolts" },
+  { name: "Crème brûlée ratios" },
+  { name: "Café shelf" },
+  { name: "Fußpedal" },
+  { name: "Bread dough" },
 ];
 
 /** A query, and the names of the records it finds (none, for a miss). */
@@ -50,6 +54,13 @@ export const SEARCH_CORPUS_QUERIES: readonly CorpusQuery[] = [
   // nothing in a workspace of "M3 x 10 bolts" (#8866).
   { q: "M3 bolts", finds: ["M3 x 10 bolts", "M3 x 16 bolts"] },
   { q: "bolts 16", finds: ["M3 x 16 bolts"] },
+  // Typed without its accents, the way a phone keyboard types it: "creme"
+  // found nothing on the server while the page's own filter found it.
+  { q: "creme", finds: ["Crème brûlée ratios"] },
+  { q: "BRULEE", finds: ["Crème brûlée ratios"] },
+  { q: "crème", finds: ["Crème brûlée ratios"] },
+  { q: "cafe", finds: ["Café shelf"] },
+  { q: "fusspedal", finds: ["Fußpedal"] },
   { q: "zzqxvnomatch", finds: [] },
 ];
 

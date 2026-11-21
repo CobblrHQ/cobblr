@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronsUpDown, X } from "lucide-react";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 export interface ComboboxOption {
   value: string;
@@ -47,7 +48,7 @@ export function Combobox({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(q) || (o.hint ?? "").toLowerCase().includes(q));
+    return options.filter((o) => textHas(o.label, q) || textHas((o.hint ?? ""), q));
   }, [options, query]);
 
   // Close on an outside click.

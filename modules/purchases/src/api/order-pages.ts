@@ -11,11 +11,12 @@ import { z } from "zod";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { captureAndRead, captureOrderPage, summaryForNumber } from "../order-page/store.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const orderPagesRouter = Router({ mergeParams: true });
 
 const Body = z.object({
-  link: z.string().url().max(4000).refine((u) => u.startsWith("https://"), "an https link"),
+  link: webLink().max(4000).refine((u) => u.startsWith("https://"), "an https link"),
   order_number: z.string().trim().max(120).nullable().optional(),
   order_id: z.string().uuid().nullable().optional(),
   /** Read the page now (when this instance reads pages) and answer what it

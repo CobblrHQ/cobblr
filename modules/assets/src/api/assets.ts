@@ -13,6 +13,7 @@ import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { forViewer, hiddenOnRegister, maySeeSerials, refuseCostWrite, refuseSerialWrite, withoutSerial } from "./serial-scope.js";
 import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 export const assetsRouter = Router({ mergeParams: true });
 
@@ -42,7 +43,7 @@ const AssetCreate = z.object({
   warranty_until: AssetDate.optional(),
   last_service_at: AssetDate.optional(),
   image_path: imagePathField().nullable().optional(),
-  notes: z.string().max(8_000).nullable().optional(),
+  notes: z.string().max(RECORD_NOTES_MAX).nullable().optional(),
   location_id: z.string().uuid().nullable().optional(),
   flags: z.array(z.string()).optional(),
   metadata: z.record(z.unknown()).optional(),

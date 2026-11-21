@@ -1,6 +1,6 @@
 import type { RenewalReceiptDraft } from "@cobblr/platform-contract/record-creation";
 import { moneyStorageOf } from "@cobblr/platform-contract/money";
-import { EntityThumb, LocationPicker, useNewRecordBarcode, RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, AddressPicker, fieldInputText, missingRequired, usePasteImage, isKeptOffline, KEPT_SENTENCE } from "@cobblr/platform-web";
+import { CreateDraftNote, EntityThumb, LocationPicker, useCreateDraft, useNewRecordBarcode, RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, AddressPicker, fieldInputText, missingRequired, usePasteImage, isKeptOffline, KEPT_SENTENCE, NumberInput } from "@cobblr/platform-web";
 // Modal to create a new part. Minimum fields only — name + qty +
 // optional category/location.
 //
@@ -183,6 +183,28 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   // Required fields left empty: asked about once, then saved anyway if the
   // person says so. A create is never refused for them (capture first).
   const [askedMissing, setAskedMissing] = useState<string[] | null>(null);
+  // What is typed into a blank new part survives a reload, a tab the phone
+  // dropped, or a stray close, per workspace and person, until it is created
+  // (#4115, useCreateDraft). A form opened with a seed (a scan, a receipt) has
+  // its own source and keeps no draft.
+  const { getToken } = useInventory();
+  const draft = useCreateDraft({
+    form: `inventory:new-part:${instance ?? ""}`,
+    slug: orgSlug,
+    token: getToken(),
+    open: !seed,
+    values: { name, qty, unit, categoryId, locationId, manufacturer, cost },
+    empty: { name: "", qty: "1", unit: qtyUnit ?? "each", categoryId: "", locationId: "", manufacturer: "", cost: null },
+    restore: (v) => {
+      setName(String(v.name ?? ""));
+      setQty(String(v.qty ?? "1"));
+      setUnit(String(v.unit ?? qtyUnit ?? "each"));
+      setCategoryId(String(v.categoryId ?? ""));
+      setLocationId(String(v.locationId ?? ""));
+      setManufacturer(String(v.manufacturer ?? ""));
+      setCost(typeof v.cost === "number" ? v.cost : null);
+    },
+  });
   const { appMode } = usePlatformWeb();
 
   const barcode = useNewRecordBarcode({ kind: entityKind, fields: customFields, metadata: meta, setMetadata: setMeta, showFields: false, natives: [
@@ -338,6 +360,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
           /* non-fatal */
         }
       }
+      draft.clear();
       onClose(true);
       if (onCreated) {
         onCreated(part.id);
@@ -348,6 +371,8 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
       // Offline, the part is kept on this device and goes by itself when the
       // connection returns: said, and the form closes (#8637).
       if (isKeptOffline(err)) {
+        // The create itself is kept now (it goes when the connection is back): the draft is done.
+        draft.clear();
         toast.info(`${name.trim()}: ${KEPT_SENTENCE}`);
         onClose(false);
         return;
@@ -366,6 +391,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   return (
     <RecordFormModal open onClose={() => onClose(false)} title={`New ${itemNoun.toLowerCase()}`} dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
+        <CreateDraftNote draft={draft} />
         {!!recordTemplates?.length && <label className="block text-sm">Starter template<select aria-label="Starter template" className={"input " + fieldPackControlClass} value={selectedTemplate} onChange={e => {
           setSelectedTemplate(e.target.value);
           const template = recordTemplates[Number(e.target.value)];
@@ -427,7 +453,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
                   need: fieldNeed("native:qty", { control: "number", label: estimated ? "Roughly how many" : fp.label("qty", PART_FIELD_LABELS.qty) }),
                   node: (
                     <Field label={estimated ? "Roughly how many" : fp.label("qty", PART_FIELD_LABELS.qty)}>
-                      <input type="number" step="any" min="0" value={qty} onChange={(e) => setQty(e.target.value)} className={"input " + fieldPackControlClass} />
+                      <NumberInput step="any" min="0" value={qty} onChange={(e) => setQty(e.target.value)} className={"input " + fieldPackControlClass} />
                     </Field>
                   ),
                 }

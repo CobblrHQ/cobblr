@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Send, Bell, X, Copy } from "lucide-react";
-import { Modal, useToast, NumberField, SecretInput } from "@cobblr/platform-web";
+import { Modal, useToast, NumberField, SecretInput, NumberInput } from "@cobblr/platform-web";
 import { api, ApiError, type DigifabChannel, type DigifabRule, type DigifabCadence, type DigifabStep } from "../lib/api";
 
 const lbl = "text-[10px] uppercase tracking-widest text-faint";
@@ -302,7 +302,7 @@ function RuleEditor({
           <label className="block">
             <span className={lbl + " block mb-1"}>But no more than once every</span>
             <div className="flex items-center gap-1.5">
-              <input type="number" min={1} value={cap} onChange={(e) => setCap(e.target.value)} placeholder="—" className={field + " !w-20"} />
+              <NumberInput min={1} value={cap} onChange={(e) => setCap(e.target.value)} placeholder="—" className={field + " !w-20"} />
               <span className="text-xs text-faint">minutes (optional cap)</span>
             </div>
           </label>

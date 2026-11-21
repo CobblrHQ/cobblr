@@ -14,7 +14,9 @@ import { splitFieldsForUpdate } from "@cobblr/platform-contract/entity-metadata"
 import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
 import type { InventoryDB } from "../db.js";
 import { holdingsCtxForPart, spreadIdentity } from "./holdings.js";
-import { PART_NAME_MAX } from "../part-limits.js";
+import { PART_NAME_MAX, PART_WARRANTY_DETAILS_MAX } from "../part-limits.js";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 const STOCK_FIELDS = ["qty", "unit", "approximate_qty", "archived", "state"] as const;
 
@@ -27,13 +29,13 @@ const EditableNative = z
     cost: z.number().nonnegative().nullable(),
     min_qty: z.number().nonnegative().nullable(),
     manufacturer: z.string().max(120).nullable(),
-    supplier_url: z.string().url().max(500).nullable(),
-    notes: z.string().max(8_000).nullable(),
+    supplier_url: webLink().max(500).nullable(),
+    notes: z.string().max(RECORD_NOTES_MAX).nullable(),
     serial_number: z.string().max(160).nullable(),
     model_number: z.string().max(160).nullable(),
     warranty_expires: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
     lifetime_warranty: z.boolean(),
-    warranty_details: z.string().max(2_000).nullable(),
+    warranty_details: z.string().max(PART_WARRANTY_DETAILS_MAX).nullable(),
     insured: z.boolean(),
   })
   .partial();

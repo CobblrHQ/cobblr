@@ -1,4 +1,4 @@
-import { SegmentedChoice, fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, useRunWithUndo, MutationError, noteWorkspaceWrite, AddressPicker, AddressView, workspaceFetch, QueryError } from "@cobblr/platform-web";
+import { SegmentedChoice, fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, useRunWithUndo, MutationError, noteWorkspaceWrite, AddressPicker, AddressView, workspaceFetch, QueryError, CreateDraftNote, useCreateDraft } from "@cobblr/platform-web";
 import type { AddressValue } from "@cobblr/platform-contract/address";
 // Per-part maintenance panel — lists scheduled + history entries
 // from core-maintenance. Add an entry as "done now", "scheduled
@@ -298,6 +298,22 @@ function AddEntryModal({
   const [cost, setCost] = useState<number | null>(null);
   const [address, setAddress] = useState<AddressValue | null>(null);
   const [busy, setBusy] = useState(false);
+  // A note written before a reload or a stray close comes back, per workspace,
+  // person and record, until the entry is added (#4115, useCreateDraft).
+  const draft = useCreateDraft({
+    form: `inventory:maintenance-entry:${entityModule}:${entityType}:${entityId}`,
+    slug: orgSlug,
+    token: getToken(),
+    values: { name, description, kind, scheduledAt, cost },
+    empty: { name: "", description: "", kind: "done", scheduledAt: "", cost: null },
+    restore: (v) => {
+      setName(String(v.name ?? ""));
+      setDescription(String(v.description ?? ""));
+      setKind(v.kind === "scheduled" || v.kind === "both" ? v.kind : "done");
+      setScheduledAt(String(v.scheduledAt ?? ""));
+      setCost(typeof v.cost === "number" ? v.cost : null);
+    },
+  });
 
   const auth = (): Record<string, string> => {
     const t = getToken();
@@ -335,6 +351,7 @@ function AddEntryModal({
       }
       await res.json();
       noteWorkspaceWrite(`/api/v1/orgs/${orgSlug}/modules/core-maintenance/entries`, res);
+      draft.clear();
       toast.success("Maintenance entry added.");
       void qc.invalidateQueries({
         queryKey: ["maintenance", orgSlug, entityModule, entityType, entityId],
@@ -350,6 +367,7 @@ function AddEntryModal({
   return (
     <RecordFormModal open onClose={onClose} title="Add maintenance entry" dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
+        <CreateDraftNote draft={draft} />
         <FieldPack items={[
           {
             need: fieldNeed("name", { control: "text", label: "What" }),

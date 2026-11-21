@@ -1,7 +1,7 @@
 // Registers its Home tile with platform-web's registerDashboardWidget seam when this UI bundle loads.
 import "./DashboardWidget";
 import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
-import { MovedUnderNote, downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, useRecordEdits, subscribeWaitingWrites, browserOffline, useRecordAsOpened } from "@cobblr/platform-web";
+import { MovedUnderNote, downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf, useRecordEdits, subscribeWaitingWrites, browserOffline, useRecordAsOpened, CreateDraftNote, useCreateDraft, useListSearch, RecordGone, isRecordGone } from "@cobblr/platform-web";
 // sales UI — the host mounts <SalesUI /> at /sales. A list of sales orders; the
 // detail modal carries the customer, line items (each an inventory part + qty +
 // price), a running total, and the **Fulfill** button that decrements the sold
@@ -27,6 +27,7 @@ import { Link } from "react-router-dom";
 import { fieldCurrency, formatStoredMoney, formatUnitPrice, linesTotalWords, parseMoneyAmount } from "@cobblr/platform-contract/money";
 import { PickToLight, useUnits } from "@cobblr/platform-web";
 import type { LineAvailability } from "../availability.js";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 export const navItems = [{ label: "Sales", path: "/sales", icon: ShoppingCart }];
 
@@ -96,7 +97,7 @@ export function SalesUI({ orgSlug, getToken }: Props) {
     if (!v && customerInPath) setCustomerInPath(null);
   };
 
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useListSearch("q");
   const [status, setStatus] = useState<SalesOrderStatus | "">("");
   const [sort, setSort] = useState<OrderSort>("newest");
   // One month of orders by the day they were made, "" for all (#8786).
@@ -186,7 +187,7 @@ export function SalesUI({ orgSlug, getToken }: Props) {
       </div>
       <ShowMore shown={orders.items.length} total={orders.total} more={() => void orders.fetchNextPage()} loading={orders.isFetchingNextPage} noun="orders" />
 
-      {creating && <NewOrderModal api={api} orgSlug={orgSlug} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); setOpen(id); }} />}
+      {creating && <NewOrderModal api={api} orgSlug={orgSlug} getToken={getToken} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); setOpen(id); }} />}
       {open && <OrderDetailModal api={api} orgSlug={orgSlug} orderId={open} onClose={() => setOpen(null)} />}
       {settingsOpen && <SalesSettingsModal api={api} onClose={() => setSettingsOpen(false)} />}
       {customersOpen && <CustomersModal api={api} initialEditing={customerInPath} onClose={() => setCustomersOpen(false)} />}
@@ -294,22 +295,37 @@ function OrderCard({ order, onOpen, onDelete }: { order: SalesOrder; onOpen: () 
   );
 }
 
-export function NewOrderModal({ api, orgSlug, onClose, onCreated }: { api: SalesApi; orgSlug: string; onClose: () => void; onCreated: (id: string) => void }) {
+export function NewOrderModal({ api, orgSlug, onClose, onCreated, getToken }: { api: SalesApi; orgSlug: string; onClose: () => void; onCreated: (id: string) => void; getToken?: () => string | null }) {
   const toast = useToast();
   const qc = useQueryClient();
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
+  // What was typed before a reload or a stray close comes back, per workspace
+  // and person, until the order is made (#4115, useCreateDraft).
+  const draft = useCreateDraft({
+    form: "sales:new-order",
+    slug: orgSlug,
+    token: getToken?.() ?? null,
+    values: { customerId, customerName, orderNumber },
+    empty: { customerId: null, customerName: "", orderNumber: "" },
+    restore: (v) => {
+      setCustomerId(typeof v.customerId === "string" ? v.customerId : null);
+      setCustomerName(String(v.customerName ?? ""));
+      setOrderNumber(String(v.orderNumber ?? ""));
+    },
+  });
 
   const create = useMutation({
     mutationFn: () => api.createOrder({ customer_id: customerId, customer_name: customerName.trim() || null, order_number: orderNumber.trim() || null }),
-    onSuccess: (o) => { toast.success("Order created"); void qc.invalidateQueries({ queryKey: ["sales-orders", orgSlug] }); onCreated(o.id); },
+    onSuccess: (o) => { draft.clear(); toast.success("Order created"); void qc.invalidateQueries({ queryKey: ["sales-orders", orgSlug] }); onCreated(o.id); },
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
 
   return (
     <RecordFormModal open onClose={onClose} title="New sales order">
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
+        <CreateDraftNote draft={draft} />
         <FieldPack items={[
           {
             need: fieldNeed("customer", { control: "picker", label: "Customer" }),
@@ -469,12 +485,15 @@ export function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: Sale
     <RecordFormModal open onClose={onClose} title={[d?.order_number, d?.customer_name].filter(Boolean).join(" · ") || "Sales order"}>
       <div className="space-y-4">
         {detail.isLoading && <div className="text-sm text-muted">Loading…</div>}
+        {detail.isError && (isRecordGone(detail.error)
+          ? <RecordGone slug={orgSlug} getToken={api.getToken} kind="sales:order" id={orderId} noun="order" kept={!!d} />
+          : <p role="alert" className="text-sm text-ember-600 dark:text-ember-400">This order could not be read: {(detail.error as Error).message}</p>)}
         {d && (
           <>
             {/* Laid out by the platform's packer, as every record form is: a
                 phone gets two columns where the fields fit and a row where one
                 needs it, instead of a hand grid squeezing the customer picker. */}
-            {d.source_ref && <p className="text-xs text-muted break-words">Source: {d.source_name}, order {d.source_ref}{d.source_url && /^https?:\/\//.test(d.source_url) && <> · <a href={d.source_url} target="_blank" rel="noopener noreferrer" className="underline">Open source order</a></>}</p>}
+            {d.source_ref && <p className="text-xs text-muted break-words">Source: {d.source_name}, order {d.source_ref}{d.source_url && /^https?:\/\//.test(d.source_url) && <> · <a href={safeHref(d.source_url)} target="_blank" rel="noopener noreferrer" className="underline">Open source order</a></>}</p>}
             {d.metadata?.order_email && typeof d.metadata.order_email === "object" && "text" in d.metadata.order_email && <section aria-label="Original order email" className="rounded border border-line p-3 space-y-2">
               <h3 className="font-medium">Original order email</h3>
               <p className="text-sm break-words">{String((d.metadata.order_email as Record<string, unknown>).subject || "")}</p>
@@ -994,7 +1013,7 @@ export function ShipDialog({ api, orderId, onClose, onShipped }: { api: SalesApi
           <div className="text-xs text-muted flex flex-wrap items-center gap-2">
             <span>Carrier: <span className="text-content dark:text-mortar-100">{p.carrier}</span></span>
             {p.lookup && (
-              <a href={p.lookup.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+              <a href={safeHref(p.lookup.url)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
                 {p.lookup.isCarrier ? `Track on ${p.lookup.via}` : `Look it up on ${p.lookup.via}`} <ExternalLink size={12} aria-hidden />
               </a>
             )}
@@ -1137,6 +1156,7 @@ export function AddLineRow({ api, currency, onAdd }: { api: SalesApi; currency: 
   const saving = useRef(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // search-not-kept: a line's product picker inside an order, not the list's search.
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<PartOption | null>(null);
   const [desc, setDesc] = useState("");

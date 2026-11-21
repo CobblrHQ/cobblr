@@ -4,7 +4,7 @@
 // fields. You tap-select one or more record types; that selection drives BOTH
 // the code shown below and the scope of the token it mints (records:<target>:
 // <action> + provenance) via the existing token surface.
-import { productName } from "@cobblr/platform-web";
+import { productName, NumberInput } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -14,6 +14,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useLater, downloadBlob, useToast, usePageTitle, SearchInput, SegmentedChoice } from "@cobblr/platform-web";
 import { api, type PlatformEntityKind } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 type Lang = "curl" | "python" | "node" | "ts";
 type Action = "create" | "write" | "readwrite";
@@ -390,7 +391,7 @@ export function ApiRecipesPage() {
             <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
               {([["category", "Categories", (k: PlatformEntityKind) => isInstanceKind(k)], ["module", "Modules", (k: PlatformEntityKind) => !isInstanceKind(k)]] as const).map(([famKey, famLabel, pred]) => {
                 const q = kindFilter.trim().toLowerCase();
-                const group = kinds.filter((k) => pred(k) && `${kindLabel(k)} ${k.display_name}`.toLowerCase().includes(q));
+                const group = kinds.filter((k) => pred(k) && textHas(`${kindLabel(k)} ${k.display_name}`, q));
                 if (group.length === 0) return null;
                 return (
                   <div key={famKey}>
@@ -431,8 +432,7 @@ export function ApiRecipesPage() {
                 ))}
                 {wizExp === "custom" && (
                   <span className="inline-flex items-center gap-1.5">
-                    <input aria-label="Days"
-                      type="number"
+                    <NumberInput aria-label="Days"
                       min="1"
                       value={customDays}
                       onChange={(e) => setCustomDays(e.target.value)}

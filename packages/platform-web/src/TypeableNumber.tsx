@@ -11,6 +11,8 @@
 // going back to its value, rather than reading a different number.
 
 import { useRef, useState, type KeyboardEvent } from "react";
+import { readLocaleNumber } from "@cobblr/platform-contract/locale-number";
+import { typingLocale } from "./NumberField";
 
 /** A whole number from what was typed, or null. A leading minus (hyphen, minus
  *  sign or en dash) is the sign only when negatives are allowed. A fraction
@@ -25,7 +27,15 @@ export function readWhole(text: string, allowNegative: boolean): number | null {
  *  more digits. Anything else is null; nothing is stripped to make it fit. */
 export function readTypedNumber(text: string, o: { allowNegative: boolean; decimal: boolean }): number | null {
   const t = text.trim().replace(/[−–]/g, "-").replace(/\s+/g, "");
-  const m = t.match(o.decimal ? /^([+-]?)(\d*)(?:[.,](\d+))?$/ : /^([+-]?)(\d+)$/);
+  if (o.decimal) {
+    // A decimal is read the way the person's locale writes it: "1.500" on a
+    // German phone is fifteen hundred, never one and a half (#4115).
+    const signless = t.replace(/^\+/, "");
+    const n = readLocaleNumber(signless.startsWith(".") || signless.startsWith(",") || signless.startsWith("-.") || signless.startsWith("-,") ? signless.replace(/^(-?)/, "$10") : signless, typingLocale()).value;
+    if (n === null || (n < 0 && !o.allowNegative)) return null;
+    return n;
+  }
+  const m = t.match(/^([+-]?)(\d+)$/);
   if (!m || !(m[2] || m[3])) return null;
   if (m[1] === "-" && !o.allowNegative) return null;
   const n = Number(`${m[2] || "0"}${m[3] ? `.${m[3]}` : ""}`);

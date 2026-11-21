@@ -41,6 +41,7 @@ import { applyPersonName, withPersonName } from "../../services/user-name.js";
 import { extractLocation, type LocationLite } from "../../services/note-location.js";
 import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 import { INTERNAL_API, RecordRef, agentFieldsFor, destinationTablesFor, liveTablesFor, paperworkHttp, served } from "./shared.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const intakeRouter = Router({ mergeParams: true });
 
@@ -50,7 +51,7 @@ const ScanBody = z.object({
   purpose: z.enum(SCAN_PURPOSES).default("arrival"),
   barcode: optionalField(z.string().min(4).max(64)),
   source_kind: z.enum(["barcode", "photo", "url", "receipt"]).default("barcode"),
-  source_url: optionalField(z.string().url().max(2000)),
+  source_url: optionalField(webLink().max(2000)),
   /** The product's title as the person shared or pasted it with the link
    *  (parseSharedText, @cobblr/platform-contract/shared-text). Kept as the
    *  item's name, before and after enrichment: a shop page that blocks us
@@ -547,7 +548,7 @@ const AssistantBody = z.object({
    *  the row's code, as a typed one is; anything else is kept as a note. */
   identifier: optionalField(z.string().trim().min(1).max(200)),
   /** A page about it, for the agent that found one. */
-  url: optionalField(z.string().url().max(2000)),
+  url: optionalField(webLink().max(2000)),
   /** A photo uploaded first through core-files. */
   image_file_id: optionalUuid(),
   /** Where it is, in words ("in the garage") or as a place's id. */

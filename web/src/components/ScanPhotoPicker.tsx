@@ -20,7 +20,7 @@
 // its id back, so the page can open the inbox with exactly those photos in
 // view.
 
-import { forwardRef, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePasteImage, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
@@ -28,7 +28,9 @@ import { resolveSessionBatch } from "../lib/scanSession";
 import { classifyFiles } from "../pages/omniIntake";
 import { UploadKindSheet } from "./UploadKindSheet";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
-import { addPending, dropPending, expirePending, openPendingDoor, pulseRow, updatePending, wasTakenBack } from "../lib/pendingPictures";
+import { addKeptPicture, addPending, dropPending, expirePending, openPendingDoor, pulseRow, setPictureRetry, updatePending, wasTakenBack } from "../lib/pendingPictures";
+import { captureKeys, captureScanBody, pickedCapture, type Capture } from "../lib/scanCapture";
+import { forgetShot, keepShot, keptShots } from "../lib/keptShots";
 import { KEEP_AS_PURCHASE_SENTENCE, useKeepAsPurchase } from "../pages/KeepAsPurchase";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { decodeBarcodeImage } from "../lib/decode-barcode-image";
@@ -125,6 +127,106 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
   const invalidate = () => void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
   const keepAsPurchase = useKeepAsPurchase(slug);
 
+  // One picture, from the moment it is chosen until it is in the inbox: a
+  // capture (lib/scanCapture.ts) whose writes carry its own keys, so a try
+  // after a lost answer is the same write and the server answers it from the
+  // first (#9678). A try that fails keeps the capture on this device, where
+  // its card offers it again after a reload (lib/keptShots.ts).
+  async function sendPicture(capture: Capture, key: string): Promise<"added" | "receipt" | "gone"> {
+    const keys = captureKeys(capture);
+    try {
+      const signal = openPendingDoor(key, () => void uploadPhotos([capture.file]));
+      setPictureRetry(key, () => void tryAgain(capture, key));
+      if (!capture.fileId) capture.fileId = (await api.uploadFile(slug, capture.file, { signal, idempotencyKey: keys.upload })).id;
+      const fileId = capture.fileId;
+      // Taken back as the upload finished: nothing was made from it (#9271).
+      if (wasTakenBack(key)) {
+        void forgetShot(capture.id);
+        void api.takeBackScanPicture(slug, { file_id: fileId }).catch(() => {});
+        return "gone";
+      }
+      updatePending(slug, key, { stage: "reading", fileId });
+      // A code in the picture says what it is, for free and with no AI:
+      // read it the way the camera does, and scan that code with the
+      // picture kept as the scan's photo (#8877). A picture with no code
+      // in it, or one the decoder cannot open, is a photo as before. Read
+      // once: a retry sends the scan the first try sent.
+      if (capture.code === undefined) capture.code = await decodeBarcodeImage(capture.file).catch(() => null);
+      if (wasTakenBack(key)) {
+        void forgetShot(capture.id);
+        return "gone";
+      }
+      const scanned = await api.scanBarcode(slug, captureScanBody({ ...capture, fileId }), { idempotencyKey: keys.scan });
+      void forgetShot(capture.id);
+      // Its answer came after the X: the row goes the way a discard goes, and
+      // nothing here says it was added (#9271).
+      if (wasTakenBack(key)) {
+        if (!scanned.duplicate_of_recent) void api.takeBackScanPicture(slug, { item_id: scanned.id }).then(invalidate).catch(() => {});
+        return "gone";
+      }
+      if (scanned.duplicate_of_recent) {
+        // The same picture was added a moment ago: one item, not two.
+        dropPending(slug, key);
+        pulseRow(scanned.id);
+        toast.action("Already added just now.", {
+          actionLabel: "Add another copy",
+          duration: 10000,
+          onAction: () => {
+            void api
+              .scanBarcode(slug, { source_kind: "photo", image_file_id: fileId, scan_batch_id: capture.batchId ?? undefined, allow_duplicate: true })
+              .then(() => invalidate())
+              .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+          },
+        });
+        return "gone";
+      }
+      updatePending(slug, key, { rowId: scanned.id });
+      expirePending(slug, key, 30_000);
+      // Reveal each as it lands, so a long selection fills in progressively.
+      invalidate();
+      return (scanned.suggested_metadata as { reading_receipt?: boolean } | null)?.reading_receipt ? "receipt" : "added";
+    } catch (e) {
+      if (wasTakenBack(key)) {
+        void forgetShot(capture.id);
+        return "gone";
+      }
+      // A personal document is not a failure: the upload door already
+      // opened its card on the personal path (sendUpload), so the picture
+      // just leaves the inbox, with no error beside the card that read it.
+      if (isPersonalDocument(e)) {
+        void forgetShot(capture.id);
+        dropPending(slug, key);
+        return "gone";
+      }
+      // What the try settled is kept with it, so the next try sends the same.
+      void keepShot(slug, capture);
+      updatePending(slug, key, { stage: "failed" });
+      toast.error(`${capture.file.name}: ${e instanceof ApiError ? e.message : String(e)}`);
+      throw e;
+    }
+  }
+
+  async function tryAgain(capture: Capture, key: string) {
+    updatePending(slug, key, { stage: "uploading" });
+    await sendPicture(capture, key).catch(() => {});
+  }
+
+  // Pictures whose save failed before this page was loaded: back as their
+  // failed cards, each with its retry (#9678).
+  useEffect(() => {
+    let live = true;
+    void keptShots(slug, "desk").then((kept) => {
+      if (!live) return;
+      for (const { capture } of kept) {
+        const key = addKeptPicture(slug, { file: capture.file, captureId: capture.id });
+        if (key) setPictureRetry(key, () => void tryAgain(capture, key));
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [slug]);
+
   async function uploadPhotos(files: File[]) {
     if (files.length === 0) return;
     const multi = files.length > 1;
@@ -133,9 +235,10 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
     let ok = 0;
     let receipts = 0;
     let sessionBatch: string | null = null;
+    const captures = files.map((f) => pickedCapture(f));
     // On screen before the upload is, with its stage (#3852): a picture that
     // shows nothing for a few seconds gets pasted again.
-    const keys = addPending(slug, files);
+    const keys = addPending(slug, captures.map((c) => ({ file: c.file, captureId: c.id })));
     try {
       // One session for the whole selection, resolved ONCE up front, so N
       // photos never scatter into N sessions or race to mint N batches.
@@ -152,69 +255,11 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
               Date.now(),
               "inbox",
             )));
-      for (const [i, file] of files.entries()) {
-        const key = keys[i]!;
-        try {
-          const signal = openPendingDoor(key, () => void uploadPhotos([file]));
-          const rec = await api.uploadFile(slug, file, { signal });
-          // Taken back as the upload finished: nothing was made from it (#9271).
-          if (wasTakenBack(key)) {
-            void api.takeBackScanPicture(slug, { file_id: rec.id }).catch(() => {});
-            continue;
-          }
-          updatePending(slug, key, { stage: "reading", fileId: rec.id });
-          // A code in the picture says what it is, for free and with no AI:
-          // read it the way the camera does, and scan that code with the
-          // picture kept as the scan's photo (#8877). A picture with no code
-          // in it, or one the decoder cannot open, is a photo as before.
-          const code = await decodeBarcodeImage(file).catch(() => null);
-          if (wasTakenBack(key)) continue;
-          const scanned = await api.scanBarcode(
-            slug,
-            code
-              ? { barcode: code, source_kind: "barcode", image_file_id: rec.id, scan_batch_id: sessionBatch ?? undefined }
-              : { source_kind: "photo", image_file_id: rec.id, scan_batch_id: sessionBatch ?? undefined },
-          );
-          // Its answer came after the X: the row goes the way a discard goes, and
-          // nothing here says it was added (#9271).
-          if (wasTakenBack(key)) {
-            if (!scanned.duplicate_of_recent) void api.takeBackScanPicture(slug, { item_id: scanned.id }).then(invalidate).catch(() => {});
-            continue;
-          }
-          if (scanned.duplicate_of_recent) {
-            // The same picture was added a moment ago: one item, not two.
-            dropPending(slug, key);
-            pulseRow(scanned.id);
-            toast.action("Already added just now.", {
-              actionLabel: "Add another copy",
-              duration: 10000,
-              onAction: () => {
-                void api
-                  .scanBarcode(slug, { source_kind: "photo", image_file_id: rec.id, scan_batch_id: sessionBatch ?? undefined, allow_duplicate: true })
-                  .then(() => invalidate())
-                  .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
-              },
-            });
-            continue;
-          }
-          updatePending(slug, key, { rowId: scanned.id });
-          expirePending(slug, key, 30_000);
-          ok++;
-          if ((scanned.suggested_metadata as { reading_receipt?: boolean } | null)?.reading_receipt) receipts++;
-          // Reveal each as it lands, so a long selection fills in progressively.
-          invalidate();
-        } catch (e) {
-          if (wasTakenBack(key)) continue;
-          // A personal document is not a failure: the upload door already
-          // opened its card on the personal path (sendUpload), so the picture
-          // just leaves the inbox, with no error beside the card that read it.
-          if (isPersonalDocument(e)) {
-            dropPending(slug, key);
-            continue;
-          }
-          updatePending(slug, key, { stage: "failed" });
-          toast.error(`${file.name}: ${e instanceof ApiError ? e.message : String(e)}`);
-        }
+      for (const [i, capture] of captures.entries()) {
+        capture.batchId = sessionBatch;
+        const sent = await sendPicture(capture, keys[i]!).catch(() => null);
+        if (sent === "added" || sent === "receipt") ok++;
+        if (sent === "receipt") receipts++;
         if (multi) setUploadProgress({ done: ok, total: files.length });
       }
       // Only a workspace that has said it cannot look at an image is told so;

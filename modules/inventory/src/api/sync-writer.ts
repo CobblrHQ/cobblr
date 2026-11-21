@@ -20,6 +20,7 @@
 
 import { stockUnitRefusal } from "../stock-unit.js";
 import { ActionRefusal, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
+import { storedPicture } from "@cobblr/platform-contract/image-reference";
 import { sql, type Kysely } from "kysely";
 import type { InventoryDB } from "../db.js";
 import { adoptAxisValuesInto } from "./adopt-axis-values.js";
@@ -171,7 +172,7 @@ function nativeValues(fields: Record<string, unknown>): Record<string, unknown> 
   if (has("min_qty")) v.min_qty = asNum(fields.min_qty);
   if (has("manufacturer")) v.manufacturer = asStr(fields.manufacturer);
   if (has("supplier_url")) v.supplier_url = asStr(fields.supplier_url);
-  if (has("image_path")) v.image_path = asStr(fields.image_path);
+  if (has("image_path")) v.image_path = storedPicture(fields.image_path);
   if (has("notes")) v.notes = asStr(fields.notes);
   if (has("serial_number")) v.serial_number = asStr(fields.serial_number);
   if (has("model_number")) v.model_number = asStr(fields.model_number);

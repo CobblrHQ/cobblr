@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SearchInput, SecretInput, useToast, WorkspaceLink } from "@cobblr/platform-web";
+import { SearchInput, SecretInput, useToast, WorkspaceLink, NumberInput } from "@cobblr/platform-web";
 import type { DeviceConnectionPublic } from "@cobblr/platform-contract";
 import { api, type SearchHit } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -102,7 +102,7 @@ function EntityAction({ slug, connection, entity }: { slug: string; connection: 
   const command = entity.split("-")[0]!;
   const run = useMutation({ mutationFn: (state?: boolean) => api.esphomeCommand(slug, String(connection.config.service_connection || ""), { command, entity, ...(command === "switch" ? { state } : command === "number" ? { value: Number(value) } : command === "select" ? { option: value } : {}) }), onSuccess: result => setJob(result.id), onError: e => toast.error(e.message) });
   return <div className="space-y-2">
-    {["number", "select"].includes(command) && <label className="block text-sm">{command === "number" ? "Value" : "Option"}<input className={field} value={value} type={command === "number" ? "number" : "text"} onChange={e => setValue(e.target.value)} /></label>}
+    {["number", "select"].includes(command) && <label className="block text-sm">{command === "number" ? "Value" : "Option"}<NumberInput className={field} value={value} type={command === "number" ? "number" : "text"} onChange={e => setValue(e.target.value)} /></label>}
     {command === "switch" ? <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={run.isPending} onClick={() => run.mutate(true)}>Turn on</button><button type="button" className={button} disabled={run.isPending} onClick={() => run.mutate(false)}>Turn off</button></div> : <button type="button" className={button} disabled={run.isPending || (["number", "select"].includes(command) && !value)} onClick={() => run.mutate(undefined)}>{command === "button" ? "Press button" : "Set value"}</button>}
     {job && <ServiceJobCard slug={slug} jobId={job} capability="device.esphome.command" />}
   </div>;

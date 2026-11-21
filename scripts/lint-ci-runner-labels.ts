@@ -91,6 +91,12 @@ const B550_LABELS = new Set(["ci-test", "bake-b550", "ci-walk", "ci-long", "nigh
 // 2048) from its let-in, so a 7-s gate job there cost 6144 MB; [light] moved to the same never-paused runner. The labels
 // that runner serves are listed here; server-setup's a6-admission test keeps them off every runner with a socket.
 const NO_DOCKER_LABELS = new Set(["ubuntu-latest", "light"]);
+// DOCKER-BUILD IS FOR A JOB THAT RUNS DOCKER (2026-11-21, the coordinator, #9731). docker-build's A6 runner, org-a6, is
+// booked at its build reserve (6144 MB) from its let-in, so a job there waits for a turn that big. embed-bridge's embed
+// (node and forge calls, peak ~512 MB) waited 07:37->16:51Z, and 20:04->21:xxZ again, for room it never used, while
+// [light]'s never-paused runner would have run it at once. A job on docker-build runs docker, or says on the line why it
+// must be there: # docker-build-ok: <why>.
+const DOCKER_ONLY_LABELS = new Set(["docker-build"]);
 const USES_DOCKER = /\bdocker(?:\s+compose|-compose|\s+(?:build|buildx|run|pull|login|exec|create|start|load))\b/;
 
 // A SCHEDULED RUN NEVER TAKES A FAST LANE'S RUNNER (#6226, 2026-10-25): at 07:15Z ci-impact's shard test-4 took z87's one
@@ -224,6 +230,9 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     if (NO_DOCKER_LABELS.has(label)) {
       const what = USES_DOCKER.exec(jobBody(src.split("\n"), i))?.[0];
       if (what) errors.push(`.forgejo/workflows/${f}:${i + 1} runs on "${label}" and the job runs docker (${what}): that label's never-paused A6 runner gives its jobs no docker socket, since a build or container started there sits outside every cap. Use \`runs-on: docker-build\`, whose runner the gate charges for it.`);
+    }
+    if (DOCKER_ONLY_LABELS.has(label) && !/# docker-build-ok: \S/.test(line) && !USES_DOCKER.test(jobBody(src.split("\n"), i))) {
+      errors.push(`.forgejo/workflows/${f}:${i + 1} runs on "${label}" but the job runs no docker: that label's runner is booked at its build reserve (6144 MB), so the job waits for a turn that big for room it never uses (embed-bridge waited 9 h, 2026-11-21). Use \`runs-on: light\` (never paused, charged only while it runs), or say why on the line: # docker-build-ok: <why>.`);
     }
     const inLane = RELEASE_LANE_WORKFLOWS.includes(f);
     if (label === "release" && !inLane) {

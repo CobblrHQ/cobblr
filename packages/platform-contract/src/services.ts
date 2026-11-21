@@ -17,6 +17,7 @@
 import { z } from "zod";
 import type { LibraryAdapterMetadata } from "./library.js";
 import type { ConnectionTestOutcome } from "./connection-verification.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 // ── Words ───────────────────────────────────────────────────────────────
 
@@ -219,7 +220,7 @@ export const ServiceManifestSchema = z.object({
   name: z.string().min(1).max(80),
   version: z.string().min(1).max(40),
   publisher: z.string().max(120).optional(),
-  docs_url: z.string().url().optional(),
+  docs_url: webLink().optional(),
   auth: z.object({ schemes: z.array(z.string().min(1)).min(1) }),
   api: z.object({ base_path: z.string().startsWith("/") }),
   limits: z.object({ max_file_mb: z.number().positive().optional(), max_concurrent_jobs: z.number().int().positive().optional() }).optional(),

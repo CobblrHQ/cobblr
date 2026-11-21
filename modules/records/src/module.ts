@@ -8,7 +8,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "records",
-  version: "0.1.7",
+  version: "0.1.8",
   displayName: "Records",
   description:
     "A blank collection that you give its own fields: a bookshelf, a movie list, a recipe box.",
@@ -75,4 +75,10 @@ export default defineModule({
   },
 
   subscribes: [],
+  lifecycle: {
+    onBoot: async () => {
+      const { registerRecordsNonPicturesCount } = await import("./count-non-pictures.js");
+      registerRecordsNonPicturesCount();
+    },
+  },
 });

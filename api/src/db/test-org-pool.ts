@@ -25,18 +25,11 @@ import { enableModuleForOrg } from "../modules/enable.js";
 import { USER_SOURCE } from "../platform/bundle-claims.js";
 import { listEntries } from "../modules/registry.js";
 import { isDefaultModule } from "../modules/enable.js";
+import { testDoorsOpen } from "./test-doors.js";
 
-/** The pool is active only under the flag. A hard guard against ever touching
- *  this in prod (the checkout route mints tokens — it must be unreachable). */
+/** The pool is active only where the test doors are. */
 export function poolEnabled(): boolean {
-  if (!env.COBBLR_TEST_ORG_POOL) return false;
-  if (env.NODE_ENV === "production" && !env.COBBLR_ENV) {
-    // belt-and-suspenders: refuse the pool on a real prod node even if the flag
-    // leaked into the environment. (Staging/prod set COBBLR_ENV; a bare
-    // NODE_ENV=production with the flag set is a misconfig we won't honour.)
-    throw new Error("COBBLR_TEST_ORG_POOL must never be set on a production node");
-  }
-  return true;
+  return testDoorsOpen(env);
 }
 
 /** Enable every registered module for an org, in dependency-safe waves —

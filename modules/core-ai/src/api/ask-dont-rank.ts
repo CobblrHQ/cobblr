@@ -285,6 +285,29 @@ function noteOf(f: Facts | undefined): string | undefined {
 
 /** The one record a write call is aimed at, or null (a create, a workspace
  *  action, a bulk write). */
+/** Every record a write names: its one target, or the records an action
+ *  takes as a list (records:[{kind,id}], ids, entity_ids). One action over
+ *  several records is several choices, and each is judged (#4115: "note the
+ *  twin washers as checked" ran platform:set-field-on-records over both twin
+ *  washers at Auto, the person's words picking neither). */
+export function targetsOf(call: ToolCall): string[] {
+  const one = targetOf(call);
+  if (call.name !== "invoke_action") return one ? [one] : [];
+  const args = (((call.args ?? {}) as Record<string, unknown>).args ?? {}) as Record<string, unknown>;
+  const out = one ? [one] : [];
+  const take = (v: unknown) => {
+    if (typeof v === "string" && v.trim()) out.push(v.trim());
+    else if (v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string") out.push(String((v as { id: string }).id).trim());
+  };
+  for (const list of [args.records, args.ids, args.entity_ids, args.record_ids]) {
+    if (Array.isArray(list)) for (const v of list) take(v);
+  }
+  return [...new Set(out)];
+}
+
+/** "All", "both", "every", "these": the person chose the whole set. */
+const THE_WHOLE_SET = /\b(?:all|both|every|each|these|those|them all)\b/i;
+
 export function targetOf(call: ToolCall): string | null {
   const a = (call.args ?? {}) as Record<string, unknown>;
   const raw = call.name === "invoke_action" ? a.entity_id : call.name === "update_record" || call.name === "delete_record" ? a.id : null;
@@ -303,8 +326,26 @@ export function rankedNotAsked(
   searches: readonly SearchHits[],
   facts: ReadonlyMap<string, Facts> = new Map(),
 ): RankedNotAsked | null {
-  const target = targetOf(call);
-  if (!target) return null;
+  const targets = targetsOf(call);
+  if (targets.length === 0) return null;
+  if (targets.length > 1) {
+    if (THE_WHOLE_SET.test(userText)) return null;
+    for (const t of targets) {
+      const one = rankedOne(userText, call, t, searches, facts);
+      if (one) return one;
+    }
+    return null;
+  }
+  return rankedOne(userText, call, targets[0]!, searches, facts);
+}
+
+function rankedOne(
+  userText: string,
+  call: ToolCall,
+  target: string,
+  searches: readonly SearchHits[],
+  facts: ReadonlyMap<string, Facts>,
+): RankedNotAsked | null {
   const key = target.toLowerCase();
   const found = [...searches].reverse().find((s) => s.hits.some((h) => h.id.toLowerCase() === key));
   if (!found) return null;

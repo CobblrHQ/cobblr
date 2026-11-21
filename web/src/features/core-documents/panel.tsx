@@ -18,6 +18,7 @@ import { Link } from "react-router-dom";
 import { SearchInput, relativeTime, useConfirm, useToast, type EntityDetailPanelCtx } from "@cobblr/platform-web";
 import { api, fetchAuthBlobUrl, type DocumentFindSystem, type DocumentRow, type RecordDocuments } from "../../lib/api";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 const key = (slug: string, kind: string, id: string) => ["record-documents", slug, kind, id];
 /** How often an open record looks again for items a library pushed. */
@@ -435,7 +436,7 @@ function DocumentLine({ slug, doc, dashed = false, children }: { slug: string; d
       </div>
       <div className="ml-auto flex min-w-0 flex-wrap items-center gap-x-3">
         {doc.open_url && (
-          <a href={doc.open_url} target="_blank" rel="noreferrer" className="text-xs text-accent min-h-8 inline-flex items-center">
+          <a href={safeHref(doc.open_url)} target="_blank" rel="noreferrer" className="text-xs text-accent min-h-8 inline-flex items-center">
             {doc.open_label || "Open"}
           </a>
         )}

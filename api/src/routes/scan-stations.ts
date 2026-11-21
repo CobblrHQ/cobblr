@@ -5,6 +5,7 @@ import { withTenant } from "../middleware/tenant.js";
 import { stationStore } from "../platform/scan-station-store.js";
 import { acknowledgeStationCommand, stationCommand, withStation, type StationCaller } from "../platform/scan-stations.js";
 import { StationRefusal } from "../platform/scan-station-engine.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const scanStationsRouter = Router({ mergeParams: true });
 scanStationsRouter.use("/:slug/scan-stations", requireAuth, withTenant);
@@ -62,7 +63,7 @@ scanStationsRouter.post("/:slug/scan-stations/:id/commands/ack", wrap(async (req
 // AI-REACH: the NFC tag page queues the next physical tap
 // UI-SCREEN: /labels/nfc
 scanStationsRouter.post("/:slug/scan-stations/:id/commands", wrap(async (req) => {
-  const b = z.object({ type: z.enum(["write", "link"]), url: z.string().url().max(500) }).parse(req.body);
+  const b = z.object({ type: z.enum(["write", "link"]), url: webLink().max(500) }).parse(req.body);
   return stationCommand(caller(req), id(req), b.type, b.url);
 }));
 // AI-REACH: the tag page cancels the physical tap waiting on the reader

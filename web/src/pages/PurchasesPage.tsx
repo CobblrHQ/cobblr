@@ -1,5 +1,5 @@
 import { lineFigures, lineAmount } from "./purchase-line-figures";
-import { useRecordAsOpened, SelectBox, OnceQuiet, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout, useRecordEdits, editOf, undoStepsOf, useRunIssuedUndo } from "@cobblr/platform-web";
+import { useRecordAsOpened, SelectBox, OnceQuiet, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout, useRecordEdits, editOf, undoStepsOf, useRunIssuedUndo, CreateDraftNote, useCreateDraft, useListSearch } from "@cobblr/platform-web";
 import { formatUnitPrice } from "@cobblr/platform-contract/money";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
@@ -13,7 +13,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Receipt, Store, Trash2 } from "lucide-react";
-import { ApiError, api, type Order, type OrderItem, type OrderSummary, type VendorSummary } from "../lib/api";
+import { ApiError, api, type Order, type OrderItem, type OrderSummary, type VendorSummary, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { formatStoredMoney, linesTotalLabel, fieldCurrency } from "@cobblr/platform-contract/money";
@@ -32,6 +32,8 @@ import { OrderReturns } from "./OrderReturns";
 import { AddOrderLine, AddToStockChoice, AddTrackingSheet, OrderLineControls } from "./OrderLines";
 import { OrderPageStatus } from "../features/purchases/orderPageStatus";
 import { dayLabel } from "@cobblr/platform-contract/day";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 function fmtOrderDate(d: string | null): string | null {
   if (!d) return null;
@@ -208,10 +210,14 @@ export function PurchasesPage() {
   const closeOrder = useCloseToOrigin("/purchases");
   const { id, vendorId } = useParams<{ id?: string; vendorId?: string }>();
 
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"" | Order["status"]>("");
+  // Kept with this page in the history, so Back from a record finds the list as it was left (#4115, useListSearch).
+  const [query, setQuery] = useListSearch("q");
+  const [statusParam, setStatusParam] = useListSearch("status");
+  const statusFilter = statusParam as "" | Order["status"];
+  const setStatusFilter = (s: "" | Order["status"]) => setStatusParam(s);
   // The search goes to the server, so it finds an order that is not on the
   // first page; typed a moment before it is asked.
+  // search-not-kept: the debounced copy of the search kept with the page (q) above.
   const [search, setSearch] = useState("");
   useEffect(() => {
     const t = setTimeout(() => setSearch(query.trim()), 250);
@@ -847,7 +853,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               !fp.hidden("url") ? editFieldItem("url", { label: fp.label("url", "URL"), value: o.url ?? "", type: "url", onCommit: (v) => update.mutate({ url: v || null }) }) : null,
               !fp.hidden("total_cost") ? moneyFieldItem("total_cost", { label: fp.label("total_cost", "Total cost"), value: o.total_cost, storage: "amount", currency: o.currency, onCurrencyChange: (currency) => update.mutate({ metadata: { currency } }), onCommit: (v) => update.mutate({ total_cost: v == null ? null : String(v), metadata: { currency: o.currency } }) }) : null,
               !fp.hidden("shipping_cost") ? moneyFieldItem("shipping_cost", { label: fp.label("shipping_cost", "Shipping cost"), value: o.shipping_cost, storage: "amount", currency: o.currency, onCurrencyChange: (currency) => update.mutate({ metadata: { currency } }), onCommit: (v) => update.mutate({ shipping_cost: v == null ? null : String(v), metadata: { currency: o.currency } }) }) : null,
-              editFieldItem("notes", { label: "Notes", value: o.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) }),
+              editFieldItem("notes", { label: "Notes", value: o.notes ?? "", multiline: true, maxLength: RECORD_NOTES_MAX, onCommit: (v) => update.mutate({ notes: v || null }) }),
             ]}
           />
           {/* No total stated: the order's lines are what it cost, and that is
@@ -1110,6 +1116,22 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
       setAddToStock(true);
     }
   }, [open, mainCurrency]);
+  // After the reset above, so what was typed before a reload or a stray close
+  // comes back over it, per workspace and person, until the order is made (#4115).
+  const draft = useCreateDraft({
+    form: "purchases:new-order",
+    slug: activeSlug,
+    token: getToken(),
+    open,
+    values: { vendorName, orderNumber, status, currency },
+    empty: { vendorName: "", orderNumber: "", status: "ordered", currency: mainCurrency },
+    restore: (v) => {
+      setVendorName(String(v.vendorName ?? ""));
+      setOrderNumber(String(v.orderNumber ?? ""));
+      setStatus((v.status as Order["status"]) || "ordered");
+      setCurrency(String(v.currency || mainCurrency));
+    },
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -1122,6 +1144,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
         metadata: { currency },
       }),
     onSuccess: (o) => {
+      draft.clear();
       toast.success("Order created.");
       void qc.invalidateQueries({ queryKey: ["orders", activeSlug] });
       onClose();
@@ -1138,6 +1161,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
   return (
     <RecordFormModal open={open} onClose={onClose} title="New order">
       <form onSubmit={submit} className="space-y-3">
+        <CreateDraftNote draft={draft} />
         <FieldPack items={[
           {
             need: fieldNeed("vendor", { control: "picker", label: "Vendor" }),
@@ -1332,7 +1356,7 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
                     </div>
                   </div>
                   {v.website && (
-                    <a href={v.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-accent hover:underline shrink-0">site ↗</a>
+                    <a href={safeHref(v.website)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-accent hover:underline shrink-0">site ↗</a>
                   )}
                   <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(v.id); }} className="text-xs text-muted hover:text-accent shrink-0">Edit</button>
                   {mayDelete && <button disabled={remove.isPending} title="Delete vendor"
@@ -1431,7 +1455,7 @@ function VendorDetailPane({
             <div className="min-w-0">
               <div className="text-lg font-bold text-content dark:text-mortar-100 truncate">{v.name}</div>
               {v.website && (
-                <a href={v.website} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">
+                <a href={safeHref(v.website)} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">
                   {v.website.replace(/^https?:\/\//, "")} ↗
                 </a>
               )}

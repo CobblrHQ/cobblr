@@ -42,6 +42,7 @@ import type { DigifabDB } from "../db.js";
 import { readCachedList, readCachedInfo, refreshList, ensureInfo, ensureWarming } from "../printer-file-cache.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 import { fetchDevicesCached, withTimeout } from "./fleet-device-cache.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const fleetRouter = Router({ mergeParams: true });
 
@@ -543,7 +544,7 @@ fleetRouter.put(
   }),
 );
 
-const CameraBody = z.object({ camera_url: z.string().url().max(1000).nullable() });
+const CameraBody = z.object({ camera_url: webLink().max(1000).nullable() });
 // AI-REACH: exempt — an address the server then fetches camera frames from;
 // a chat must never point the server at hosts on someone's network
 fleetRouter.post(

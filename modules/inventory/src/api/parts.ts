@@ -38,7 +38,9 @@ import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor, openUni
 import { consumptionUnitOf } from "../consumption-unit.js";
 import { attachHoldings, holdingsCtx, liftHoldingsToCards, releaseForDelete, spreadIdentity } from "./holdings.js";
 import { annotateInstalled } from "./installed.js";
-import { PART_NAME_MAX } from "../part-limits.js";
+import { PART_NAME_MAX, PART_WARRANTY_DETAILS_MAX } from "../part-limits.js";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const partsRouter = Router({ mergeParams: true });
 
@@ -175,9 +177,9 @@ export const PartCreate = z.object({
   cost: z.number().nonnegative().nullable().optional(),
   min_qty: z.number().nonnegative().nullable().optional(),
   manufacturer: z.string().max(120).nullable().optional(),
-  supplier_url: z.string().url().max(500).nullable().optional(),
+  supplier_url: webLink().max(500).nullable().optional(),
   image_path: imagePathField().nullable().optional(),
-  notes: z.string().max(8_000).nullable().optional(),
+  notes: z.string().max(RECORD_NOTES_MAX).nullable().optional(),
   state: z.enum(["active", "draft", "needs_review"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   metadata: z.record(z.unknown()).optional(),
   // An ESTIMATE, not a count. Setting it is what turns a record into an
@@ -191,7 +193,7 @@ export const PartCreate = z.object({
   assigned_to: z.string().max(160).nullable().optional(),
   warranty_expires: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   lifetime_warranty: z.boolean().optional(),
-  warranty_details: z.string().max(2_000).nullable().optional(),
+  warranty_details: z.string().max(PART_WARRANTY_DETAILS_MAX).nullable().optional(),
   insured: z.boolean().optional(),
   archived: z.boolean().optional(),
 });

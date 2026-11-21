@@ -17,7 +17,8 @@
 //
 // THE RULE.
 //   1. `testSupportRouter` is mounted in api/src/server.ts exactly once, on a
-//      line that also carries `env.COBBLR_TEST_ORG_POOL`, and nowhere else.
+//      line gated by `testDoorsOpen(env)` (api/src/db/test-doors.ts: the flag,
+//      and a production node carrying it refuses to boot), and nowhere else.
 //   2. The hold registry's write side (registerOutboundHold, releaseOutboundHold,
 //      forgetOutboundHold) is imported by no shipping file except
 //      api/src/routes/test-support.ts and the package's own index.ts re-export.
@@ -52,8 +53,8 @@ if (mounts.length !== 1) {
   violations.push({ file: SERVER, line: mounts[0]?.n ?? 1, what: `testSupportRouter is mounted ${mounts.length} time(s); exactly one gated mount is allowed` });
 }
 for (const m of mounts) {
-  if (!/if\s*\(\s*env\.COBBLR_TEST_ORG_POOL\s*\)/.test(m.l)) {
-    violations.push({ file: SERVER, line: m.n, what: "testSupportRouter mounted without `if (env.COBBLR_TEST_ORG_POOL)` on the same line" });
+  if (!/if\s*\(\s*testDoorsOpen\(\s*env\s*\)\s*\)/.test(m.l)) {
+    violations.push({ file: SERVER, line: m.n, what: "testSupportRouter mounted without `if (testDoorsOpen(env))` on the same line" });
   }
 }
 for (const f of sourceFiles("api/src/**/*.ts")) {
@@ -84,7 +85,7 @@ for (const f of [...sourceFiles("docker/**/*"), ...sourceFiles("docker-compose*.
 if (violations.length) {
   console.error(`lint:test-doors-gated - ${violations.length} violation(s):`);
   for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.what}`);
-  console.error("A test door lives inside routes/test-support.ts, behind server.ts's single `if (env.COBBLR_TEST_ORG_POOL)` mount. There is no opt-out.");
+  console.error("A test door lives inside routes/test-support.ts, behind server.ts's single `if (testDoorsOpen(env))` mount. There is no opt-out.");
   process.exit(1);
 }
 console.log("lint:test-doors-gated OK: the test-support router has one gated mount; the outbound hold has one door; no deployable shape sets the flag.");

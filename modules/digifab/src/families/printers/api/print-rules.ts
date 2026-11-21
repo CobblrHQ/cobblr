@@ -11,10 +11,11 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../../../db.js";
 import { asyncHandler, badBody, requireRole } from "../../../api/util.js";
 import { DEFAULT_TITLE, DEFAULT_BODY, buildParams, renderTemplate, postDiscord, fireRule, type PrintFacts, type RuleMessage, type RuleStep } from "../print-rules.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const printRulesRouter = Router({ mergeParams: true });
 
-const DISCORD_WEBHOOK = z.string().url().regex(/^https:\/\/discord(app)?\.com\/api\/webhooks\//, {
+const DISCORD_WEBHOOK = webLink().regex(/^https:\/\/discord(app)?\.com\/api\/webhooks\//, {
   message: "must be a https://discord.com/api/webhooks/... URL",
 });
 
@@ -30,7 +31,7 @@ const ChannelCreate = z
     guild_id: z.string().max(40).optional(),
     channel_id: z.string().max(40).optional(),
     brand_name: z.string().max(80).optional(),
-    brand_avatar: z.string().url().max(500).optional(),
+    brand_avatar: webLink().max(500).optional(),
   })
   .refine((d) => (d.kind === "discord_bot" ? !!(d.guild_id && d.channel_id) : !!d.webhook_url), {
     message: "discord needs webhook_url; discord_bot needs guild_id + channel_id",

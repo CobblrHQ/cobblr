@@ -13,6 +13,7 @@ import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const vendorsRouter = Router({ mergeParams: true });
 
@@ -27,7 +28,7 @@ vendorsRouter.use((req, res, next) => {
 
 const VendorCreate = z.object({
   name: z.string().min(1).max(200),
-  website: z.string().url().max(500).nullable().optional(),
+  website: webLink().max(500).nullable().optional(),
   account_number: z.string().max(160).nullable().optional(),
   contact: z.string().max(500).nullable().optional(),
   lead_time_days: z.number().int().nonnegative().max(3650).nullable().optional(),

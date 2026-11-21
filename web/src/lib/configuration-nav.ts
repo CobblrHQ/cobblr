@@ -58,6 +58,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
+import { foldForSearch } from "@cobblr/platform-contract/search-text";
 
 /** The five sections of workspace configuration. `cloud` is NOT here: it is a
  *  render-time section fed by the hosted overlay's panels, so open core never
@@ -645,9 +646,8 @@ export function destinationMatches(
   d: Pick<ConfigDestination, "label" | "description" | "keywords">,
   q: string,
 ): boolean {
-  const hay = `${d.label} ${d.description} ${(d.keywords ?? []).join(" ")}`.toLowerCase();
-  return q
-    .toLowerCase()
+  const hay = foldForSearch(`${d.label} ${d.description} ${(d.keywords ?? []).join(" ")}`);
+  return foldForSearch(q)
     .split(/\s+/)
     .filter(Boolean)
     .every((t) => hay.includes(t));

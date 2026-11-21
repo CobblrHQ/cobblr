@@ -1,4 +1,4 @@
-import { MovedUnderNote, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, MutationError, fieldNeed, useConfirm, useFieldDraft, useRecordEdits } from "@cobblr/platform-web";
+import { MovedUnderNote, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, MutationError, fieldNeed, useConfirm, useFieldDraft, useRecordEdits, RecordGone, isRecordGone, NumberInput } from "@cobblr/platform-web";
 // One task, whole: everything a task has, settable in one place. The row on a
 // project shows a line of it; this sheet is where the due date, the details,
 // the priority, the status and what it waits on are read and changed, and
@@ -120,7 +120,7 @@ function TextCommit({ value, onCommit, multiline, ...rest }: { value: string; on
 }
 
 export function TaskSheet({ taskId, onClose }: { taskId: string; onClose: () => void }) {
-  const { api, orgSlug } = useProjects();
+  const { api, orgSlug, getToken } = useProjects();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const task = useQuery({ queryKey: taskKey(taskId), queryFn: () => api.getTask(taskId) });
@@ -144,7 +144,9 @@ export function TaskSheet({ taskId, onClose }: { taskId: string; onClose: () => 
   return (
     <RecordFormModal open onClose={onClose} title={t?.title ?? "Task"} subtitle={t?.project_name ?? undefined}>
       {task.isLoading && <div className="text-xs text-faint dark:text-slate-500">loading…</div>}
-      {task.isError && <div className="text-sm text-ember-600 dark:text-ember-400">This task could not be opened. It may have been deleted.</div>}
+      {task.isError && (isRecordGone(task.error)
+        ? <RecordGone slug={orgSlug} getToken={getToken} kind="projects:task" id={taskId} noun="task" kept={!!t} />
+        : <div className="text-sm text-ember-600 dark:text-ember-400">This task could not be opened: {(task.error as Error).message}</div>)}
       {t && (
         <div className="space-y-4" data-testid="task-sheet">
           <Field label="Task">
@@ -394,8 +396,7 @@ function Repeats({ value: saved, onChange: save }: { value: Repeat | null; onCha
       {on && (
         <>
           <span>every</span>
-          <input
-            type="number"
+          <NumberInput
             min={1}
             max={365}
             aria-label="Every how many"

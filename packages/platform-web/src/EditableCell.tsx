@@ -21,6 +21,7 @@
 // - Escape always cancels without writing.
 
 import { ColourInput } from "./ColourInput";
+import { NumberInput } from "./NumberInput";
 import { useRef, useState, type KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { cellPlan, type CellPlan, type EditableCellDef } from "./cellPlan";
@@ -458,10 +459,11 @@ function TextCell({
     return raw;
   };
   return (
-    <input
+    <NumberInput
       autoFocus
       ref={(el) => {
-        if (el && mountValue.current === null) mountValue.current = el.value;
+        // A number box hands back plain text ("1.5"), whatever it shows ("1,5").
+        if (el && mountValue.current === null) mountValue.current = def.type === "number" && initial !== "" && Number.isFinite(Number(initial)) ? String(Number(initial)) : el.value;
       }}
       type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
       step={def.type === "number" ? "any" : undefined}

@@ -87,6 +87,7 @@ export function useFileIntake(opts: FileIntakeOptions) {
     if (path === "") form.set("on_duplicate", "skip");
     form.set("file", file);
     const token = o.getToken ? o.getToken() : typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_KEY) : null;
+    // photo-not-kept: files dropped from the device, still on it; the batch report names each one that failed and why.
     return sendUpload(`/api/v1/orgs/${o.orgSlug}/modules/core-files/files${path}`, form, { token, file });
   }, []);
 

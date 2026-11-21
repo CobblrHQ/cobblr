@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-11-19
 docs_target: SELF_HOSTING.md#Where your users go with a question
+docs_published: 2026-11-22
 ---
 
 Every field you save on a record's page now offers Undo, which puts back what it held before, even from another page

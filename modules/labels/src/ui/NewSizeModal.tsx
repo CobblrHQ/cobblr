@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useToast, NumberInput } from "@cobblr/platform-web";
 import { deriveGrid } from "../label-sizes";
 import type { CustomLabelSize } from "./api";
 import { useLabels } from "./context";
@@ -21,8 +21,7 @@ function NumField({ label, value, onChange, step = 0.25 }: { label: string; valu
     <label className="flex flex-col gap-1">
       <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">{label}</span>
       {/* NUMBER-INPUT-TEXT: the modal keeps the size as typed text until Save, where it parses and converts the unit. */}
-      <input
-        type="number" min={0} step={step} inputMode="decimal"
+      <NumberInput min={0} step={step} inputMode="decimal"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="input !py-1 text-sm"

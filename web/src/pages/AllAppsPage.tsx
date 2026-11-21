@@ -25,6 +25,7 @@ import { howToFindAnyApp, navWord, useSidebarPin } from "../lib/moreApps";
 import { useNavLayout } from "../lib/nav-mode";
 import { useIsDesktopWidth } from "../lib/useIsDesktopWidth";
 import { QueryError } from "../components/QueryError";
+import { foldForSearch } from "@cobblr/platform-contract/search-text";
 
 type Rest = "on" | "hidden" | "off";
 const REST: Array<{ key: Rest; title: (nav: string) => string; blurb: string }> = [
@@ -35,8 +36,8 @@ const REST: Array<{ key: Rest; title: (nav: string) => string; blurb: string }> 
 
 /** Does an app answer to what was typed: every word, in its name or what it does. */
 function matches(a: AppEntry, q: string): boolean {
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const text = `${a.label} ${a.description}`.toLowerCase();
+  const words = foldForSearch(q).split(/\s+/).filter(Boolean);
+  const text = foldForSearch(`${a.label} ${a.description}`);
   return words.every((w) => text.includes(w));
 }
 

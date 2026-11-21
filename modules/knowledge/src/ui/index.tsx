@@ -1,10 +1,10 @@
-import { RecordFormModal, editOf, QueryError } from "@cobblr/platform-web";
+import { RecordFormModal, editOf, QueryError, CreateDraftNote, useCreateDraft, RecordGone, isRecordGone } from "@cobblr/platform-web";
 // knowledge UI — the host mounts <KnowledgeUI /> at /knowledge. A list of
 // entries (bordered cards) with a create/edit MODAL that uses the shared
 // Markdown editor (KB phase 1). Modals for detail/edit, toasts for feedback,
 // useConfirm for destructive deletes — house conventions.
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ContributedDetailPanels,
@@ -25,6 +25,7 @@ import {
 } from "@cobblr/platform-web";
 import { BookOpen, Plus, Pin, PinOff, Trash2, ImagePlus, X } from "lucide-react";
 import { KnowledgeApi, type Entry, type EntryInput, KnowledgeApiError } from "./api.js";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 export const navItems = [{ label: "Knowledge Base", path: "/knowledge", icon: BookOpen }];
 
@@ -56,7 +57,13 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
     queryFn: () => api.getEntry(entryId!),
     enabled: !!entryId && !!entries.data && !listedEntry,
   });
-  const openEntry = listedEntry ?? addressed.data ?? null;
+  // An entry deleted elsewhere while it is open stays open, with what was typed,
+  // under a line that says who deleted it and the way back (#4115).
+  const goneHere = !!entryId && isRecordGone(addressed.error);
+  const lastOpen = useRef<Entry | null>(null);
+  const found = listedEntry ?? addressed.data ?? null;
+  if (found) lastOpen.current = found;
+  const openEntry = found ?? (goneHere && lastOpen.current?.id === entryId ? lastOpen.current : null);
   const editing: Entry | "new" | null = creatingNew ? "new" : openEntry;
   const setEditing = (v: Entry | "new" | null) => {
     setCreatingNew(v === "new");
@@ -85,8 +92,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
   const items = (entries.data?.items ?? []).filter((e) => {
     if (kindFilter && e.kind !== kindFilter) return false;
     if (q.trim()) {
-      const hay = `${e.title} ${e.body ?? ""} ${e.code ?? ""}`.toLowerCase();
-      if (!hay.includes(q.trim().toLowerCase())) return false;
+      if (!textHas(`${e.title} ${e.body ?? ""} ${e.code ?? ""}`, q)) return false;
     }
     return true;
   });
@@ -183,10 +189,12 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
 
       {editing && (
         <EntryEditor
+          getToken={getToken}
           key={editing === "new" ? "new" : editing.id}
           api={api}
           orgSlug={orgSlug}
           entry={editing === "new" ? null : editing}
+          gone={goneHere && editing !== "new" ? <RecordGone slug={orgSlug} getToken={getToken} kind="knowledge:entry" id={entryId!} noun="entry" /> : null}
           onClose={() => setEditing(null)}
           onChanged={() => void qc.invalidateQueries({ queryKey: key })}
           onSaved={() => {
@@ -232,16 +240,21 @@ function EntryEditor({
   api,
   entry: shown,
   orgSlug,
+  gone,
   onClose,
   onChanged,
   onSaved,
+  getToken,
 }: {
   api: KnowledgeApi;
   entry: Entry | null;
   orgSlug: string;
+  /** What to say when the entry was deleted while open. */
+  gone?: ReactNode;
   onClose: () => void;
   onChanged: () => void;
   onSaved: () => void;
+  getToken?: () => string | null;
 }) {
   const toast = useToast();
   // The entry as this form opened, held still. The list behind it refreshes (a
@@ -255,6 +268,23 @@ function EntryEditor({
   const [code, setCode] = useState(entry?.code ?? "");
   const [pinned, setPinned] = useState(entry?.pinned ?? false);
   const [body, setBody] = useState(entry?.body ?? "");
+  // A new entry's words, written before a reload or a stray close, come back
+  // per workspace and person until it is created (#4115, useCreateDraft). An
+  // entry being edited holds its own words.
+  const draft = useCreateDraft({
+    form: "knowledge:new-entry",
+    slug: orgSlug,
+    token: getToken?.() ?? null,
+    open: !entry,
+    values: { title, kind, code, body },
+    empty: { title: "", kind: "", code: "", body: "" },
+    restore: (v) => {
+      setTitle(String(v.title ?? ""));
+      setKind(String(v.kind ?? ""));
+      setCode(String(v.code ?? ""));
+      setBody(String(v.body ?? ""));
+    },
+  });
   const [preview, setPreview] = useState(false);
   const [imagePath, setImagePath] = useState(entry?.image_path ?? null);
   const imageSrc = useImageSrc(imagePath);
@@ -304,6 +334,7 @@ function EntryEditor({
       return Object.keys(edit.body).length ? api.updateEntry(entry.id, edit) : Promise.resolve(entry);
     },
     onSuccess: () => {
+      draft.clear();
       toast.success(entry ? "Saved" : "Entry created");
       onSaved();
     },
@@ -313,6 +344,8 @@ function EntryEditor({
   return (
     <RecordFormModal open onClose={onClose} title={entry ? "Edit entry" : "New entry"}>
       <div className="space-y-3">
+        <CreateDraftNote draft={draft} />
+        {gone}
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}

@@ -4,9 +4,10 @@ import { platform } from "@cobblr/platform-contract";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { tenantContext } from "../db.js";
 import { esphomeDriver } from "../esphome.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const esphomeRouter = Router({ mergeParams: true });
-const Create = z.object({ label: z.string().trim().min(1).max(128), base_url: z.string().url().refine(v => ["http:", "https:"].includes(new URL(v).protocol) && !new URL(v).username && !new URL(v).password), bridge: z.string().max(48).default(""), host: z.string().regex(/^[a-zA-Z0-9._:-]{1,253}$/).optional(), api_key: z.string().max(512).optional() }).strict();
+const Create = z.object({ label: z.string().trim().min(1).max(128), base_url: webLink().refine(v => ["http:", "https:"].includes(new URL(v).protocol) && !new URL(v).username && !new URL(v).password), bridge: z.string().max(48).default(""), host: z.string().regex(/^[a-zA-Z0-9._:-]{1,253}$/).optional(), api_key: z.string().max(512).optional() }).strict();
 esphomeRouter.get("/", asyncHandler(async (req, res) => {
   const { org } = tenantContext(req);
   res.json({ items: (await platform().devices.connections().list(org.id)).filter(c => c.type === "esphome") });

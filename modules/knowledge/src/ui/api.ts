@@ -34,7 +34,7 @@ export class KnowledgeApiError extends Error {
 }
 
 export class KnowledgeApi {
-  constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
+  constructor(private readonly slug: string, readonly getToken: () => string | null) {}
 
   private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
     const headers: Record<string, string> = { ...extra };

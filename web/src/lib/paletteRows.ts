@@ -9,6 +9,7 @@
 // docs/design-decisions/resolvable-registry.md (the palette is the client half).
 
 import type { LucideIcon } from "lucide-react";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 export type PaletteRowKind = "exact" | "entity" | "inbox" | "files" | "file" | "app" | "table" | "feature" | "action";
 
@@ -61,9 +62,9 @@ export function tablesMatching(q: string, tables: readonly PaletteTable[]): Arra
   if (!needle) return [];
   const out: Array<{ label: string; route: string; hint: string }> = [];
   for (const t of tables) {
-    if (t.label.toLowerCase().includes(needle)) out.push({ label: t.label, route: t.route, hint: "your table" });
+    if (textHas(t.label, needle)) out.push({ label: t.label, route: t.route, hint: "your table" });
     else {
-      const via = t.otherNames.find((n) => n.toLowerCase().includes(needle));
+      const via = t.otherNames.find((n) => textHas(n, needle));
       if (via) out.push({ label: t.label, route: t.route, hint: `also called ${via}` });
     }
   }

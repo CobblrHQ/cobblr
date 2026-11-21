@@ -15,9 +15,8 @@ import { api } from "../lib/api";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { makesBackgroundWrites } from "../lib/acting-role";
 import { STREAM_LINGER_MS } from "./useNotificationStream";
+import { openLiveStream, raiseStreamRefused } from "../lib/live-stream";
 
-const RETRY_MIN_MS = 5_000;
-const RETRY_MAX_MS = 60_000;
 const GATHER_MS = 400;
 
 /** Refresh every query that showed one of these records or their kinds. */
@@ -78,17 +77,8 @@ export function useRecordStream(slug: string | null | undefined, role: string | 
 }
 
 function openRecordStream(slug: string, qc: QueryClient): () => void {
-  let closed = false;
-  let es: EventSource | null = null;
-  let retry: ReturnType<typeof setTimeout> | undefined;
   let gather: ReturnType<typeof setTimeout> | undefined;
   let pending: RecordStreamChange[] = [];
-  let wait = RETRY_MIN_MS;
-  const again = () => {
-    if (closed) return;
-    retry = setTimeout(() => void connect(), wait);
-    wait = Math.min(wait * 2, RETRY_MAX_MS);
-  };
   const heard = (change: RecordStreamChange) => {
     pending.push(change);
     if (gather) return;
@@ -99,38 +89,26 @@ function openRecordStream(slug: string, qc: QueryClient): () => void {
       refreshForChanges(qc, batch);
     }, GATHER_MS);
   };
-  const connect = async () => {
-    let ticket: string;
-    try {
-      ticket = (await api.recordStreamTicket(slug)).ticket;
-    } catch {
-      again();
-      return;
-    }
-    if (closed) return;
-    es = new EventSource(`/api/v1/orgs/${encodeURIComponent(slug)}/records/stream?ticket=${encodeURIComponent(ticket)}`);
-    es.onopen = () => {
-      wait = RETRY_MIN_MS;
-    };
-    es.addEventListener(RECORD_STREAM_EVENT, (e) => {
-      try {
-        const change = JSON.parse((e as MessageEvent<string>).data) as RecordStreamChange;
-        if (typeof change?.kind === "string" && typeof change?.id === "string") heard(change);
-      } catch {
-        // A malformed line is ignored; the next write says it again.
-      }
-    });
-    es.onerror = () => {
-      es?.close();
-      es = null;
-      again();
-    };
-  };
-  void connect();
+  const stop = openLiveStream({
+    ticket: () => api.recordStreamTicket(slug),
+    url: (ticket) => `/api/v1/orgs/${encodeURIComponent(slug)}/records/stream?ticket=${encodeURIComponent(ticket)}`,
+    on: {
+      [RECORD_STREAM_EVENT]: (data) => {
+        try {
+          const change = JSON.parse(data) as RecordStreamChange;
+          if (typeof change?.kind === "string" && typeof change?.id === "string") heard(change);
+        } catch {
+          // A malformed line is ignored; the next write says it again.
+        }
+      },
+    },
+    // Which records changed in the gap is unknown: what is on screen is read
+    // again (lib/live-stream.ts).
+    back: () => void qc.invalidateQueries({ type: "active" }),
+    refused: raiseStreamRefused,
+  });
   return () => {
-    closed = true;
-    clearTimeout(retry);
     clearTimeout(gather);
-    es?.close();
+    stop();
   };
 }

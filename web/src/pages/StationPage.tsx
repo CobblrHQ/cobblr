@@ -65,6 +65,7 @@ import {
   type QueuedMove,
 } from "../lib/station-screen";
 import { lastStation, readStationToken, rememberStation, saveStationToken, subscribeStationTokenRefused, readStationQrToken, saveStationQrToken, setStationCrewToken, setStationTokenOverride, subscribeStationCrewRefused } from "../lib/station-token";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** A request that never reached the server (no network), as opposed to one
@@ -976,7 +977,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
             {settings.back_url && (
               // The dashboard this station was opened from (Home Assistant): the
               // way back on a wall tablet that has no browser bar (#5353).
-              <a href={settings.back_url} className="inline-flex min-h-[44px] min-w-0 max-w-full items-center gap-[6px] rounded-full border border-line px-[12px] text-sm font-medium text-content hover:border-cobble-400 dark:border-slate-600" data-testid="station-back">
+              <a href={safeHref(settings.back_url)} className="inline-flex min-h-[44px] min-w-0 max-w-full items-center gap-[6px] rounded-full border border-line px-[12px] text-sm font-medium text-content hover:border-cobble-400 dark:border-slate-600" data-testid="station-back">
                 <ArrowLeft size={16} /> Back to {settings.back_label}
               </a>
             )}

@@ -1071,6 +1071,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       try {
         const read = await api.readPersonalDocument(activeSlug, file);
         if (generation !== documentGeneration.current) return;
+        // photo-not-kept: a document sent with a chat message stays in the composer (documentFile) until it lands; a failure says so there.
         const done = await fileAttachment(file.name, read, {
           upload: () => api.uploadFile(activeSlug, file),
           scan: (id) => api.scanReceipt(activeSlug, id, { origin: "upload" }) as Promise<ReceiptReadResult>,

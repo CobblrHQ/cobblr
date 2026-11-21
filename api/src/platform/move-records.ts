@@ -283,7 +283,7 @@ export async function moveRecords(
     await forgetIntent();
     return { moved: [], fieldsCarried: [], satellitesRewritten: 0 };
   }
-  moveDiesHereForTests();
+  moveDiesHereForTests(orgId);
 
   // ── 2. meta ──────────────────────────────────────────────────────────────
   const carried: string[] = [];
@@ -333,14 +333,18 @@ export async function moveRecords(
 /** How old a move's intent is before recovery takes it for one that died. */
 export const MOVE_STALE_MS = 5 * 60_000;
 
-/** Test-only: the next moves die between their two commits (#9071). */
-let moveFailures = 0;
-export function failMoveBetweenCommitsForTests(times: number): void {
-  moveFailures = Math.max(0, times);
+/** Test-only: the next moves in one workspace die between their two commits
+ *  (#9071). Kept per workspace, so another file's move never takes it. */
+const moveFailures = new Map<string, number>();
+export function failMoveBetweenCommitsForTests(orgId: string, times: number): void {
+  if (times > 0) moveFailures.set(orgId, times);
+  else moveFailures.delete(orgId);
 }
-function moveDiesHereForTests(): void {
-  if (moveFailures <= 0) return;
-  moveFailures--;
+function moveDiesHereForTests(orgId: string): void {
+  const left = moveFailures.get(orgId) ?? 0;
+  if (left <= 0) return;
+  if (left === 1) moveFailures.delete(orgId);
+  else moveFailures.set(orgId, left - 1);
   throw new Error("the move stopped between its two commits (a test's injected failure)");
 }
 

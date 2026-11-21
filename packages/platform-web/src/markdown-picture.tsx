@@ -1,4 +1,5 @@
 import type { ImgHTMLAttributes } from "react";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 /** Whether a picture's address is this app's own, or inline: the only
  *  pictures Markdown draws, because drawing one fetches it. */
@@ -26,7 +27,7 @@ export function MarkdownPicture({ src, alt }: ImgHTMLAttributes<HTMLImageElement
   if (isOwnPicture(at)) return <img src={at} alt={alt ?? ""} className="max-w-full rounded" />;
   if (!at) return <>{alt ?? ""}</>;
   return (
-    <a href={at} target="_blank" rel="noreferrer noopener">
+    <a href={safeHref(at)} target="_blank" rel="noreferrer noopener">
       {alt?.trim() ? alt : "A picture"}
       <span className="ml-1 break-all text-xs opacity-70">({at})</span>
     </a>

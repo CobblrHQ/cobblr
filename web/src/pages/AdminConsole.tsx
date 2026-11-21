@@ -23,7 +23,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { Code, SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput, useSentWords, relativeTime, QueryError } from "@cobblr/platform-web";
+import { Code, SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput, useSentWords, relativeTime, QueryError, NumberInput } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
@@ -47,6 +47,7 @@ import { FeedbackCard, FEEDBACK_STATUSES, fbStatusLabel, type FeedbackSourceItem
 import { apiFeedbackSource } from "../lib/feedback-source-api";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { dayLabel } from "@cobblr/platform-contract/day";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 // The console content — one routed section at a time. The shell (AdminLayout)
 // owns the operator chrome + the section nav; this just dispatches /admin/:section
@@ -267,10 +268,10 @@ function WorkspacesTab() {
     .filter(
       (w) =>
         !needle ||
-        w.name.toLowerCase().includes(needle) ||
-        w.slug.toLowerCase().includes(needle) ||
-        (w.owner?.email ?? "").toLowerCase().includes(needle) ||
-        (w.owner?.display_name ?? "").toLowerCase().includes(needle),
+        textHas(w.name, needle) ||
+        textHas(w.slug, needle) ||
+        textHas((w.owner?.email ?? ""), needle) ||
+        textHas((w.owner?.display_name ?? ""), needle),
     )
     .sort((a, b) =>
       sortBy === "name"
@@ -421,9 +422,9 @@ function UsersTab() {
   const items = (q.data?.items ?? []).filter(
     (u) =>
       !needle ||
-      u.display_name.toLowerCase().includes(needle) ||
-      u.email.toLowerCase().includes(needle) ||
-      u.orgs.some((o) => o.org_name.toLowerCase().includes(needle)),
+      textHas(u.display_name, needle) ||
+      textHas(u.email, needle) ||
+      u.orgs.some((o) => textHas(o.org_name, needle)),
   );
   return (
     <div className="space-y-3">
@@ -1428,7 +1429,7 @@ function InvitesTab() {
           </label>
           <label className="block">
             <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Expires in (days)</span>
-            <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} className="input w-full" />
+            <NumberInput min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} className="input w-full" />
           </label>
         </div>
         <button onClick={() => mint.mutate()} disabled={mint.isPending} className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50 inline-flex items-center gap-1.5">

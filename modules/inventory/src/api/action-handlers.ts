@@ -18,6 +18,7 @@ import { sql, type Kysely, type Transaction } from "kysely";
 import { ActionRefusal, columnSet, isActionRefusal, platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext, type ActivityLogParams } from "@cobblr/platform-contract";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
+import { PICTURE_REFUSED, canBeAPicture } from "@cobblr/platform-contract/image-reference";
 import type { InventoryDB } from "../db.js";
 import { logPartCreated } from "./part-created.js";
 import { recordConsumption } from "./stock-ledger.js";
@@ -1592,6 +1593,7 @@ export function registerInventoryActionHandlers(): void {
     const fields = (a.fields && typeof a.fields === "object" ? a.fields : {}) as Record<string, unknown>;
     const qty = typeof a.qty === "number" ? String(a.qty) : "1";
     const unit = typeof a.unit === "string" && a.unit.trim() ? a.unit.trim().slice(0, 30) : "each";
+    if (typeof a.image_path === "string" && a.image_path && !canBeAPicture(a.image_path)) return { ok: false, error: PICTURE_REFUSED };
     // A photo sent with the call (the Cataloging Bench's photo box) is the
     // record's picture and the first in its Photos, never drawn and dropped
     // (#5922). An image_path argument still wins: the caller chose it.
@@ -1667,6 +1669,8 @@ export function registerInventoryActionHandlers(): void {
     const a = (ctx.args as Record<string, unknown> | null) ?? {};
     const items = Array.isArray(a.items) ? (a.items as Record<string, unknown>[]) : [];
     if (items.length === 0) return { ok: true, ids: [] };
+    const badPicture = items.findIndex((o) => typeof o.image_path === "string" && o.image_path !== "" && !canBeAPicture(o.image_path));
+    if (badPicture >= 0) return { ok: false, error: `item ${badPicture + 1}: ${PICTURE_REFUSED} Nothing was added.` };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
     const rows = items.map((o) => ({
       name: typeof o.name === "string" && o.name.trim() ? o.name.trim().slice(0, 200) : "Untitled",

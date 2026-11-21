@@ -219,6 +219,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
           // that was open across a workspace rename: the upload 404s, the
           // feedback still goes through.)
           try {
+            // photo-not-kept: a screenshot rides a report that is sent anyway, and the report says how many screenshots it could not carry.
             const rec = await api.uploadFile(slug, p.file);
             attachments.push({ file_id: rec.id, name: p.file.name, content_type: p.file.type });
           } catch {

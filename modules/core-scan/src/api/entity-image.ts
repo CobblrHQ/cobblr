@@ -20,6 +20,7 @@ import { isRankFailure, rankFailureSentence, rankPhotoWithAi } from "../services
 import { showingFirst, showsTheThing } from "../services/shows-the-thing.js";
 import { IMAGE_BUDGET } from "../services/auto-rank.js";
 import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const entityImageRouter = Router({ mergeParams: true });
 
@@ -51,10 +52,10 @@ const Body = z.object({
   query: optionalField(z.string().min(2).max(200)), // SEARCH-PARAM-OK: a POST body's web-image phrase, not a list's query string
   instance: z.string().max(80).nullable().optional(),
   /** A specific web-image url the user picked (skips auto-search). */
-  image_url: optionalField(z.string().url().max(2000)),
+  image_url: optionalField(webLink().max(2000)),
   /** The address of the copy the person SAW for that pick (the strip shows a
    *  search engine's thumbnail). Kept instead when the original will not come. */
-  shown_url: optionalField(z.string().url().max(2000)),
+  shown_url: optionalField(webLink().max(2000)),
   /** A file ALREADY in this workspace's store (a scan's catalog picture),
    *  handed to the record with no second download. Skips the search too. */
   file_id: optionalUuid(),
@@ -288,7 +289,7 @@ const RankBody = z.object({
   candidates: z
     .array(
       z.object({
-        url: z.string().url().max(2000),
+        url: webLink().max(2000),
         thumb: optionalText(2000),
         title: optionalText(300),
         source: z.string().max(200).optional(), // none-refused-ok: a column that cannot hold null

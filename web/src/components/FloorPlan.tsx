@@ -2802,6 +2802,7 @@ function CreateOnPlanModal({
       onCreated();
     },
   });
+  // draft-not-kept: picks things already in the workspace or names a floor; nothing long is typed.
   return (
     <RecordFormModal open onClose={onClose} title={`Add to ${room.name}`}>
       <form
@@ -3107,7 +3108,7 @@ function RectDecor({
       {src && (
         <span
           className="absolute inset-0 rounded bg-cover bg-center opacity-80 pointer-events-none"
-          style={{ backgroundImage: `url(${src})` }}
+          style={{ backgroundImage: `url(${JSON.stringify(src)})` }}
         />
       )}
       {outline && (

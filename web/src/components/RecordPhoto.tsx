@@ -336,6 +336,7 @@ export function RecordPhoto({
         onChange={onChange}
         onAutoFetch={onAutoFetch}
         autoBusy={autoBusy}
+        keptKey={`${kind}:${instance ?? ""}:${id}`}
       />
       {suggestions && !src && <SuggestionAnswer answers={answers} />}
       <WebPhotoSearch kind={kind} id={id} instance={instance} brand={brand} onSaved={onSaved} onOpenChange={setSearching} />

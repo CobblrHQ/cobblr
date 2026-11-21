@@ -45,7 +45,7 @@ export interface InvitePreview {
   invited_by_name: string;
   /** Whether a member of this workspace may check things out (the join page promises it only where they can). */
   members_may_lend?: boolean;
-  status: "open" | "consumed" | "revoked" | "expired" | "full" | "paused";
+  status: "open" | "consumed" | "revoked" | "expired" | "full" | "paused" | "maker_cannot" | "workspace_disabled";
   reusable?: boolean;
 }
 

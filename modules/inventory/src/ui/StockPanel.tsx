@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useStockWrites } from "./stock-writes";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MutationError, QueryError } from "@cobblr/platform-web";
+import { MutationError, QueryError, NumberInput } from "@cobblr/platform-web";
 import { StockConfig, formatStockAmount, stockUnitLabel, type StockShape } from "../stock-shapes";
 import type { StockDetail } from "./api";
 import { useInventory } from "./context";
@@ -75,7 +75,7 @@ function StockForm({ view, hideThreshold, onDone, onCancel }: { view: StockDetai
       low_threshold: Number(threshold), width_mm: Number(width), waste: Number(waste), grams_per_m: grams ? Number(grams) : undefined, limit: Number(limit) });
     return stock.configureStock(view.id, { config, revision, ...(shape === "wearing-tool" ? { used: Number(used) } : shape === "sheet" ? { sheet: { material, thickness_mm: Number(thickness), width_mm: Number(sheetWidth), height_mm: Number(height) } } : { remaining: Number(remaining) }) });
   }, onSuccess: result => { if (result.warning) setWarning(result.warning); else onDone(); } });
-  const numeric = (label: string, value: string, setDraft: (v: string) => void, optional = false) => <label className="text-sm" key={label}>{label}<input aria-label={label} type="number" min="0" step="any" required={!optional} className="input min-h-11 w-full" value={value} onChange={e => setDraft(e.target.value)} /></label>;
+  const numeric = (label: string, value: string, setDraft: (v: string) => void, optional = false) => <label className="text-sm" key={label}>{label}<NumberInput aria-label={label} min="0" step="any" required={!optional} className="input min-h-11 w-full" value={value} onChange={e => setDraft(e.target.value)} /></label>;
   const actualUnit = stockUnitLabel(shape === "sheet" ? "mm²" : shape === "roll" ? "m" : shape === "liquid" ? "ml" : shape === "count" ? "each" : unit);
   return <form className="space-y-3" onSubmit={e => { e.preventDefault(); save.mutate(); }}>
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -106,9 +106,9 @@ function UseForm({ view, onDone, onCancel }: { view: StockDetail; onDone: () => 
   const units = view.shape === "spool" ? ["g", "kg", "m", "mm"] : view.unit === "h" ? ["h", "min"] : view.unit === "m" ? ["m", "mm", "cm"] : view.unit === "ml" ? ["ml", "l"] : [view.unit];
   return <form className="space-y-3" onSubmit={e => { e.preventDefault(); save.mutate(); }}>
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      <label className="text-sm">Amount used<input aria-label="Amount used" className="input min-h-11 w-full" type="number" min="0.000001" step="any" required value={amount} onChange={e => setAmount(e.target.value)} /></label>
+      <label className="text-sm">Amount used<NumberInput aria-label="Amount used" className="input min-h-11 w-full" min="0.000001" step="any" required value={amount} onChange={e => setAmount(e.target.value)} /></label>
       <label className="text-sm">Unit<select aria-label="Use unit" className="input min-h-11 w-full" value={unit} onChange={e => setUnit(e.target.value)}>{units.map(u => <option key={u} value={u}>{stockUnitLabel(u)}</option>)}</select></label>
-      {view.config.shape === "roll" && <label className="text-sm">Measured waste (m, optional)<input aria-label="Measured waste (m, optional)" className="input min-h-11 w-full" type="number" min="0" step="any" placeholder={String(view.config.waste)} value={waste} onChange={e => setWaste(e.target.value)} /><span className="text-muted">Leave blank to use the waste allowance.</span></label>}
+      {view.config.shape === "roll" && <label className="text-sm">Measured waste (m, optional)<NumberInput aria-label="Measured waste (m, optional)" className="input min-h-11 w-full" min="0" step="any" placeholder={String(view.config.waste)} value={waste} onChange={e => setWaste(e.target.value)} /><span className="text-muted">Leave blank to use the waste allowance.</span></label>}
       <label className="text-sm">Job or use reference<input aria-label="Job or use reference" className="input min-h-11 w-full" required maxLength={160} value={source} onChange={e => setSource(e.target.value)} /></label>
       <label className="text-sm">Result<select aria-label="Job result" className="input min-h-11 w-full" value={verdict} onChange={e => setVerdict(e.target.value as typeof verdict)}><option value="good">Came out good</option><option value="scrap">Scrap</option></select></label>
     </div><p className="text-sm text-muted">Both results record what was used. Give each stock draw its own reference.</p>

@@ -15,14 +15,19 @@
 // selects its text on focus.
 
 import { useEffect, useRef, useState } from "react";
+import { readLocaleNumber, writeLocaleNumber } from "@cobblr/platform-contract/locale-number";
+
+/** The person's own way of writing numbers: the browser's language. */
+export const typingLocale = (): string | undefined => (typeof navigator !== "undefined" ? navigator.language : undefined);
 
 /** The number a typed string means, or null while it is not one (empty, a lone
  *  sign, a trailing point). "," is read as ".". */
-export function readNumber(text: string, integer = false): number | null {
-  const t = text.trim().replace(",", ".").replace("−", "-");
-  if (!/^-?\d+(\.\d+)?$/.test(t) || (integer && t.includes("."))) return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
+export function readNumber(text: string, integer = false, locale = typingLocale()): number | null {
+  // Read the way the person's locale writes it: "1.500" on a German phone is
+  // fifteen hundred, never one and a half (#4115, locale-number.ts).
+  const n = readLocaleNumber(text, locale).value;
+  if (n === null || (integer && !Number.isInteger(n))) return null;
+  return n;
 }
 
 export interface NumberFieldProps {
@@ -44,7 +49,7 @@ export interface NumberFieldProps {
   testId?: string;
 }
 
-const show = (v: number | null | undefined): string => (v == null || !Number.isFinite(v) ? "" : String(v));
+const show = (v: number | null | undefined): string => (v == null || !Number.isFinite(v) ? "" : writeLocaleNumber(v, typingLocale()));
 
 export function NumberField({ value, onChange, min, max, integer = false, onClear, label, id, className, disabled, required, placeholder, testId }: NumberFieldProps) {
   const [text, setText] = useState(show(value));
@@ -69,13 +74,16 @@ export function NumberField({ value, onChange, min, max, integer = false, onClea
       return;
     }
     const next = clamp(n);
-    setText(String(next));
+    setText(show(next));
     if (next !== value) onChange(next);
   };
+  const said = readLocaleNumber(text, typingLocale());
   return (
+    <>
     <input
       type="text"
       inputMode={integer ? "numeric" : "decimal"}
+      data-number-input=""
       autoComplete="off"
       id={id}
       aria-label={label}
@@ -95,5 +103,8 @@ export function NumberField({ value, onChange, min, max, integer = false, onClea
         if (e.key === "Enter") e.currentTarget.blur();
       }}
     />
+    {/* Text the other convention reads differently is said back before it is kept. */}
+    {said.ambiguous && said.value !== null && <span className="block text-[11px] text-muted" role="status">Saves as {said.value.toLocaleString(typingLocale())}</span>}
+    </>
   );
 }

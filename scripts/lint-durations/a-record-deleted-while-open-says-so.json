@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-record-deleted-while-open-says-so",
+  "run": "node scripts/lint-a-record-deleted-while-open-says-so.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 826,
+  "recorded": "2026-11-21",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

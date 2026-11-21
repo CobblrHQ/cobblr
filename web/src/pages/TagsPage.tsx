@@ -13,6 +13,7 @@ import { ApiError, api, type TagRecord } from "../lib/api";
 import { useHideEmpty } from "../lib/useHideEmpty";
 import { EditTagModal } from "../components/EditTagModal";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 
 
@@ -194,7 +195,7 @@ export function TagsPage() {
     return names.join(" › ");
   };
   const needle = find.trim().toLowerCase();
-  const found = needle ? items.filter((t) => t.name.toLowerCase().includes(needle)) : [];
+  const found = needle ? items.filter((t) => textHas(t.name, needle)) : [];
   const renderNodes = (parentId: string | null, depth: number): ReactNode[] =>
     (byParent.get(parentId) ?? []).map((t) => (
       <div key={t.id} style={{ marginLeft: depth * 18 }} className="space-y-1.5">
@@ -304,6 +305,7 @@ function CreateTagModal({
   const allTags = useQuery({ queryKey: ["tags", slug], queryFn: () => api.listTags(slug) });
   const parentOptions = allTags.data?.items ?? [];
 
+  // draft-not-kept: a tag is a word or two.
   return (
     <RecordFormModal open onClose={onClose} title="New tag">
       <form

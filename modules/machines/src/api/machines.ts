@@ -17,6 +17,7 @@ import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from 
 import { readFleet, typedStamp } from "./versions-store.js";
 import { setVersionTarget } from "./set-version-target-action.js";
 import { isRefusal, liftUnits, unitIdsIn, mergeInto, nameUnit, releaseForDelete, splitOne, splitUnit, unitsSummary, type Refusal, type UnitsCtx } from "./units.js";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 function unitsCtx(req: Parameters<typeof tenantDb>[0]): UnitsCtx {
   return { db: tenantDb(req), orgId: tenantContext(req).org.id, userId: sessionUser(req).id, instance: instanceOf(req) };
@@ -49,7 +50,7 @@ const MachineCreate = z.object({
   state: z.string().max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   excitement: z.number().int().min(0).max(5).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   image_path: imagePathField().nullable().optional(),
-  notes: z.string().max(8_000).nullable().optional(),
+  notes: z.string().max(RECORD_NOTES_MAX).nullable().optional(),
   quantity: z.number().int().min(0).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   location_id: z.string().uuid().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),

@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, useRoleAtLeast, useToast } from "@cobblr/platform-web";
+import { Modal, useRoleAtLeast, useToast, NumberInput } from "@cobblr/platform-web";
 import { PRINTER_MANAGERS } from "@cobblr/platform-contract/org-roles";
 import { printerCapability, labelSizesForPrinter, customWidthFits } from "../label-sizes";
 import type { FireMode } from "./api";
@@ -156,7 +156,7 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
               <label className="flex flex-col gap-1">
                 <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">every</span>
                 <div className="flex items-center gap-2">
-                  <input type="number" min={1} max={200} value={count} onChange={(e) => setCount(e.target.value)} className={`${sel} w-20`} />
+                  <NumberInput min={1} max={200} value={count} onChange={(e) => setCount(e.target.value)} className={`${sel} w-20`} />
                   <span className="text-sm text-faint dark:text-slate-400">labels</span>
                 </div>
               </label>

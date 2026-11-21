@@ -21,6 +21,9 @@ export interface PendingPicture {
   rowId?: string;
   /** The stored file, once the upload finished: from here Undo can read it again. */
   fileId?: string;
+  /** The capture it is (lib/scanCapture.ts): a failed one is kept on this
+   *  device under this id until it lands or is dismissed (lib/keptShots.ts). */
+  captureId?: string;
   at: number;
 }
 
@@ -42,11 +45,41 @@ function objectUrl(file: File): string {
   }
 }
 
-export function addPending(slug: string, files: File[]): string[] {
+export function addPending(slug: string, files: Array<File | { file: File; captureId: string }>): string[] {
   const now = Date.now();
-  const added = files.map((f) => ({ key: `p${++seq}`, url: objectUrl(f), name: f.name, stage: "uploading" as const, at: now }));
+  const added = files.map((x) => {
+    const f = x instanceof File ? x : x.file;
+    return { key: `p${++seq}`, url: objectUrl(f), name: f.name, stage: "uploading" as const, at: now, ...(x instanceof File ? {} : { captureId: x.captureId }) };
+  });
   changed(slug, [...added, ...(bySlug.get(slug) ?? [])]);
   return added.map((a) => a.key);
+}
+
+/** A picture kept on this device from a try that failed (a reload ago, or
+ *  before), back as its failed card. Null when its card is already here. */
+export function addKeptPicture(slug: string, kept: { file: File; captureId: string }): string | null {
+  if ((bySlug.get(slug) ?? []).some((p) => p.captureId === kept.captureId)) return null;
+  const key = `p${++seq}`;
+  changed(slug, [...(bySlug.get(slug) ?? []), { key, url: objectUrl(kept.file), name: kept.file.name, stage: "failed", captureId: kept.captureId, at: kept.file.lastModified }]);
+  return key;
+}
+
+/** How a failed picture is tried again: the same capture, sent again (#9678). */
+const retries = new Map<string, () => void>();
+
+export function setPictureRetry(key: string, retry: () => void): void {
+  retries.set(key, retry);
+}
+
+export function tryPictureAgain(key: string): boolean {
+  const retry = retries.get(key);
+  if (!retry) return false;
+  retry();
+  return true;
+}
+
+export function canTryPictureAgain(key: string): boolean {
+  return retries.has(key);
 }
 
 export function updatePending(slug: string, key: string, patch: Partial<Pick<PendingPicture, "stage" | "rowId" | "fileId">>): void {
@@ -102,6 +135,7 @@ export function dropPending(slug: string, key: string): void {
     expiries.delete(key);
   }
   doors.delete(key);
+  retries.delete(key);
   const gone = (bySlug.get(slug) ?? []).find((p) => p.key === key);
   if (gone?.url) {
     try {

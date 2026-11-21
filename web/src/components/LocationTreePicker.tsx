@@ -25,6 +25,7 @@ import { api, type Location, type PlaceHolder } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QuickCreateLocation } from "./QuickCreateLocation";
 import { ActionDescription, firstActionSentence, OverlayLayer, PopoverLayer, SearchInput, useEscapeToClose, useToast } from "@cobblr/platform-web";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 interface Props {
   value: string | null;
@@ -229,13 +230,13 @@ export function LocationTreePicker({
 
   const rows = q.trim()
     ? all
-        .filter((l) => `${l.name} ${l.short_name ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))
+        .filter((l) => textHas(`${l.name} ${l.short_name ?? ""}`, q.trim().toLowerCase()))
         .sort(cmp)
         .slice(0, 80)
     : childrenOf(cursor);
   const crumbs = cursor ? pathOf(cursor) : [];
   const holderMatches = q.trim()
-    ? holderRows.filter((h) => h.title.toLowerCase().includes(q.trim().toLowerCase()))
+    ? holderRows.filter((h) => textHas(h.title, q.trim().toLowerCase()))
     : cursor === null
       ? holderRows
       : [];

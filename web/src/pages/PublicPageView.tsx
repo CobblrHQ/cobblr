@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { EntityThumb, EntityTile, TILE_GRID } from "@cobblr/platform-web";
 import type { AppTheme } from "../lib/api";
 import { adminHtmlVars } from "../lib/appTheme";
+import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 export interface PublicRecord {
   ref: string;
@@ -173,12 +174,12 @@ export function PublicRecordCard({ record, frame, skinFrom }: { record: PublicRe
           {(!!contact || (frame?.links?.length ?? 0) > 0) && (
             <div className="flex flex-wrap gap-2">
               {contact && (
-                <a href={contact} rel="noopener noreferrer" target="_blank" className="inline-flex items-center rounded-lg bg-cobble-600 px-3 py-2 text-sm font-medium text-white" data-testid="public-contact">
+                <a href={safeHref(contact)} rel="noopener noreferrer" target="_blank" className="inline-flex items-center rounded-lg bg-cobble-600 px-3 py-2 text-sm font-medium text-white" data-testid="public-contact">
                   Get in touch
                 </a>
               )}
               {(frame?.links ?? []).map((l) => (
-                <a key={l.url} href={l.url} rel="noopener noreferrer" target="_blank" className="inline-flex items-center rounded-lg border border-line px-3 py-2 text-sm text-content hover:border-accent dark:border-slate-600" data-testid="public-link-out">
+                <a key={l.url} href={safeHref(l.url)} rel="noopener noreferrer" target="_blank" className="inline-flex items-center rounded-lg border border-line px-3 py-2 text-sm text-content hover:border-accent dark:border-slate-600" data-testid="public-link-out">
                   {l.label}
                 </a>
               ))}

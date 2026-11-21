@@ -6,6 +6,7 @@ import { nextOrderNumber, refuseTakenOrderNumber } from "./order-number.js";
 import { addLine, MOST_A_LINE_COSTS, MOST_ON_A_LINE } from "./order-lines.js";
 import { isSaleDay } from "./sale-day.js";
 import { orderHappened } from "./history.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 const text = z.string().trim().min(1).max(2000);
 export const CreateOrder = z.object({
@@ -17,7 +18,7 @@ export const CreateOrder = z.object({
   shipping_address: z.string().max(4000).optional(),
   notes: z.string().max(10000).optional(),
   metadata: z.record(z.unknown()).optional(),
-  source: z.object({ name: text, ref: text, url: z.string().url().max(4000).refine((v) => /^https?:\/\//.test(v)).optional() }).optional(),
+  source: z.object({ name: text, ref: text, url: webLink().max(4000).refine((v) => /^https?:\/\//.test(v)).optional() }).optional(),
   customer: z.object({ name: text.optional(), email: z.string().trim().toLowerCase().email().optional(), phone: z.string().max(200).optional(), address: z.string().max(4000).optional() }).optional(),
   items: z.array(z.object({ part_id: z.string().uuid().nullable().optional(), description: z.string().max(2000).nullable().optional(), qty: z.number().finite().positive().max(MOST_ON_A_LINE), unit_price: z.number().finite().nonnegative().max(MOST_A_LINE_COSTS).nullable().optional(), metadata: z.record(z.unknown()).optional() })).min(1).max(200),
 });

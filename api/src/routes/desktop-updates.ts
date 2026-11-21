@@ -33,6 +33,7 @@ import {
   PRODUCT_RE,
   versionGt,
 } from "./desktop-updates-manifest.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const desktopUpdatesRouter = Router();
 
@@ -96,11 +97,11 @@ const PublishBody = z.object({
   // Either one platform, or a whole manifest at once.
   platform: z.string().min(3).max(40).optional(), // "<target>-<arch>" // none-refused-ok: the update manifest is typed with undefined, never null
   version: z.string().min(1).max(40).optional(), // none-refused-ok: the update manifest is typed with undefined, never null
-  url: z.string().url().optional(), // none-refused-ok: the update manifest is typed with undefined, never null
+  url: webLink().optional(), // none-refused-ok: the update manifest is typed with undefined, never null
   signature: z.string().min(1).optional(), // none-refused-ok: the update manifest is typed with undefined, never null
   notes: z.string().max(4000).optional(), // none-refused-ok: the update manifest is typed with undefined, never null
   pub_date: z.string().optional(), // none-refused-ok: the update manifest is typed with undefined, never null
-  manifest: z.record(z.object({ version: z.string(), url: z.string().url(), signature: z.string(), notes: z.string().optional(), pub_date: z.string().optional() })).optional(),
+  manifest: z.record(z.object({ version: z.string(), url: webLink(), signature: z.string(), notes: z.string().optional(), pub_date: z.string().optional() })).optional(),
 });
 // UI-REACH: the desktop helper's release pipeline publishing a build
 // REPLAY: sets a platform's manifest entry; publishing it again sets the same entry

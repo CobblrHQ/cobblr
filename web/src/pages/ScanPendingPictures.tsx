@@ -7,7 +7,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, X } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
-import { dropPending, markTakenBack, usePendingPictures, type PendingPicture } from "../lib/pendingPictures";
+import { canTryPictureAgain, dropPending, markTakenBack, tryPictureAgain, usePendingPictures, type PendingPicture } from "../lib/pendingPictures";
+import { forgetShot } from "../lib/keptShots";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 const STAGE_WORDS = {
@@ -72,12 +73,36 @@ export function ScanPendingPictures({ slug, rowIds }: { slug: string; rowIds: Re
               {p.stage !== "failed" && <Loader2 size={13} className="animate-spin text-accent" />}
               <span data-testid="pending-picture-stage">{STAGE_WORDS[p.stage]}</span>
             </div>
+            {p.stage === "failed" && (
+              // A failed picture is kept on this device until it lands or is
+              // let go (lib/keptShots.ts), so a reload never loses it (#9678).
+              // Under the words, so larger text wraps them rather than pushing
+              // them off the card.
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                {canTryPictureAgain(p.key) && (
+                  <button
+                    type="button"
+                    data-testid="pending-picture-try-again"
+                    onClick={() => tryPictureAgain(p.key)}
+                    className="min-h-11 rounded-lg px-3 text-sm font-medium text-accent hover:bg-subtle dark:hover:bg-slate-800"
+                  >
+                    Try again
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    dropPending(slug, p.key);
+                    if (p.captureId) void forgetShot(p.captureId);
+                  }}
+                  className="min-h-11 rounded-lg px-3 text-sm text-muted underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
           </div>
-          {p.stage === "failed" ? (
-            <button type="button" onClick={() => dropPending(slug, p.key)} className="text-xs text-muted underline">
-              Dismiss
-            </button>
-          ) : (
+          {p.stage !== "failed" && (
             <button
               type="button"
               data-testid="pending-picture-take-back"

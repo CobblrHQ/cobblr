@@ -11,7 +11,7 @@
 // Each section ships its own modal — no inline forms, per the
 // modals-not-pages convention.
 
-import { productName } from "@cobblr/platform-web";
+import { productName, NumberInput } from "@cobblr/platform-web";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -781,7 +781,7 @@ function ConnectorInvokeModal({
           Object.entries(action.argsSchema).map(([key, d]) => (
             <label key={key} className="block">
               <span className="block text-sm font-medium mb-1">{d.label}</span>
-              <input
+              <NumberInput
                 type={d.type === "number" ? "number" : "text"}
                 value={args[key] ?? ""}
                 onChange={(e) => setArgs({ ...args, [key]: e.target.value })}

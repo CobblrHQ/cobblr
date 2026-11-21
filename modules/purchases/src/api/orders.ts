@@ -25,6 +25,8 @@ import { listShipments } from "../shipments.js";
 import { attachWaiting, orderPageSummary } from "../order-page/store.js";
 import { trackingNumberFromText } from "@cobblr/platform-contract/tracking-text";
 import { withCarrierNames } from "./shipments.js";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const ordersRouter = Router({ mergeParams: true });
 
@@ -47,7 +49,7 @@ const OrderCreate = z.object({
   vendor: z.string().max(160).nullable().optional(),
   vendor_id: z.string().uuid().nullable().optional(),
   order_number: z.string().max(160).nullable().optional(),
-  url: z.string().url().max(500).nullable().optional(),
+  url: webLink().max(500).nullable().optional(),
   ordered_at: orderDate,
   expected_arrival: orderDate,
   arrived_at: orderDate,
@@ -56,7 +58,7 @@ const OrderCreate = z.object({
   shipping_cost: z.number().nullable().optional(),
   // A pasted tracking link is the number it points at (#5351).
   tracking_number: z.preprocess((v) => (typeof v === "string" && v.trim() ? trackingNumberFromText(v) ?? v : v), z.string().max(160).nullable().optional()),
-  notes: z.string().max(8_000).nullable().optional(),
+  notes: z.string().max(RECORD_NOTES_MAX).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
   /** Whether the lines add their stock when the order arrives. Default on;
    *  off for a past purchase being logged, and what an importer sends. */

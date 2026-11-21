@@ -285,7 +285,7 @@ export class SalesApi {
   intake() { return this.req<IntakeView>("GET", "/intake"); }
   setIntake(config: { on: boolean; connection: string; mapping: Record<string, string> }) { return this.req<IntakeSetting>("PUT", "/intake", config); }
   checkIntake() { return this.req<IntakeSetting | null>("POST", "/intake/check", {}); }
-  constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
+  constructor(private readonly slug: string, readonly getToken: () => string | null) {}
 
   private headers(json = false): Record<string, string> {
     const h: Record<string, string> = {};

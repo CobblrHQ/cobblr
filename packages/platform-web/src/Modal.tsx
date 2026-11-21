@@ -19,7 +19,7 @@
 // relative to the navbar strip and intercept clicks only there.
 
 import { lockPageScroll } from "./scrollLock";
-import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode, type RefObject, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, X } from "lucide-react";
 import { useOverlayOpenFlag } from "./overlay-open";
@@ -157,7 +157,12 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     if (!dismissOnBackdrop || dirtyRef.current) return;
     close();
   };
-  const markDirty = () => {
+  const markDirty = (e: SyntheticEvent) => {
+    // React carries a change up through a portal, so a dialog opened over this
+    // one (a record's Move to...) reaches here too. Only a field in this panel
+    // is typing into it; otherwise the move's picker armed Back, and closing
+    // after the move asked "Discard what you typed?" (#9740).
+    if (!panelRef.current?.contains(e.target as Node)) return;
     dirtyRef.current = true;
     typing.arm();
   };

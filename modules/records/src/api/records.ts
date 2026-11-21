@@ -7,6 +7,7 @@ import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contra
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 export const recordsRouter = Router({ mergeParams: true });
 
@@ -23,7 +24,7 @@ recordsRouter.use((req, res, next) => {
 const RecordCreate = z.object({
   name: z.string().min(1).max(200),
   image_path: imagePathField().nullable().optional(),
-  notes: z.string().max(8_000).nullable().optional(),
+  notes: z.string().max(RECORD_NOTES_MAX).nullable().optional(),
   location_id: z.string().uuid().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });

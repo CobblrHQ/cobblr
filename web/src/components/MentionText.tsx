@@ -24,6 +24,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { Link } from "react-router-dom";
 import { SearchIncomplete } from "./SearchIncomplete";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 /** A comment body as one line of words, for a place that shows it inside
  *  something already pressable (a quote, a preview) where a chip's link cannot
@@ -185,7 +186,7 @@ export function useMentionPicker(
     if (query === null) return [];
     const q = query.toLowerCase();
     const people = (members.data?.items ?? [])
-      .filter((m) => (m.display_name || m.email).toLowerCase().includes(q))
+      .filter((m) => textHas((m.display_name || m.email), q))
       .slice(0, 5)
       .map((m) => ({
         token: `[[user:${m.user_id}]]`,

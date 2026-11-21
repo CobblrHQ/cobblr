@@ -100,6 +100,7 @@ function RenewalSetup({ ctx, initial, close, refresh }: { ctx: EntityDetailPanel
     const [mod, type] = (ctx.kind ?? "").split(":");
     return api.createMaintenanceSchedule(ctx.slug, { ...rule, entity_module: mod!, entity_type: type!, entity_id: ctx.entityId, expiry_field: initial.field || null });
   }, onSuccess: () => { refresh(); close(); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save renewal") });
+  // draft-not-kept: a schedule's few short fields, read off a document the person still holds.
   return <RecordFormModal open onClose={close} title={s ? `Change ${initial.label.toLowerCase()}` : `Add ${initial.label.toLowerCase()}`}><form className="space-y-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
     {!initial.field && <label className="block text-sm">Name<input className={input} aria-label="Renewal name" value={name} required onChange={(e) => setName(e.target.value)} /></label>}
     <label className="block text-sm">Expiry date<input className={input} aria-label="Expiry date" type="date" required value={expiry} onChange={(e) => setExpiry(e.target.value)} /></label>
@@ -129,6 +130,7 @@ function RenewalDialog({ slug, schedule, close, refresh }: { slug: string; sched
   const formRef = useRef<HTMLFormElement>(null);
   usePasteImage(formRef, { accept: "image/*,application/pdf", onFiles: (files) => setFile(files[0] ?? null) });
   const save = useMutation({ mutationFn: async () => {
+    // photo-not-kept: the document stays in this form until its Save lands; a failed Save says so and keeps the form open.
     const uploaded = file ? await api.uploadFile(slug, file) : null;
     // Hidden prefills stay with the server until the person enters a new value.
     const keepMoney = moneyHidden && cost === null && !currencyChanged;

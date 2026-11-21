@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.23.4",
+  version: "0.23.5",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -1372,6 +1372,11 @@ export default defineModule({
   // with a consume history, so idle workspaces pay nothing.
   lifecycle: {
     onBoot: async () => {
+      // Links saved before link fields took only web addresses, counted on /healthz (#9709).
+      const { registerInventoryNonWebLinksCount } = await import("./count-non-web-links.js");
+      registerInventoryNonWebLinksCount();
+      const { registerInventoryNonPicturesCount } = await import("./count-non-pictures.js");
+      registerInventoryNonPicturesCount();
       const { registerStockShapesHeal } = await import("./heal-stock-shapes.js");
       registerStockShapesHeal();
       // A name saved with metadata labels or "None" in it is rebuilt (#6283).

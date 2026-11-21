@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "machines",
-  version: "0.6.1",
+  version: "0.6.2",
   displayName: "Machines",
   description:
     "The machines you run, with a specialisation for each type (3D printers, laser cutters, CNC machines) that adds the details that type needs.",
@@ -259,6 +259,8 @@ export default defineModule({
       // What it shows on the dashboard, read in its one request (#6563).
       const { registerMachinesDashboardReads } = await import("./dashboard-reads.js");
       registerMachinesDashboardReads();
+      const { registerMachinesNonPicturesCount } = await import("./count-non-pictures.js");
+      registerMachinesNonPicturesCount();
     },
   },
 });

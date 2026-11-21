@@ -12,6 +12,7 @@
 
 import { actionActed, normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { countOf, platform, requireActionEntity } from "@cobblr/platform-contract";
+import { pictureOrNull } from "@cobblr/platform-contract/image-reference";
 
 let registered = false;
 
@@ -102,7 +103,7 @@ export function registerBricklinkHandlers(): void {
     const specs = bomRows.map((row) => {
       const partNum = String(row.payload.part_num ?? "");
       const partEntry = partByNum.get(partNum);
-      const imgUrl = typeof row.payload.img_url === "string" && row.payload.img_url.length > 0 ? row.payload.img_url : null;
+      const imgUrl = pictureOrNull(row.payload.img_url);
       const catId = partEntry ? String(partEntry.payload.part_cat_id ?? "") : "";
       // Local BOM rows are raw (part_num/color only) and get name+category from
       // the parts / part-category catalogs. A HOSTED BOM row is already hydrated

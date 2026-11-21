@@ -1,4 +1,5 @@
-// One shutter capture, from the moment it is taken until it is in the inbox.
+// One shutter capture, from the moment it is taken until it is in the inbox;
+// and, the same way, one picture chosen, pasted or dropped at the desk (#9678).
 //
 // A capture whose save failed is kept for a retry tap (garage corners and
 // elevators drop POSTs). The retry rebuilt the picture as a new File named by
@@ -28,7 +29,12 @@ export interface Capture {
   readonly id: string;
   /** Made once, so its name and time never change between tries. */
   readonly file: File;
-  readonly stamps: CaptureStamps;
+  /** Where the camera took it; null for a picture added at the desk. */
+  readonly stamps: CaptureStamps | null;
+  /** "desk": chosen, pasted or dropped into the inbox, not taken by the camera. */
+  readonly door?: "desk";
+  /** The code read from the picture, once read (null: none in it). */
+  code?: string | null;
   /** The stored picture, once an upload of it has landed. */
   fileId?: string;
   /** The batch it was filed under, once asked (null: none could be made). */
@@ -41,8 +47,13 @@ function newId(): string {
 }
 
 /** A capture of `blob`, taken now where `stamps` say. */
-export function newCapture(blob: Blob, stamps: CaptureStamps, now = Date.now(), id = newId()): Capture {
+export function newCapture(blob: Blob, stamps: CaptureStamps | null, now = Date.now(), id = newId()): Capture {
   return { id, file: new File([blob], `scan-${now}.jpg`, { type: "image/jpeg", lastModified: now }), stamps };
+}
+
+/** A picture added at the desk, as the person chose it: its own name and type. */
+export function pickedCapture(file: File, id = newId()): Capture {
+  return { id, file, stamps: null, door: "desk" };
 }
 
 /** The keys a capture's writes carry: the same on every try. */
@@ -53,13 +64,13 @@ export function captureKeys(c: Pick<Capture, "id">): { upload: string; scan: str
 /** The scan a capture makes, the same body on every try. */
 export function captureScanBody(c: Capture & { fileId: string }) {
   return {
-    purpose: c.stamps.purpose,
-    source_kind: "photo" as const,
+    purpose: c.stamps?.purpose,
+    ...(c.code ? { barcode: c.code, source_kind: "barcode" as const } : { source_kind: "photo" as const }),
     image_file_id: c.fileId,
-    scan_area: c.stamps.areaName ?? undefined,
-    target_location_id: c.stamps.areaId ?? undefined,
-    target_container_kind: c.stamps.container?.kind,
-    target_container_id: c.stamps.container?.id,
+    scan_area: c.stamps?.areaName ?? undefined,
+    target_location_id: c.stamps?.areaId ?? undefined,
+    target_container_kind: c.stamps?.container?.kind,
+    target_container_id: c.stamps?.container?.id,
     scan_batch_id: c.batchId ?? undefined,
   };
 }

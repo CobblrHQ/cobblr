@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { CollectionHeader, QueryError, SearchInput, usePageTitle } from "@cobblr/platform-web";
+import { CollectionHeader, QueryError, SearchInput, usePageTitle, useListSearch } from "@cobblr/platform-web";
 import type { BuildsApi } from "./api.js";
 
 export function InspectionRegister({ api, slug }: { api: BuildsApi; slug: string }) {
   usePageTitle("Board inspections");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useListSearch("q");
   const [offset, setOffset] = useState(0);
   const inspections = useQuery({
     queryKey: ["board-inspections", slug, search, offset],

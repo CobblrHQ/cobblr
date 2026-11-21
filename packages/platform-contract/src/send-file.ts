@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { sendFileThing } from "@cobblr/platform-contract/share-offer";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const SEND_FILE_MAX_BYTES = 64 * 1024 * 1024;
 const word = z.string().min(1).max(300);
 const kind = z.string().min(1).max(120);
-const origin = z.object({instance: z.string().url().max(2048), org: z.string().uuid(), kind, id: z.string().uuid()});
+const origin = z.object({instance: webLink().max(2048), org: z.string().uuid(), kind, id: z.string().uuid()});
 const bytes = z.string().max(SEND_FILE_MAX_BYTES).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/, "A file has damaged bytes.");
 const field = z.object({
   name: kind, display_label: word, type: kind, native: z.boolean().optional(),
@@ -32,7 +33,7 @@ const thing = z.object({
 export const SendFileSchema = z.object({
   format: z.literal("cobblr-send"), version: z.literal(1), id: z.string().uuid(), created_at: z.string().datetime(),
   mode: z.enum(["copy", "move"]), confirmation_key: z.string().regex(/^[a-f0-9]{64}$/),
-  source: z.object({instance: z.string().url().max(2048), org: z.string().uuid(), name: word, person: word}),
+  source: z.object({instance: webLink().max(2048), org: z.string().uuid(), name: word, person: word}),
   collection: z.object({kind, base_kind: kind, module: kind, instance: z.string().nullable(), name: word, plural: word, fields: z.array(field).max(300)}),
   items: z.array(thing).min(1).max(200),
 }).superRefine((file, ctx) => {
@@ -56,8 +57,8 @@ export function readSendFile(input: unknown): SendFile {
 
 export const SendReceiptSchema = z.object({
   format: z.literal("cobblr-send-receipt"), version: z.literal(1), file_id: z.string().uuid(), digest: z.string().regex(/^[a-f0-9]{64}$/),
-  source_instance: z.string().url().max(2048), source_org: z.string().uuid(), import_id: z.string().uuid(),
-  target: z.object({instance: z.string().url().max(2048), org: z.string().uuid(), name: word, person: word}),
+  source_instance: webLink().max(2048), source_org: z.string().uuid(), import_id: z.string().uuid(),
+  target: z.object({instance: webLink().max(2048), org: z.string().uuid(), name: word, person: word}),
   ids: z.array(z.string().uuid()).min(1).max(200), phase: z.enum(["imported", "undone"]), signature: z.string().regex(/^[a-f0-9]{64}$/),
 });
 export type SendReceipt = z.infer<typeof SendReceiptSchema>;

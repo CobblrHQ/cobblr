@@ -5,7 +5,7 @@
 
 import { forgetSignedInWith, signedInWith } from "../lib/oidc-sign-in";
 import { forgetKeptReads } from "../lib/offline";
-import { forgetWaitingWrites } from "@cobblr/platform-web";
+import { forgetCreateDrafts, forgetWaitingWrites, forgetKeptPhotos } from "@cobblr/platform-web";
 import { letGoOfAnotherAccountsPush, retirePushHere } from "../lib/push-device";
 import { getShareViewToken } from "../lib/share-view";
 import { followSignInsAcrossTabs } from "../lib/session-across-tabs";
@@ -166,6 +166,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Writes made offline wait for the person who made them, not for whoever
     // signs in next (waiting-writes.ts).
     forgetWaitingWrites();
+    // A half-typed create belongs to the person who typed it (#4115, useCreateDraft).
+    forgetCreateDrafts();
+    // A photo kept for its retry belongs to the person who took it (#4115, useKeptPhotos).
+    void forgetKeptPhotos();
     // The browser stays with whoever uses it next: it stops taking this
     // account's pushes (#7124). Signing out of a share's View as leaves the
     // account signed in, and its pushes with it.

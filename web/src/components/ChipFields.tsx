@@ -31,6 +31,7 @@
 // the chip replaces the label-and-box chrome, not the input itself.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { NumberInput } from "@cobblr/platform-web";
 import { packChips, type ChipMeasure } from "../lib/chipPack";
 
 export type ChipFieldType = "text" | "number" | "select" | "date";
@@ -413,7 +414,7 @@ function Chip({
           </select>
         ) : (
           // NUMBER-INPUT-TEXT: a chip commits text by contract (onChange(key, next: string)); the scan confirm and the record write cast it by the field's type.
-          <input
+          <NumberInput
             ref={(el) => {
               inputRef.current = el;
             }}

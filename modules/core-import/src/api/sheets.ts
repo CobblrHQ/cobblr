@@ -29,6 +29,7 @@ import { existingRecords, newCollectionTarget, workspacePicture } from "../servi
 import { nameColumnsWithAi } from "../services/sheet-ai-names.js";
 import { selfOrigin } from "@cobblr/platform-contract/self-api";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const sheetsRouter = Router({ mergeParams: true });
 
@@ -44,7 +45,7 @@ const Source = z.union([
     filename: z.string().min(1).max(255),
     locale: z.string().max(35).optional(),
   }),
-  z.object({ url: z.string().url().max(2048), locale: z.string().max(35).optional() }),
+  z.object({ url: webLink().max(2048), locale: z.string().max(35).optional() }),
 ]);
 const Body = Source;
 

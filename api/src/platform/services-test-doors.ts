@@ -26,6 +26,7 @@ import { adapterFetchFor } from "./service-connections.js";
 import { supervise } from "./service-supervisor.js";
 import { listBuiltIns, RETENTION_PASS, setServiceConnectionPort, type ServiceConnectionPort, type ServiceConnectionRef, type ServiceHopResponse } from "./services.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 interface TestConnection {
   ref: ServiceConnectionRef;
@@ -87,7 +88,7 @@ function overlay(real: ServiceConnectionPort | null): ServiceConnectionPort {
   };
 }
 
-const Body = z.object({ base_url: z.string().url(), key: z.string().min(3).max(400), label: z.string().max(80).optional() });
+const Body = z.object({ base_url: webLink(), key: z.string().min(3).max(400), label: z.string().max(80).optional() });
 /** An adapter's connection: which built-in, and its settings. */
 // A config value is a URL or a key, or for the test document system a list of
 // items as JSON, which is longer.

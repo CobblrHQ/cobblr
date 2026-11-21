@@ -3,7 +3,7 @@ import { PastePanel } from "./PastePanel";
 import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { useStockWrites } from "./stock-writes";
 import { StoragePanel } from "./StoragePanel";
-import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, AllergenPills, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit, useMayDelete, useCan, type FieldPackItem, editOf, useRecordEdits } from "@cobblr/platform-web";
+import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, AllergenPills, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit, useMayDelete, useCan, type FieldPackItem, editOf, useRecordEdits, RecordGone, isRecordGone, NumberInput } from "@cobblr/platform-web";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 // Part detail — fields inline-editable, allocations panel below.
 // Stock adjustments are explicit (a button) so accidental qty edits
@@ -56,8 +56,9 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 import { putPart, type PartPlace } from "./move-part";
 import { PART_FIELD_LABELS } from "../part-field-labels";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
-import { PART_NAME_MAX } from "../part-limits";
+import { PART_NAME_MAX, PART_WARRANTY_DETAILS_MAX } from "../part-limits";
 import { STOCK_MOVES } from "../stock-moves";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
@@ -394,8 +395,12 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
   // component (the page renders blank, no error in the console).
   usePageTitle(part.data?.title ?? part.data?.name ?? itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1));
   if (part.isLoading) return <div className="text-sm text-faint dark:text-slate-500">loading…</div>;
-  if (part.error) {
-    return <div className="text-sm text-ember-500">{(part.error as Error).message}</div>;
+  // Deleted elsewhere while open: the page and what was typed stay, under a
+  // line that says who deleted it and the way back (#4115).
+  const recordGone = isRecordGone(part.error);
+  const goneNotice = recordGone ? <RecordGone slug={orgSlug} getToken={getToken} kind={entityKind} id={id!} noun={itemNoun} kept={!!part.data} /> : null;
+  if (part.error && !(recordGone && part.data)) {
+    return goneNotice ?? <div className="text-sm text-ember-500">{(part.error as Error).message}</div>;
   }
   if (!part.data) return null;
   const p = part.data;
@@ -479,6 +484,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
   return (
     <RecordFaces kind={entityKind}>
     <div className="space-y-5">
+      {goneNotice}
 
       <ReconcileCard
         part={p}
@@ -776,7 +782,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
                   ),
                 }
               : null,
-            editFieldItem("notes", { label: "Notes", value: p.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) }),
+            editFieldItem("notes", { label: "Notes", value: p.notes ?? "", multiline: true, maxLength: RECORD_NOTES_MAX, onCommit: (v) => update.mutate({ notes: v || null }) }),
           ].map((item) => (item?.need.key === "qty" ? item : editableItem(item)))}
         />
         {/* A field edit the workspace refused says why, under the fields. */}
@@ -849,7 +855,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
                 </Field>
               ),
             },
-            editFieldItem("warranty_details", { label: "Warranty details", value: p.warranty_details ?? "", multiline: true, onCommit: (v) => update.mutate({ warranty_details: v || null }) }),
+            editFieldItem("warranty_details", { label: "Warranty details", value: p.warranty_details ?? "", multiline: true, maxLength: PART_WARRANTY_DETAILS_MAX, onCommit: (v) => update.mutate({ warranty_details: v || null }) }),
             {
               need: fieldNeed("insured", { control: "checkbox", label: "Insured" }),
               node: (
@@ -1338,8 +1344,7 @@ function FlatConsumptionPanel({
 
       {editing ? (
         <div className="flex items-center gap-2">
-          <input
-            type="number"
+          <NumberInput
             min="0"
             step="any"
             value={cap}
@@ -1850,8 +1855,7 @@ function OpenUnitCard({
       </div>
 
       <div className="flex items-center gap-2">
-        <input
-          type="number"
+        <NumberInput
           min="0"
           step="any"
           value={amt}
@@ -1883,8 +1887,7 @@ function OpenUnitCard({
             ~{round3(unit.qty)}{u ? " " + u : ""} left - keep it, or done with it?
           </div>
           <div className="flex items-center gap-2">
-            <input
-              type="number"
+            <NumberInput
               min="0"
               step="any"
               value={closeOut}
@@ -1998,8 +2001,7 @@ function CountAssortmentModal({
         </p>
         <label className="block space-y-1">
           <span className="text-sm font-medium text-content">Counted</span>
-          <input
-            type="number"
+          <NumberInput
             min={0}
             value={value}
             autoFocus
@@ -2155,8 +2157,7 @@ function AddKindModal({
         </label>
         <label className="block space-y-1">
           <span className="text-sm font-medium text-content">Roughly how many</span>
-          <input
-            type="number"
+          <NumberInput
             min={0}
             value={approx}
             placeholder="7"

@@ -99,7 +99,7 @@ export class ListsApiError extends Error {
 }
 
 export class ListsApi {
-  constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
+  constructor(private readonly slug: string, readonly getToken: () => string | null) {}
 
   /** The items added to a list on this device that an earlier page left
    *  waiting (made offline, then the page reloaded): kept on the device and

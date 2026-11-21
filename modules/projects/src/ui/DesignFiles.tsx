@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Images, Loader2, Trash2, Upload } from "lucide-react";
-import { canPreviewFile, FilePreview, Lightbox, Modal, SelectableTile, usePasteImage, openAuthedFile, useConfirm, useFilePreviewRegistry, useToast, EntityPhoto, noteWorkspaceWrite, uploadJson, workspaceFetch, QueryError } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, KeptPhotoNote, Lightbox, lostConnection, Modal, useKeptPhotos, SelectableTile, usePasteImage, openAuthedFile, useConfirm, useFilePreviewRegistry, useToast, EntityPhoto, noteWorkspaceWrite, uploadJson, workspaceFetch, QueryError } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
 import { patternNeedsKey } from "./PatternNeeds";
@@ -44,7 +44,7 @@ export function DesignFiles({ designId }: { designId: string }) {
   const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   // A picture pasted on the design files is added like one chosen (usePasteImage).
-  usePasteImage(() => fileInput.current?.parentElement ?? null, { onFiles: ([f]) => f && upload.mutate(f), accept: "image/*,application/pdf" });
+  usePasteImage(() => fileInput.current?.parentElement ?? null, { onFiles: ([f]) => f && void kept.send(f), accept: "image/*,application/pdf" });
   const [stripOpen, setStripOpen] = useState(false);
   // The pattern opens IN the app (every page, zoom, keep the screen on),
   // with a new tab one tap away; a format with no viewer opens in a tab.
@@ -96,10 +96,14 @@ export function DesignFiles({ designId }: { designId: string }) {
   }, [landed]);
 
   const upload = useMutation({
-    mutationFn: async (file: File) => {
+    // The kept-photo door below does the waiting (useKeptPhotos): a failure is
+    // told to it at once, never held in memory until the connection is back.
+    networkMode: "always",
+    retry: false,
+    mutationFn: async ({ file: file, key }: { file: File; key?: string }) => {
       const fd = new FormData();
       fd.append("file", file);
-      const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken(), file });
+      const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken(), file, ...(key ? { idempotencyKey: key } : {}) });
       const role = file.type === "application/pdf" ? "pattern" : "gallery";
       const ares = await workspaceFetch(`${base}/attachments`, {
         method: "POST",
@@ -112,7 +116,8 @@ export function DesignFiles({ designId }: { designId: string }) {
           role,
         }),
       });
-      if (!ares.ok) throw await refusal(ares, "Couldn't attach that file");
+      // 409: attached already, by a send whose answer was lost.
+      if (!ares.ok && ares.status !== 409) throw await refusal(ares, "Couldn't attach that file");
       noteWorkspaceWrite(`${base}/attachments`);
       return role;
     },
@@ -126,8 +131,16 @@ export function DesignFiles({ designId }: { designId: string }) {
         toast.info("Reading the pattern for its photo, yarn and hooks…");
       }
     },
-    onError: (e) => toast.error((e as Error).message),
+    // A lost connection is the kept file's own note to say (below).
+    onError: (e) => {
+      if (!lostConnection(e)) toast.error((e as Error).message);
+    },
   });
+  // A photo or pattern added offline is kept on the device and sent when the
+  // connection is back, never dropped (#4115, useKeptPhotos).
+  const kept = useKeptPhotos(`${orgSlug}:files:projects:project:${designId}`, async (file, key) => {
+    await upload.mutateAsync({ file, key });
+  }, { token: getToken() });
 
   const detach = useMutation({
     mutationFn: async (id: string) => {
@@ -215,15 +228,16 @@ export function DesignFiles({ designId }: { designId: string }) {
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) upload.mutate(f);
+            if (f) void kept.send(f);
             e.target.value = "";
           }}
         />
       </div>
+      <KeptPhotoNote kept={kept} noun="file" />
       {upload.isPending && upload.variables && (
         <p className="mb-3 flex items-center gap-2 text-xs text-muted dark:text-slate-400" role="status" data-testid="design-file-uploading">
           <Loader2 size={13} className="animate-spin shrink-0" aria-hidden />
-          <span className="truncate">Adding {upload.variables.name}…</span>
+          <span className="truncate">Adding {upload.variables.file.name}…</span>
         </p>
       )}
       {list.isError && <QueryError what="design files" onRetry={() => void list.refetch()} />}

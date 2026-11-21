@@ -6,6 +6,7 @@
 // stays consistent across list and gallery views.
 
 import { useEffect, useState } from "react";
+import { drawablePicture } from "@cobblr/platform-contract/safe-href";
 import { reportBrokenPicture } from "./brokenPictures";
 
 const TOKEN_KEY = "cobblr.token";
@@ -145,7 +146,17 @@ export function reloadPicture(src: string): boolean {
   return true;
 }
 
-export function useImageSrc(src?: string | null): string | null {
+/** A stored picture is drawn only when it is a file on this site, an https
+ *  address or a blob: the page made (drawablePicture): a `javascript:` or
+ *  `data:` value, plain http from elsewhere, or another site's address with no
+ *  scheme shows the record's initial instead, so a row saved before the rule
+ *  is never loaded (#4115). */
+export function useImageSrc(given?: string | null): string | null {
+  const src = drawablePicture(given, typeof window !== "undefined" ? window.location.origin : undefined);
+  return useResolvedSrc(src);
+}
+
+function useResolvedSrc(src: string | null): string | null {
   const [resolved, setResolved] = useState<string | null>(() => {
     if (!src) return null;
     if (!needsAuth(src)) return src;

@@ -31,6 +31,9 @@ export default defineModule({
     // Past arrivals whose stock may never have been added: stamped, and the
     // recent ones put to a person (heal-unreceived-arrivals.ts).
     onBoot: async () => {
+      // Links saved before link fields took only web addresses, counted on /healthz (#9709).
+      const { registerPurchasesNonWebLinksCount } = await import("./count-non-web-links.js");
+      registerPurchasesNonWebLinksCount();
       // What it shows on the dashboard, read in its one request (#6563).
       const { registerPurchasesDashboardReads } = await import("./dashboard-reads.js");
       registerPurchasesDashboardReads();

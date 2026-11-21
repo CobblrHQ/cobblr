@@ -33,7 +33,7 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { createHash, randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
-import { announceSignInsEnded, signInsEndAt } from "./sign-ins-ended.js";
+import { announceSignInsEnded, endSignIns } from "./sign-ins-ended.js";
 import { verifyPassword } from "../auth/password.js";
 import { sendAuthEmail } from "./hosted-seams.js";
 import { blockDisposableEnabled, isDisposableEmail } from "./disposable-emails.js";
@@ -221,16 +221,11 @@ export async function confirmEmailChange(
   const at = new Date();
   await meta.transaction().execute(async (trx) => {
     await trx.updateTable("auth_email_change_tokens").set({ consumed_at: at }).where("id", "=", row.id).execute();
-    await trx
-      .updateTable("users")
-      .set({ email: row.new_email, email_verified_at: at, ...signInsEndAt(revokeFrom(at)) })
-      .where("id", "=", row.user_id)
-      .execute();
-    // The old mailbox keeps no way back in: a reset or verify link for this
-    // account, or a sign-in link to the old address, sent before the change.
-    await trx.updateTable("auth_password_reset_tokens").set({ consumed_at: at }).where("user_id", "=", row.user_id).where("consumed_at", "is", null).execute();
+    // The old mailbox keeps no way back in: endSignIns ends a reset link, a
+    // sign-in link to the old address and a pairing code sent before the
+    // change, and a verify link for the old address goes here.
+    await endSignIns(trx, row.user_id, revokeFrom(at), { email: row.new_email, email_verified_at: at });
     await trx.updateTable("auth_email_verify_tokens").set({ consumed_at: at }).where("user_id", "=", row.user_id).where("consumed_at", "is", null).execute();
-    await trx.updateTable("auth_magic_tokens").set({ consumed_at: at }).where("email", "=", row.old_email).where("consumed_at", "is", null).execute();
   });
   announceSignInsEnded(row.user_id);
   await logAccountEvent(row.user_id, "email_changed", { from: row.old_email, to: row.new_email });
@@ -277,17 +272,11 @@ export async function revertEmailChange(plain: string): Promise<{ refused: Chang
     // No password survives: must_reset_password alone would let whoever knew
     // the old one sign in with it and choose the next. An empty hash matches
     // nothing; the reset link below sets the new one.
-    await trx
-      .updateTable("users")
-      .set({ email: row.old_email, email_verified_at: at, ...signInsEndAt(revokeFrom(at)), password_hash: "", must_reset_password: false })
-      .where("id", "=", row.user_id)
-      .execute();
+    await endSignIns(trx, row.user_id, revokeFrom(at), { email: row.old_email, email_verified_at: at, password_hash: "", must_reset_password: false });
     // Credentials that never expire with a session: personal API tokens and
     // connected apps (their access tokens are API tokens too).
     await trx.updateTable("api_tokens").set({ revoked_at: at }).where("user_id", "=", row.user_id).where("revoked_at", "is", null).execute();
     await trx.updateTable("oauth_grants").set({ revoked_at: at }).where("user_id", "=", row.user_id).where("revoked_at", "is", null).execute();
-    await trx.updateTable("auth_password_reset_tokens").set({ consumed_at: at }).where("user_id", "=", row.user_id).where("consumed_at", "is", null).execute();
-    await trx.updateTable("auth_magic_tokens").set({ consumed_at: at }).where("email", "=", row.new_email).where("consumed_at", "is", null).execute();
     await trx.insertInto("auth_password_reset_tokens").values({ user_id: row.user_id, token_hash: reset.hashed, request_ip: null, request_ua: "email-change-revert" }).execute();
   });
   announceSignInsEnded(row.user_id);

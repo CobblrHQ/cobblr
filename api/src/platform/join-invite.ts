@@ -14,21 +14,52 @@ import * as activity from "./activity.js";
 import * as notifications from "./notifications.js";
 import { sql } from "kysely";
 import { linkPersonToUser } from "./people.js";
+import { roleNow } from "./membership-ended.js";
+import { canActOnRole } from "../auth/capability.js";
+import { ORG_ROLE_RANK } from "@cobblr/platform-contract/org-roles";
 
 export type InviteRow = Pick<
   Selectable<WorkspaceInvitesTable>,
   "id" | "revoked_at" | "consumed_at" | "expires_at" | "reusable" | "max_uses" | "use_count"
 > & { paused_at?: Date | null };
 
-export type InviteStatus = "open" | "revoked" | "consumed" | "expired" | "full" | "paused";
+export type InviteStatus = "open" | "revoked" | "consumed" | "expired" | "full" | "paused" | "maker_cannot" | "workspace_disabled";
 
-/** Whether an invite can still be used, and if not, why. */
-export function inviteStatus(i: InviteRow): InviteStatus {
+/** An invite as the doors read it: the link, whose it is and what it gives. */
+export type LiveInviteRow = InviteRow & Pick<Selectable<WorkspaceInvitesTable>, "org_id" | "invited_by_user" | "role">;
+
+/** Whether the link itself can still be used, and if not, why. Doors ask
+ *  inviteStatusNow (code:invite-status), which also asks what can change
+ *  after a link is made. */
+function linkStatus(i: InviteRow): InviteStatus {
   if (i.revoked_at) return "revoked";
   if (i.expires_at && new Date(i.expires_at) < new Date()) return "expired";
   if (i.reusable && i.paused_at) return "paused";
   if (i.reusable) return i.max_uses !== null && i.use_count >= i.max_uses ? "full" : "open";
   return i.consumed_at ? "consumed" : "open";
+}
+
+/** Whether an invite can still be used now, and if not, why. Nobody may make
+ *  an invite for a role above their own, but that was asked only when it was
+ *  made: an admin about to be demoted or removed made an admin join link,
+ *  which runs until revoked, and walked a second account back in as an admin
+ *  (#4115). So a link that gives more than a member's role works only while
+ *  its maker could still make it; a member's link (the wall QR) is the
+ *  workspace's and outlives whoever printed it. A workspace the operator
+ *  disabled takes nobody in. */
+export async function inviteStatusNow(i: LiveInviteRow): Promise<InviteStatus> {
+  const own = linkStatus(i);
+  if (own !== "open") return own;
+  const ws = await meta.selectFrom("orgs").select("plan").where("id", "=", i.org_id).executeTakeFirst();
+  if (!ws || ws.plan === "disabled") return "workspace_disabled";
+  if ((ORG_ROLE_RANK[i.role] ?? Number.POSITIVE_INFINITY) > ORG_ROLE_RANK.member) {
+    const maker = await roleNow(i.org_id, i.invited_by_user);
+    // role-gate: exact — making an invite is governance, the owner and admins
+    // only (assertAdmin); an editor ranks with an admin for actions, not for
+    // who is in the workspace.
+    if (!(maker === "owner" || maker === "admin") || !canActOnRole(maker, i.role)) return "maker_cannot";
+  }
+  return "open";
 }
 
 export const REFUSAL: Record<Exclude<InviteStatus, "open">, string> = {
@@ -37,6 +68,8 @@ export const REFUSAL: Record<Exclude<InviteStatus, "open">, string> = {
   expired: "Invite expired.",
   full: "This join link has reached the number of people it was made for. Ask the workspace for a new one.",
   paused: "This join link is paused because more people joined than it allows in a short time. The workspace has been told and can turn it back on.",
+  maker_cannot: "The person who made this invite can no longer give that role. Ask the workspace for a new one.",
+  workspace_disabled: "This workspace has been disabled by the platform operator.",
 };
 
 const PERIOD_WORD: Record<string, string> = { day: "a day", week: "a week", month: "a month", year: "a year" };
@@ -143,13 +176,13 @@ export async function joinThroughInvite(
     .where("user_id", "=", userId)
     .where("org_id", "=", invite.org_id)
     .executeTakeFirst();
-  const status = inviteStatus(invite);
+  const status = await inviteStatusNow(invite);
   // Their own second press, however late: the row said "used" only once their
   // membership had committed with it. Someone removed since isn't let back in.
   if (status === "consumed" && existing && invite.consumed_by_user === userId) {
     return { ok: true, orgId: invite.org_id, role: existing.role as OrgRole, alreadyMember: true };
   }
-  if (status !== "open" && !(invite.reusable && existing && status !== "revoked" && status !== "expired")) {
+  if (status !== "open" && !(invite.reusable && existing && status !== "revoked" && status !== "expired" && status !== "workspace_disabled")) {
     return { ok: false, code: status as Exclude<InviteStatus, "open">, message: REFUSAL[status as Exclude<InviteStatus, "open">] };
   }
   // A forwarded link must not let someone else in, with the role it was made for
@@ -228,13 +261,13 @@ export async function labelJoinLink(orgId: string): Promise<{ token: string; org
   const rows = await meta
     .selectFrom("workspace_invites as i")
     .innerJoin("orgs as o", "o.id", "i.org_id")
-    .select(["i.id", "i.token", "i.revoked_at", "i.consumed_at", "i.expires_at", "i.reusable", "i.max_uses", "i.use_count", "i.paused_at", "o.name as org_name"])
+    .select(["i.id", "i.token", "i.org_id", "i.invited_by_user", "i.role", "i.revoked_at", "i.consumed_at", "i.expires_at", "i.reusable", "i.max_uses", "i.use_count", "i.paused_at", "o.name as org_name"])
     .where("i.org_id", "=", orgId)
     .where("i.reusable", "=", true)
     .where("i.offer_on_labels", "=", true)
     .where("i.revoked_at", "is", null)
     .orderBy("i.created_at", "desc")
     .execute();
-  const open = rows.find((r) => inviteStatus(r) === "open");
-  return open ? { token: open.token, org_name: open.org_name } : null;
+  for (const r of rows) if ((await inviteStatusNow(r)) === "open") return { token: r.token, org_name: r.org_name };
+  return null;
 }

@@ -25,6 +25,7 @@ import { openSheetImport } from "../lib/sheet-import";
 import { useExactHits } from "../lib/useExactHits";
 
 import { OPEN_ADD_SHEET_EVENT, OPEN_PALETTE_EVENT, hostGone, hostLoaded } from "./palette-events";
+import { textHas } from "@cobblr/platform-contract/search-text";
 export { OPEN_ADD_SHEET_EVENT, OPEN_PALETTE_EVENT };
 
 interface ActionRow {
@@ -167,7 +168,7 @@ export function CommandPalette() {
     const needle = q.trim().toLowerCase();
     if (!needle) return [];
     return panels
-      .filter((p) => p.label.toLowerCase().includes(needle))
+      .filter((p) => textHas(p.label, needle))
       .slice(0, 3)
       .map((p) => ({
         label: p.label,

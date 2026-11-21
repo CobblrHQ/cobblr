@@ -4,7 +4,7 @@
 
 import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { useStockWrites } from "./stock-writes";
-import { MutationError, SearchInput, QueryError } from "@cobblr/platform-web";
+import { MutationError, SearchInput, QueryError, NumberInput } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
 import { collectionLabelFor } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -130,8 +130,7 @@ function ReserveForm({ partId }: { partId: string }) {
         Reserve for…
       </div>
       <div className="flex gap-2">
-        <input
-          type="number"
+        <NumberInput
           step="any"
           min="0"
           value={qty}

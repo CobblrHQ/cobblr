@@ -11,6 +11,7 @@
 
 import { custodyFromLoan } from "./custody.js";
 import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
+import { storedPicture } from "@cobblr/platform-contract/image-reference";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 import { DISPOSITION_LABELS, dispositionOf } from "@cobblr/platform-contract/disposition";
@@ -29,7 +30,7 @@ function patchOf(fields: Record<string, unknown>): Record<string, unknown> {
   // What a source that mirrors a register brings: the tag printed on it (the
   // short name), its picture and when the warranty ends.
   if (fields.short_name !== undefined) patch.short_name = asStr(fields.short_name);
-  if (fields.image_path !== undefined) patch.image_path = asStr(fields.image_path);
+  if (fields.image_path !== undefined) patch.image_path = storedPicture(fields.image_path);
   if (fields.warranty_until !== undefined) patch.warranty_until = asStr(fields.warranty_until);
   // What paperwork fills, by role or by its own words (a bill of sale's
   // make, model, VIN, date, price and dealer).

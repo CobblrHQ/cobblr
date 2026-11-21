@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Scissors, Star, Trash2, Upload, X } from "lucide-react";
-import { SELECTED_TILE, useConfirm, useImageSrc, usePhotoPick, useToast, EntityPhoto, Lightbox, MutationError, noteWorkspaceWrite, uploadJson, workspaceFetch, QueryError } from "@cobblr/platform-web";
+import { KeptPhotoNote, SELECTED_TILE, lostConnection, useConfirm, useImageSrc, useKeptPhotos, usePhotoPick, useToast, EntityPhoto, Lightbox, MutationError, noteWorkspaceWrite, uploadJson, workspaceFetch, QueryError } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { cutoutPlainBackground } from "./remove-background";
 import { isCoverFile } from "./gallery-cover";
@@ -61,10 +61,14 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
   });
 
   const upload = useMutation({
-    mutationFn: async (file: File) => {
+    // The kept-photo door below does the waiting (useKeptPhotos): a failure is
+    // told to it at once, never held in memory until the connection is back.
+    networkMode: "always",
+    retry: false,
+    mutationFn: async ({ file, key }: { file: File; key?: string }) => {
       const fd = new FormData();
       fd.append("file", file);
-      const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken(), file });
+      const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken(), file, ...(key ? { idempotencyKey: key } : {}) });
       const ares = await workspaceFetch(`${base}/attachments`, {
         method: "POST",
         headers: { ...auth(), "Content-Type": "application/json" },
@@ -76,14 +80,23 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
           role: "gallery",
         }),
       });
-      if (!ares.ok) throw new Error(`attach ${ares.status}`);
+      // 409: attached already, by a send whose answer was lost.
+      if (!ares.ok && ares.status !== 409) throw new Error(`attach ${ares.status}`);
       noteWorkspaceWrite(`${base}/attachments`);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, partId] });
     },
-    onError: (e) => toast.error(`Upload failed: ${(e as Error).message}`),
+    // A lost connection is the kept photo's own note to say (below).
+    onError: (e) => {
+      if (!lostConnection(e)) toast.error(`Upload failed: ${(e as Error).message}`);
+    },
   });
+  // A photo added offline is kept on the device and sent when the connection
+  // is back, never dropped (#4115, useKeptPhotos).
+  const kept = useKeptPhotos(`${orgSlug}:gallery:part:${partId}`, async (file, key) => {
+    await upload.mutateAsync({ file, key });
+  }, { token: getToken() });
 
   const detach = useMutation({
     mutationFn: async (id: string) => {
@@ -135,13 +148,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
 
   async function handleFiles(files: FileList | File[] | null) {
     if (!files) return;
-    for (const f of Array.from(files)) {
-      try {
-        await upload.mutateAsync(f);
-      } catch {
-        /* toast already fired */
-      }
-    }
+    for (const f of Array.from(files)) await kept.send(f);
   }
   const photo = usePhotoPick((files) => void handleFiles(files), { multiple: true, title: "Photo of this item", label: "Choose photos" });
 
@@ -199,6 +206,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
           <Upload size={11} /> {upload.isPending ? "uploading…" : "add"}
         </button>
         {photo.input}
+        <KeptPhotoNote kept={kept} />
       </div>
       {list.isLoading && (
         <div className="text-xs text-faint">loading…</div>

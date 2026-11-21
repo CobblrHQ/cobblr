@@ -1,4 +1,4 @@
-import { SelectBox, useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem, useRecordEdits, useStillAsking } from "@cobblr/platform-web";
+import { SelectBox, useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem, useRecordEdits, useStillAsking, CreateDraftNote, useCreateDraft, useListSearch } from "@cobblr/platform-web";
 // /assets — list + detail modal for the assets module. Same shape
 // as MachinesPage. No specialisations yet (no assets:asset Pillar-E
 // modules ship), so no lens UI here — but the column rendering is
@@ -51,6 +51,8 @@ import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plura
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { fieldCurrency, formatMoney, toCents } from "@cobblr/platform-contract/money";
 import { ListNearSpellings } from "../components/ListNearSpellings";
+import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -210,12 +212,13 @@ export function AssetsPage({
       )
     : allRows;
 
-  const [query, setQuery] = useState("");
+  // Kept with this page in the history, so Back from a record finds the list as it was left (#4115, useListSearch).
+  const [query, setQuery] = useListSearch("q");
   const filtered = query
     ? rows.filter((m) =>
         [m.name, m.manufacturer, m.model, m.type, m.short_name]
           .filter(Boolean)
-          .some((v) => v!.toLowerCase().includes(query.toLowerCase())),
+          .some((v) => textHas(v!, query.toLowerCase())),
       )
     : rows;
 
@@ -919,7 +922,7 @@ export function AssetDetailModal({
             ctx={{ slug: activeSlug, entityId: a.id, entityTitle: a.name, hints: { collection: instance ? `${instance}:item` : undefined } }}
           />
           <EntityAttachments kind={ENTITY_KIND} entityId={a.id} collection={instance ? `${instance}:item` : undefined} omit={["tags", "discussion", "pairings"]} />
-          <EditField label="Notes" value={a.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
+          <EditField label="Notes" value={a.notes ?? ""} multiline maxLength={RECORD_NOTES_MAX} onCommit={(v) => update.mutate({ notes: v || null })} />
             </div>
           </div>
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
@@ -1023,6 +1026,23 @@ function NewAssetModal({
     { name: "image_path", label: "Photo", key: "image_url", value: barcodeImage, setValue: setBarcodeImage },
   ] });
   useEffect(() => { if (open) { setBarcodeMetadata({}); setBarcodeImage(""); } }, [open]);
+  // After the resets above, so what was typed before a reload or a stray close
+  // comes back over them, per workspace and person, until it is made (#4115).
+  const draft = useCreateDraft({
+    form: `assets:new-asset:${instance ?? ""}`,
+    slug: activeSlug,
+    token: getToken(),
+    open,
+    values: { name, manufacturer, model, category, locationId },
+    empty: { name: "", manufacturer: "", model: "", category: "", locationId: null },
+    restore: (v) => {
+      setName(String(v.name ?? ""));
+      setManufacturer(String(v.manufacturer ?? ""));
+      setModel(String(v.model ?? ""));
+      setCategory(String(v.category ?? ""));
+      setLocationId(typeof v.locationId === "string" ? v.locationId : null);
+    },
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -1036,6 +1056,7 @@ function NewAssetModal({
         location_id: locationId,
       }, instance),
     onSuccess: (a) => {
+      draft.clear();
       toast.success(`${noun[0]!.toUpperCase()}${noun.slice(1)} added.`);
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
       onClose();
@@ -1055,6 +1076,7 @@ function NewAssetModal({
   return (
     <RecordFormModal open={open} onClose={onClose} title={`New ${noun}`}>
       <form onSubmit={submit} className="space-y-3">
+        <CreateDraftNote draft={draft} />
         {barcode.controls}
         {barcodeImage && <div className="flex items-center gap-2"><EntityThumb src={barcodeImage} alt="Photo from barcode" size={96} /><button type="button" className="text-sm text-accent underline" onClick={() => setBarcodeImage("")}>Remove photo</button></div>}
         <label className="block">

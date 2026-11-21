@@ -6,6 +6,7 @@
 import { siblingOrder } from "@cobblr/platform-web";
 import type { Location } from "./api";
 import { placesOf, type PlaceableRecord } from "./placeableRecords";
+import { textHas } from "@cobblr/platform-contract/search-text";
 
 /** The kind a place is, for the placement door. */
 export const LOCATION_KIND = "core-locations:location";
@@ -52,7 +53,7 @@ export function railItems(records: PlaceableRecord[], f: RailFilter): PlaceableR
   const shown = records.filter(
     (r) =>
       (f.collection === null || r.kind === f.collection) &&
-      (q === "" || r.name.toLowerCase().includes(q)) &&
+      (q === "" || textHas(r.name, q)) &&
       (f.showAll || placesOf(r).length === 0),
   );
   const unplaced = (r: PlaceableRecord) => (placesOf(r).length === 0 ? 0 : 1);

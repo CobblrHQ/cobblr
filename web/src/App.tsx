@@ -235,6 +235,7 @@ const AdminLayout = lazy(() => import("./components/AdminLayout").then((m) => ({
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PageNotFound } from "./components/PageNotFound";
 import { ConnectivityBanner } from "./components/ConnectivityBanner";
+import { StreamRefusedNotice } from "./components/StreamRefusedNotice";
 import { WaitingWritesSender } from "./components/WaitingWritesSender";
 const PortalLayout = lazy(() => import("./components/PortalLayout").then((m) => ({ default: m.PortalLayout })));
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
@@ -319,6 +320,7 @@ export function App() {
   return (
     <ErrorBoundary scope="app">
       <ConnectivityBanner />
+      <StreamRefusedNotice />
       <WorkspaceShapeRefresh />
       <ScanFiledRefresh />
       <AuthProvider>

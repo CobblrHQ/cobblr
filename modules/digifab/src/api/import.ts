@@ -22,6 +22,7 @@ import { resolveDriver } from "../drivers/registry.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import { FdmMonsterDriver } from "../drivers/fdm-monster.js";
 import { ensureDeclarativeDrivers, createPool, addPoolMember } from "./farm-build.js";
+import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const importRouter = Router({ mergeParams: true });
 
@@ -31,7 +32,7 @@ const Body = z
   .object({
     // Either an existing FDMM connection, or fresh credentials to read from.
     connection_id: z.string().uuid().optional(),
-    base_url: z.string().url().max(500).optional(),
+    base_url: webLink().max(500).optional(),
     api_key: z.string().max(500).optional(),
     username: z.string().max(200).optional(),
     password: z.string().max(200).optional(),

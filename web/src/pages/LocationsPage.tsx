@@ -1,6 +1,6 @@
 import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { useCan, useRoleAtLeast } from "../lib/can";
-import { SelectBox, fieldNeed, FieldPack, RecordFormModal, NewItemMenu, EntityThumb, BulkActionBar, BulkSetField, useTickedRows, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
+import { SelectBox, fieldNeed, FieldPack, RecordFormModal, NewItemMenu, EntityThumb, BulkActionBar, BulkSetField, useTickedRows, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput, CreateDraftNote, useCreateDraft, useListSearch } from "@cobblr/platform-web";
 // /locations — the workspace-wide tree of physical places.
 // core-locations is foundational, so this page always exists when an
 // org is loaded. The tree below is rendered as boxed nested list
@@ -38,7 +38,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ApiError, api, fetchCsv, type Location } from "../lib/api";
+import { ApiError, api, fetchCsv, getToken, type Location } from "../lib/api";
 import { downloadBlob, editOf, useRecordAsOpened, isKeptOffline, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { deleteDialogMessage, restorePlaces, restoredSentence } from "../lib/placeDelete";
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -99,7 +99,8 @@ export function LocationsPage() {
   useEffect(() => { if (!canImport) setImportOpen(false); }, [canImport]);
   // Fold + filter (lib/tree-fold.ts). Filtering wins: while a query is typed
   // every surviving node is open and fold memory is left alone.
-  const [q, setQ] = useState("");
+  // Kept with this page in the history, so Back from a record finds the list as it was left (#4115, useListSearch).
+  const [q, setQ] = useListSearch("q");
   const [hideEmpty, setHideEmpty] = useHideEmpty("locations");
   const [fold, setFold] = useFoldOverrides(activeSlug);
   const filtering = q.trim().length > 0;
@@ -1346,6 +1347,27 @@ export function LocationFormModal({
   // The place already there under this parent with this name, once the
   // server has said so; the form then offers to open it or keep both.
   const [dup, setDup] = useState<{ existingId: string } | null>(null);
+  // What is typed into a new place survives a reload, a dropped tab or a stray
+  // close, per workspace and person, until it is made (#4115, useCreateDraft).
+  // Editing a place has the place itself; it keeps no draft.
+  const draft = useCreateDraft({
+    form: "core-locations:new-location",
+    slug,
+    token: getToken(),
+    open: !editing,
+    values: { name, shortName, kind, parentId },
+    empty: { name: "", shortName: "", kind: "area", parentId: parentIdInitial ?? "" },
+    restore: (v) => {
+      setName(String(v.name ?? ""));
+      setShortName(String(v.shortName ?? ""));
+      setKind(v.kind === "container" ? "container" : "area");
+      setParentId(String(v.parentId ?? ""));
+    },
+  });
+  const saved = () => {
+    draft.clear();
+    onSaved();
+  };
   const places = useQuery({ queryKey: ["core-locations", slug], queryFn: () => api.listLocations(slug), enabled: !!slug });
   const parentName = parentId ? places.data?.items.find((l) => l.id === parentId)?.name ?? null : null;
 
@@ -1406,7 +1428,7 @@ export function LocationFormModal({
         }
         if (kept.length) {
           toast.info(`${kept.join(", ")}: ${KEPT_SENTENCE}`);
-          onSaved();
+          saved();
           return;
         }
         // Bottom-up numbering means the list must read the OTHER way, so
@@ -1434,11 +1456,11 @@ export function LocationFormModal({
         if (made?.id) qc.setQueryData<{ items: Location[] }>(["core-locations", slug], (old) => (old && !old.items.some((l) => l.id === made.id) ? { ...old, items: [...old.items, made] } : old));
         toast.success("Location created");
       }
-      onSaved();
+      saved();
     } catch (err) {
       if (isKeptOffline(err)) {
         toast.info(`${name.trim()}: ${KEPT_SENTENCE}`);
-        onSaved();
+        saved();
         return;
       }
       const found = duplicatePlaceOf(err);
@@ -1451,6 +1473,7 @@ export function LocationFormModal({
 
   return (
     <RecordFormModal open onClose={onClose} title={editing ? "Edit location" : "New location"}>
+      <CreateDraftNote draft={draft} />
       <form
         onSubmit={async (e) => {
           e.preventDefault();

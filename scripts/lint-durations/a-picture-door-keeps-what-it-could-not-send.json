@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-picture-door-keeps-what-it-could-not-send",
+  "run": "node scripts/lint-a-picture-door-keeps-what-it-could-not-send.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 784,
+  "recorded": "2026-11-20",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}
