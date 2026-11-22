@@ -72,6 +72,7 @@ import { LocationTreePicker } from "../components/LocationTreePicker";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 import { readRecordLoan } from "@cobblr/platform-contract/loan";
 import { ListNearSpellings } from "../components/ListNearSpellings";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 const ENTITY_KIND = "machines:machine";
@@ -830,7 +831,7 @@ function groupMachines(items: Machine[], key: string): { key: string; rows: Mach
     map.get(v)!.push(m);
   }
   return [...map.entries()]
-    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : a[0].localeCompare(b[0])))
+    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : compareNames(a[0], b[0])))
     .map(([k, rows]) => ({ key: k, rows }));
 }
 

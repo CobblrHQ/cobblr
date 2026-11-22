@@ -25,6 +25,7 @@ import { api, type Location, type PlaceHolder } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QuickCreateLocation } from "./QuickCreateLocation";
 import { ActionDescription, firstActionSentence, OverlayLayer, PopoverLayer, SearchInput, useEscapeToClose, useToast } from "@cobblr/platform-web";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 import { textHas } from "@cobblr/platform-contract/search-text";
 
 interface Props {
@@ -58,7 +59,7 @@ interface Props {
 
 // siblings: manual drag order (position), then NATURAL name (Bin 2 before Bin 10).
 const cmp = (a: Location, b: Location) =>
-  a.position - b.position || a.name.localeCompare(b.name, undefined, { numeric: true });
+  a.position - b.position || compareNames(a.name, b.name);
 
 export function LocationTreePicker({
   value,

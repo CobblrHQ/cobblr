@@ -49,6 +49,7 @@ import { rowPictures, leadYours } from "../lib/rowPictures";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 import { PAST_SHELF_LIFE, useAlreadyGone } from "../lib/useAlreadyGone";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 function CaptureThumbnail({ slug, item, name }: { slug: string; item: ScanInboxItem; name: string }) {
   const pics = rowPictures(slug, item);
   const picture = leadYours(pics.pictures) ?? pics.pictures.find(p => p.fileId);
@@ -269,7 +270,7 @@ export function WhatToDoPanel({
           // adding another category to a kind you already run.
           Number(a.isCategory) - Number(b.isCategory) ||
           kindRank(a.module) - kindRank(b.module) ||
-          a.label.localeCompare(b.label),
+          compareNames(a.label, b.label),
       );
   }, [modulesQ.data]);
   // The operators, offered as a quiet "also add" strip under col 1 so they stay
@@ -284,7 +285,7 @@ export function WhatToDoPanel({
             !m.name.startsWith("core-") &&
             (m.operates_on?.length ?? 0) > 0,
         )
-        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
+        .sort((a, b) => compareNames(a.displayName, b.displayName)),
     [modulesQ.data],
   );
   const blankMatches = useMemo(() => {
@@ -319,7 +320,7 @@ export function WhatToDoPanel({
       base = [...base].sort(
         (a, b) =>
           (a.manifest.requires?.length ?? 0) - (b.manifest.requires?.length ?? 0) ||
-          a.manifest.name.localeCompare(b.manifest.name),
+          compareNames(a.manifest.name, b.manifest.name),
       );
     }
     return splitCatalog(base);
@@ -663,7 +664,7 @@ export function WhatToDoPanel({
     rows.push(it);
     group.rows.set(rowKey, rows);
   }
-  const orderedGroups = [...groups.entries()].sort(([aKey, a], [bKey, b]) => b.captures.length - a.captures.length || a.label.localeCompare(b.label) || aKey.localeCompare(bKey));
+  const orderedGroups = [...groups.entries()].sort(([aKey, a], [bKey, b]) => b.captures.length - a.captures.length || compareNames(a.label, b.label) || aKey.localeCompare(bKey));
   const renderCapture = (captures: ScanInboxItem[], headerLabel: string) => {
     const it = captures[0]!;
     const d = it.resolved_destination;

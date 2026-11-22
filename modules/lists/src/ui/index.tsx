@@ -11,7 +11,8 @@ import { useQuery, useMutation, useMutationState, useQueryClient } from "@tansta
 import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Pencil, ChevronDown } from "lucide-react";
 import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity, lineUnit, restockAmount, willDatePhrase } from "./api.js";
 import { RunningLowOffer, useRunningLowKnown } from "./RunningLowOffer.js";
-import { PickToLight } from "@cobblr/platform-web";
+import { PickToLight, withoutDeletionToasts, pastedListProps } from "@cobblr/platform-web";
+import type { PastedLine } from "@cobblr/platform-contract/pasted-lines";
 
 
 /** A line's small icon button: the icon's own size on a wide screen, a
@@ -175,6 +176,10 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
   const qc = useQueryClient();
   const toast = useToast();
   const [draft, setDraft] = useState("");
+  // A list pasted into the box (from Notes, a message): one line per thing,
+  // shown before anything is added (#4115).
+  const [pasted, setPasted] = useState<PastedLine[] | null>(null);
+  const [addingPasted, setAddingPasted] = useState(false);
   // A line's own fields (whatever a bundle or a person adds to list lines)
   // open under it; the line a link pointed at starts open. Offered only when
   // the kind has any, so a plain list stays one line per thing.
@@ -216,6 +221,29 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
       toast.error(e instanceof ListsApiError ? e.message : String(e));
     },
   });
+  const addPasted = async (lines: PastedLine[]) => {
+    setAddingPasted(true);
+    const made: string[] = [];
+    try {
+      for (const line of lines) made.push((await api.addItem(listId, { title: line.title, ...(line.qty ? { qty: line.qty } : {}) })).id);
+      setPasted(null);
+    } catch (e) {
+      toast.error(`${made.length} of ${lines.length} added: ${e instanceof ListsApiError ? e.message : String(e)}`);
+      setPasted(lines.slice(made.length));
+    } finally {
+      setAddingPasted(false);
+      await invalidate();
+    }
+    if (!made.length) return;
+    // UNDO: takes back every line this paste added, and only those
+    toast.action(made.length === 1 ? "Added 1 item." : `Added ${made.length} items.`, { actionLabel: "Undo", duration: 10_000, onAction: async () => {
+      try {
+        await withoutDeletionToasts(async () => { for (const id of made) await api.removeItem(id); });
+        toast.success(made.length === 1 ? "Took the pasted item back." : `Took the ${made.length} pasted items back.`);
+      } catch (e) { toast.error(e instanceof ListsApiError ? e.message : String(e)); }
+      finally { await invalidate(); }
+    } });
+  };
   // What this page is adding, and what an earlier page added offline and left
   // waiting on the device: after a reload the list showed only what had landed
   // (#8675). One row each, until it lands.
@@ -370,11 +398,28 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
             autoFocus
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            {...pastedListProps(setPasted)}
+            aria-label="Add an item"
             placeholder="Add an item…"
             className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
           />
           <button type="submit" disabled={!draft.trim()} className="px-3 py-2 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Add</button>
         </form>
+        {pasted && (
+          <div role="group" aria-label="Pasted items" className="rounded border border-line dark:border-slate-600 p-3 space-y-2">
+            <ul className="text-sm space-y-1">
+              {pasted.map((line, i) => (
+                <li key={i} className="break-words">{line.title}{line.qty && <span className="text-xs text-muted ml-2">×{line.qty}</span>}</li>
+              ))}
+            </ul>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={addingPasted} onClick={() => void addPasted(pasted)} className="px-3 py-2 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">
+                {addingPasted ? "Adding…" : pasted.length === 1 ? "Add 1 item" : `Add ${pasted.length} items`}
+              </button>
+              <button type="button" disabled={addingPasted} onClick={() => setPasted(null)} className="px-3 py-2 text-xs rounded text-muted hover:text-content">Cancel</button>
+            </div>
+          </div>
+        )}
 
         {detail.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {detail.isError && (isRecordGone(detail.error)

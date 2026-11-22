@@ -7,6 +7,7 @@ import { registerDeletedPlacesHeal } from "../heal-deleted-records.js";
 import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 let registered = false;
 
@@ -65,7 +66,7 @@ export function registerLocationsResolvers(): void {
         }
       }
       const [rows, counted] = await Promise.all([
-        (async () => (await groupListRows(db, q.orderBy("depth").orderBy("position").orderBy("name"), query)) ?? await q
+        (async () => (await groupListRows(db, q.orderBy("depth").orderBy("position").orderBy(byName("name")), query)) ?? await q
           // Match the /locations list endpoint's order EXACTLY so the user's
           // manual sibling order (set by drag → `position`) is honoured
           // EVERYWHERE locations surface through the generic layer — pickers,
@@ -74,7 +75,7 @@ export function registerLocationsResolvers(): void {
           // name as the tiebreaker.
           .orderBy("depth")
           .orderBy("position")
-          .orderBy("name")
+          .orderBy(byName("name"))
           .limit(limit)
           .offset(offset)
           .execute())(),

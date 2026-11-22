@@ -6,7 +6,7 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
-import { imagePathField } from "@cobblr/platform-contract/image-reference";
+import { MachineCreate, MachineUpdate } from "./machine-fields.js";
 import { GONE_STATES } from "./resolvers.js";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -17,7 +17,7 @@ import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from 
 import { readFleet, typedStamp } from "./versions-store.js";
 import { setVersionTarget } from "./set-version-target-action.js";
 import { isRefusal, liftUnits, unitIdsIn, mergeInto, nameUnit, releaseForDelete, splitOne, splitUnit, unitsSummary, type Refusal, type UnitsCtx } from "./units.js";
-import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 function unitsCtx(req: Parameters<typeof tenantDb>[0]): UnitsCtx {
   return { db: tenantDb(req), orgId: tenantContext(req).org.id, userId: sessionUser(req).id, instance: instanceOf(req) };
@@ -40,28 +40,7 @@ machinesRouter.use((req, res, next) => {
   next();
 });
 
-const MachineCreate = z.object({
-  name: z.string().min(1).max(200),
-  short_name: z.string().max(40).nullable().optional(),
-  family: z.string().max(120).nullable().optional(),
-  type: z.string().max(120).nullable().optional(),
-  manufacturer: z.string().max(120).nullable().optional(),
-  serial_number: z.string().max(120).nullable().optional(),
-  state: z.string().max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-  excitement: z.number().int().min(0).max(5).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-  image_path: imagePathField().nullable().optional(),
-  notes: z.string().max(RECORD_NOTES_MAX).nullable().optional(),
-  quantity: z.number().int().min(0).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-  location_id: z.string().uuid().nullable().optional(),
-  metadata: z.record(z.unknown()).optional(),
-  // What it runs, typed by a person; source and last seen are stamped here.
-  firmware_version: z.string().max(120).nullable().optional(),
-  software_version: z.string().max(120).nullable().optional(),
-  controller: z.string().max(120).nullable().optional(),
-});
-
 const MACHINE_NATIVE_KEYS = new Set(Object.keys(MachineCreate.shape));
-const MachineUpdate = MachineCreate.partial();
 
 // AI-REACH: exempt — dashboard-only aggregate; Cobb reads the register.
 machinesRouter.get("/dashboard", asyncHandler(async (req, res) => {
@@ -93,7 +72,7 @@ machinesRouter.get(
       .where("instance", "=", instanceOf(req))
       .$if(units.length > 0, (q) => q.where("id", "not in", units))
       .where(gone ? isGone : sql<boolean>`not ${isGone}`)
-      .orderBy("name")
+      .orderBy(byName("name"))
       .orderBy("id")
       .limit(page.limit)
       .offset(page.offset)

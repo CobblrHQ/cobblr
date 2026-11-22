@@ -19,6 +19,7 @@ import { instanceOf, sessionUser, tenantContext, tenantDb, type InventoryDB } fr
 import { isLowStock, onHandCount, openUnitsFor } from "../on-hand.js";
 import { batchesFrom, servedLots, sortBatches, type Batch } from "../batches.js";
 import { asyncHandler, badBody } from "./util.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 const LOCATION = "core-locations:location";
 
@@ -103,7 +104,7 @@ async function readRows(orgId: string, db: Kysely<InventoryDB>, scope: Scope, lo
   if (scope !== "every-collection") q = q.where("p.instance", "=", scope.instance);
   if (locationIds) q = q.where("p.location_id", "in", locationIds.length ? locationIds : ["00000000-0000-0000-0000-000000000000"]);
   else q = q.where(sql<boolean>`(p.metadata ? 'expires_on' or p.metadata ? 'batches')`);
-  const rows = await q.orderBy("p.name").limit(2000).execute();
+  const rows = await q.orderBy(byName("p.name")).limit(2000).execute();
 
   // Which of these are places of a card, per collection (a pairing names the kind).
   const cardOf = new Map<string, string>();

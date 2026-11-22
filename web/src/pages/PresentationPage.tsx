@@ -26,6 +26,7 @@ import { HeadingsBuilder } from "../components/HeadingsBuilder";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 export function PresentationPage() {
   usePageTitle("Presentation");
   const { activeSlug } = useActiveOrg();
@@ -125,7 +126,7 @@ export function PresentationPage() {
     const ao = a.override?.nav_order ?? 1000;
     const bo = b.override?.nav_order ?? 1000;
     if (ao !== bo) return ao - bo;
-    return a.defaultLabel.localeCompare(b.defaultLabel);
+    return compareNames(a.defaultLabel, b.defaultLabel);
   });
 
   return (

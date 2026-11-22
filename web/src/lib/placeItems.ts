@@ -6,6 +6,7 @@
 import { siblingOrder } from "@cobblr/platform-web";
 import type { Location } from "./api";
 import { placesOf, type PlaceableRecord } from "./placeableRecords";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 import { textHas } from "@cobblr/platform-contract/search-text";
 
 /** The kind a place is, for the placement door. */
@@ -57,7 +58,7 @@ export function railItems(records: PlaceableRecord[], f: RailFilter): PlaceableR
       (f.showAll || placesOf(r).length === 0),
   );
   const unplaced = (r: PlaceableRecord) => (placesOf(r).length === 0 ? 0 : 1);
-  return shown.sort((a, b) => unplaced(a) - unplaced(b) || a.name.localeCompare(b.name));
+  return shown.sort((a, b) => unplaced(a) - unplaced(b) || compareNames(a.name, b.name));
 }
 
 /** A place in full, outermost first: "Garage › Blue toolbox › Drawer 3". */

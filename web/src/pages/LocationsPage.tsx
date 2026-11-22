@@ -64,6 +64,7 @@ import {
   type Run,
 } from "../lib/tree-fold";
 import { bottomUpDisplayOrder, isStackedNoun } from "../lib/stacking";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 // The tree model + (position, then natural name) sort live in the shared
 // buildLocationForest — the SAME viewer the Labels browser uses, so the two
@@ -367,7 +368,7 @@ export function LocationsPage() {
       .sort(
         (x, y) =>
           x.position - y.position ||
-          x.name.localeCompare(y.name, undefined, { numeric: true }),
+          compareNames(x.name, y.name),
       )
       .map((l) => l.id);
     const from = group.indexOf(aid);

@@ -17,6 +17,7 @@
 
 import { countdownWords, dayHere } from "@cobblr/platform-contract/day";
 import type { CalendarEvent } from "./api";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 export type BucketId = "overdue" | "today" | "week" | "later";
 
@@ -63,7 +64,7 @@ export function upNextWindow(now: Date): { from: string; to: string } {
 /** Sort by date, then title, so the order is stable across refetches — two
  *  things due the same day must not swap places when you blink. */
 function byDate(a: CalendarEvent, b: CalendarEvent): number {
-  return a.date.localeCompare(b.date) || a.title.localeCompare(b.title);
+  return a.date.localeCompare(b.date) || compareNames(a.title, b.title);
 }
 
 /** Split dated events into overdue / today / this week / later.

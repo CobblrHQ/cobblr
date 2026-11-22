@@ -11,6 +11,7 @@ import { platform } from "@cobblr/platform-contract";
 import { fieldCurrency, readMoney, type Money } from "@cobblr/platform-contract/money";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 const SPOOL_KIND = "inventory:part";
 
@@ -73,7 +74,7 @@ async function hourRate(db: Kysely<DigifabDB>, job: { connection_id: string | nu
   if (!pools.length && job.connection_id && job.target_device) {
     pools = await db.selectFrom("digifab_pools").innerJoin("digifab_pool_members", "digifab_pool_members.pool_id", "digifab_pools.id")
       .select("digifab_pools.config").where("digifab_pool_members.connection_id", "=", job.connection_id)
-      .where("digifab_pool_members.remote_device_id", "=", job.target_device).orderBy("digifab_pools.name").execute();
+      .where("digifab_pool_members.remote_device_id", "=", job.target_device).orderBy(byName("digifab_pools.name")).execute();
   }
   for (const p of pools) {
     const config = (p.config ?? {}) as Fields;

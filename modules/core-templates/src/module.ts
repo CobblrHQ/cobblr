@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-templates",
-  version: "0.2.0",
+  version: "0.2.1",
   displayName: "Templates",
   description:
     "Start new things from a template with the usual details already filled in.",

@@ -10,6 +10,7 @@
 
 import { OUTER_SIZE_ROLE, parseOuterSize, type OuterSize } from "@cobblr/platform-contract/outer-size";
 import type { FpRect } from "./floorplanGeometry";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 /** The size a record carries, read through its kind's outer-size field(s). */
 export function outerSizeOf(
@@ -65,7 +66,7 @@ export function shelfRow(shelf: FpRect, things: readonly ShelfThing[], depth_mm:
     if (a.order !== null && b.order !== null) return a.order - b.order;
     if (a.order !== null) return -1;
     if (b.order !== null) return 1;
-    return a.name.localeCompare(b.name);
+    return compareNames(a.name, b.name);
   });
   const rects = new Map<string, FpRect>();
   const overhang = new Set<string>();

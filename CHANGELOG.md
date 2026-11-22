@@ -2,17 +2,30 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-22
+
+### Security
+- A production server that finds the test-only workspace pool switched on refuses to start, so the test doors (sign-in tokens for pooled workspaces, failures planted for a test) can never be reached on a real service, even when the server is labelled as production.
+
+### Fixes
+- A place renamed or added by a batch edit (yours or Cobb's), an import or a sync now follows the same rules as the page: a rename onto a neighbour's name is refused, over-long names and notes are refused, and names are saved without stray spaces.
+- Equipment, tags, parts, categories and machines changed by a batch edit (yours or Cobb's), an import or a sync now follow the same rules as the page: over-long names, notes and other fields, a negative quantity and a colour that is not one are refused with the reason, instead of being saved.
+
 ## 2026-11-21
 
 ### Security
 - A link field takes only a web address (http or https), so a supplier link, a vendor's website or an order's link can no longer be saved as a javascript: or data: link, and a page never links a stored value that would run script
 - A record's picture is a file in the workspace or an https address, through the page, the API, Cobb and imports alike, so a plain http, javascript: or data: address, or another site's address, is refused, and a page never draws one saved before
+- A link typed on a phone without https:// is saved as a web link, and a javascript:, data: or other non-web link is refused plainly and never saved
 - An outside link in record text shows its full address and opens in a new tab without passing on the page, as in Cobb's answers
 
 ### Fixes
+- A list ordered by name sorts the way people count and read: Hex bolt M2, M8, M10 in that order, Écrou with the E's, and page after page of a long inventory comes back in that order with nothing skipped or repeated
 - A name typed without its accents finds the record on the search page, in a collection's own search and through Cobb, not only in a page's filter
 - A note longer than a field takes says the limit as you type and is kept in the box until it fits, never refused on save and lost
+- A list pasted from Notes into a list's add box is read one thing per line, bullets dropped and counts kept, shown before it is added, and one Undo takes it all back
 - A word typed without its accents finds the thing that has them, in every search and filter a page runs and in what Cobb looks up
+- Names with numbers are listed the way people count (M2, M8, M10) and accented names with their letter, on every list a page sorts itself
 
 ## 2026-11-20
 

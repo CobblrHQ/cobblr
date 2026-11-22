@@ -8,7 +8,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "records",
-  version: "0.1.8",
+  version: "0.1.9",
   displayName: "Records",
   description:
     "A blank collection that you give its own fields: a bookshelf, a movie list, a recipe box.",

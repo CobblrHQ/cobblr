@@ -943,6 +943,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
         <Modal open title="Edit connection" onClose={() => setEditing(false)}>
           <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
             <label className="block">Connection name<input required value={name} onChange={(e) => setName(e.target.value)} className="input" /></label>
+            {/* link-typed-ok: a sync provider's base URL is pasted whole from its docs; to review under #9708 */}
             {!!definition?.config.base_url && <label className="block">Base URL<input type="url" required value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="input" /></label>}
             <label className="flex items-center gap-2"><input type="checkbox" checked={connectionEnabled} onChange={(e) => setConnectionEnabled(e.target.checked)} />Keep this connection active</label>
             {definition && Object.keys(definition.credentials).length > 0 && <p className="text-sm text-muted">Leave all credentials blank to keep them. To replace them, enter every credential.</p>}

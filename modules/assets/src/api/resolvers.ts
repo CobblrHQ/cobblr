@@ -5,6 +5,7 @@ import { columnSet, placeNames as placeNamesOf, platform, parseSort, textSearchW
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 import { amountOf, toCents } from "@cobblr/platform-contract/money";
+import { byName, orderKey } from "@cobblr/platform-contract/name-order";
 
 let registered = false;
 
@@ -165,8 +166,8 @@ export function registerAssetsResolvers(): void {
       }
     }
     const order = parseSort(query.sort, SORTABLE);
-    for (const { col, dir } of order) q = q.orderBy(col as never, dir);
-    if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
+    for (const { col, dir } of order) q = q.orderBy(orderKey(col) as never, dir);
+    if (!order.some((o) => o.col === "name")) q = q.orderBy(byName("name"), "asc");
     const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     const places = await placeNamesOf(orgId, "assets:asset", rows);
     return { items: rows.map((r) => toResolvedAsset(r, places.get(r.id) ?? null)) };

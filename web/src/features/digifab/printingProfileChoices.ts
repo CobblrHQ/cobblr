@@ -3,6 +3,7 @@
 // nozzles, qualities and filament presets. Pure, so the form's pickers can be
 // held to it without a slicer.
 import type { SliceOptions } from "@cobblr/platform-contract/services";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 type Model = SliceOptions["printer_models"][number];
 
@@ -23,7 +24,7 @@ export function sliceChoices(options: unknown, modelId: string): SliceChoices | 
   if (!list.length) return null;
   const model = list.find((m) => m.id === modelId.trim()) ?? null;
   return {
-    models: list.map((m) => ({ id: m.id, label: m.display_name || m.id })).sort((a, b) => a.label.localeCompare(b.label)),
+    models: list.map((m) => ({ id: m.id, label: m.display_name || m.id })).sort((a, b) => compareNames(a.label, b.label)),
     model,
     nozzles: model?.nozzles?.filter((n) => typeof n === "number" && n > 0) ?? [],
     qualities: (model?.qualities ?? []).map((q) => ({ id: q.id, label: q.label || q.id })),

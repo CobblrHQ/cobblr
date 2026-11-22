@@ -14,6 +14,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useLater, downloadBlob, useToast, usePageTitle, SearchInput, SegmentedChoice } from "@cobblr/platform-web";
 import { api, type PlatformEntityKind } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 import { textHas } from "@cobblr/platform-contract/search-text";
 
 type Lang = "curl" | "python" | "node" | "ts";
@@ -180,7 +181,7 @@ export function ApiRecipesPage() {
     () =>
       (kindsQ.data?.items ?? [])
         .filter(isScriptable)
-        .sort((a, b) => a.display_name.localeCompare(b.display_name)),
+        .sort((a, b) => compareNames(a.display_name, b.display_name)),
     [kindsQ.data],
   );
 

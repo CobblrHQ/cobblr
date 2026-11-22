@@ -13,6 +13,7 @@
 // against the featured catalog.
 
 import type { PlatformEntityKind } from "./api";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 const WORD = /[a-z][a-z0-9-]{2,}/g;
 
@@ -103,6 +104,6 @@ export function suggestKinds(
     if (score >= 2) scored.push({ kind: k, score, matched });
   }
   return scored
-    .sort((a, b) => b.score - a.score || a.kind.display_name.localeCompare(b.kind.display_name))
+    .sort((a, b) => b.score - a.score || compareNames(a.kind.display_name, b.kind.display_name))
     .slice(0, limit);
 }

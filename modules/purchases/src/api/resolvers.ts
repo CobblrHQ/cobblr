@@ -9,6 +9,7 @@ import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { columnSet, platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { PurchasesDB } from "../db.js";
+import { byName, orderKey } from "@cobblr/platform-contract/name-order";
 
 let registered = false;
 
@@ -234,7 +235,7 @@ export function registerPurchasesResolvers(): void {
       }
     }
     const order = parseSort(query.sort, ORDER_SORTABLE);
-    for (const { col, dir } of order) q = q.orderBy(col as never, dir);
+    for (const { col, dir } of order) q = q.orderBy(orderKey(col) as never, dir);
     if (order.length === 0) q = q.orderBy("ordered_at", "desc");
     const rows = (await groupListRows(db, q, query)) ?? await q
       .limit(limit)
@@ -297,8 +298,8 @@ export function registerPurchasesResolvers(): void {
     let q = db.selectFrom("purchases_vendors").selectAll();
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "website", "contact", "account_number", "notes"], json: ["metadata"] })!);
     const order = parseSort(query.sort, VENDOR_SORTABLE);
-    for (const { col, dir } of order) q = q.orderBy(col as never, dir);
-    if (order.length === 0) q = q.orderBy("name");
+    for (const { col, dir } of order) q = q.orderBy(orderKey(col) as never, dir);
+    if (order.length === 0) q = q.orderBy(byName("name"));
     const rows = (await groupListRows(db, q, query)) ?? await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)

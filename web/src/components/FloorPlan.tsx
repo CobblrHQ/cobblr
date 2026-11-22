@@ -65,11 +65,12 @@ import { DEFAULT_SILL_MM, closetWalls, doorFitsWall, edgeOf, flagIsRed, frontEdg
 import { GapReadout, PlanFlagList, PlanSymbols } from "./PlanSymbols";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 type PlaceOutline = { key: string; label: string; colour: string | null; border: string; swatch: string; tagId?: string };
 
 function outlineFor(loc: Location, attachments: TagAttachment[], tags: TagRecord[]): PlaceOutline | null {
   const fp = (loc.metadata?.floorplan ?? {}) as Record<string, unknown>;
-  const attached = tags.filter((t) => attachments.some((a) => a.tag_id === t.id)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  const attached = tags.filter((t) => attachments.some((a) => a.tag_id === t.id)).sort((a, b) => compareNames(a.name, b.name) || a.id.localeCompare(b.id));
   const tag = fp.outline_tag_id === "custom" ? undefined
     : typeof fp.outline_tag_id === "string" ? attached.find((t) => t.id === fp.outline_tag_id)
     : attached.find((t) => t.color) ?? attached[0];
@@ -2942,7 +2943,7 @@ function DrawersModal({
   onStep: (step: PlanStep) => void;
 }) {
   const toast = useToast();
-  const ordered = useMemo(() => [...children].sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true })), [children]);
+  const ordered = useMemo(() => [...children].sort((x, y) => compareNames(x.name, y.name)), [children]);
   const onFace = ordered.filter((c) => readRect(c.metadata));
   const [mode, setMode] = useState<"arrange" | "new">(ordered.length ? "arrange" : "new");
   const [cols, setCols] = useState("1");

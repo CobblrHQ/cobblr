@@ -2,9 +2,7 @@ import { amountOf, centsFromAmount, fieldCurrency } from "@cobblr/platform-contr
 import { withCustodyLabel } from "./custody.js";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { Router } from "express";
-import { z } from "zod";
-import { imagePathField } from "@cobblr/platform-contract/image-reference";
-import { AssetDate } from "./asset-date.js";
+import { AssetCreate, AssetUpdate } from "./asset-fields.js";
 import { sql } from "kysely";
 import { mergeRowMetadata, platform } from "@cobblr/platform-contract";
 import { DISPOSITION_KEY, dispositionOf, readRecordDisposition } from "@cobblr/platform-contract/disposition";
@@ -13,7 +11,7 @@ import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { forViewer, hiddenOnRegister, maySeeSerials, refuseCostWrite, refuseSerialWrite, withoutSerial } from "./serial-scope.js";
 import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
-import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 export const assetsRouter = Router({ mergeParams: true });
 
@@ -25,28 +23,6 @@ assetsRouter.use((req, res, next) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
   }
   next();
-});
-
-const AssetCreate = z.object({
-  name: z.string().trim().min(1, "Give this equipment a name.").max(200),
-  short_name: z.string().max(40).nullable().optional(),
-  manufacturer: z.string().max(120).nullable().optional(),
-  model: z.string().max(120).nullable().optional(),
-  type: z.string().max(120).nullable().optional(),
-  state: z.string().max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-  excitement: z.number().int().min(0).max(5).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-  quantity: z.number().int().min(0).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-  serial_number: z.string().max(160).nullable().optional(),
-  purchased_at: AssetDate.optional(),
-  purchase_price_cents: z.number().int().min(0).max(10_000_000_000).nullable().optional(),
-  vendor: z.string().max(200).nullable().optional(),
-  warranty_until: AssetDate.optional(),
-  last_service_at: AssetDate.optional(),
-  image_path: imagePathField().nullable().optional(),
-  notes: z.string().max(RECORD_NOTES_MAX).nullable().optional(),
-  location_id: z.string().uuid().nullable().optional(),
-  flags: z.array(z.string()).optional(),
-  metadata: z.record(z.unknown()).optional(),
 });
 
 const ASSET_NATIVE_KEYS = new Set(Object.keys(AssetCreate.shape));
@@ -62,7 +38,6 @@ const ASSET_NATIVE_KEYS = new Set(Object.keys(AssetCreate.shape));
  * flags must not rewrite them.
  */
 const jsonbArray = (v: unknown): unknown => (Array.isArray(v) ? JSON.stringify(v) : v);
-const AssetUpdate = AssetCreate.partial();
 
 /** The kind these rows are: an instance's items, or plain assets. */
 const kindOf = (req: Parameters<typeof instanceOf>[0]): string => (instanceOf(req) === "assets" ? "assets:asset" : `${instanceOf(req)}:item`);
@@ -91,7 +66,7 @@ assetsRouter.get(
       .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
       .where("instance", "=", instanceOf(req))
       .where("archived_at", archived ? "is not" : "is", null)
-      .orderBy("name")
+      .orderBy(byName("name"))
       .orderBy("id")
       .limit(page.limit)
       .offset(page.offset)

@@ -50,6 +50,7 @@ import { useReprint } from "./useReprint";
 import { HourRateEditor } from "./HourRate";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 export type LinkableMachine = { id: string; name: string; instLabel: string | null; image: string | null };
 
 /** A print history row is reprintable unless it's the task-derived kind. */
@@ -1002,7 +1003,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
         // Farm-floor order: what's WORKING leads, dead metal trails.
         const RANK: Record<string, number> = { printing: 0, paused: 1, complete: 2, idle: 3, error: 4, unknown: 5, offline: 6 };
         const byActivity = (a: FDev, b: FDev) =>
-          (a.needs_attention ? -1 : RANK[a.klass] ?? 9) - (b.needs_attention ? -1 : RANK[b.klass] ?? 9) || a.name.localeCompare(b.name);
+          (a.needs_attention ? -1 : RANK[a.klass] ?? 9) - (b.needs_attention ? -1 : RANK[b.klass] ?? 9) || compareNames(a.name, b.name);
         const sections: Array<{ key: string; label: string | null; isPool: boolean; devices: FDev[] }> = [];
         for (const [id, g] of pools) sections.push({ key: `pool:${id}`, label: g.name, isPool: true, devices: g.devices.sort(byActivity) });
         // Unpooled machines share ONE grid — a connection is plumbing, not a
@@ -2233,7 +2234,7 @@ export function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrin
     const t = (m?: string) => (m ? new Date(m).getTime() || 0 : 0);
     return [...files].sort((a, b) => {
       switch (sort) {
-        case "name": return a.name.localeCompare(b.name, undefined, { numeric: true });
+        case "name": return compareNames(a.name, b.name);
         case "size": return (b.size ?? 0) - (a.size ?? 0);
         case "oldest": return t(a.modified) - t(b.modified);
         default: return t(b.modified) - t(a.modified); // recent

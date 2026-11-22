@@ -23,6 +23,7 @@ import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, hasSomethingToRead, requireRole } from "./util.js";
 import { planByKey, planByName, PATH_SEPARATOR } from "./import-plan.js";
 import { lockTree, placesOffTheTree } from "./place-move.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 class ImportLoop extends Error {
   readonly names: string[];
@@ -238,7 +239,7 @@ locationsImportRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const db = tenantDb(req);
-    const locs = await db.selectFrom("core_locations_locations").select(["id", "name", "short_name", "kind", "parent_id", "metadata", "description", "notes"]).orderBy("depth").orderBy("name").execute();
+    const locs = await db.selectFrom("core_locations_locations").select(["id", "name", "short_name", "kind", "parent_id", "metadata", "description", "notes"]).orderBy("depth").orderBy(byName("name")).execute();
     const byId = new Map(locs.map((l) => [l.id, l]));
     // Gather all metadata keys present, so they each get a column.
     const metaKeys = new Set<string>();

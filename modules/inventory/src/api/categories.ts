@@ -3,19 +3,13 @@
 
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
-import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, slugify } from "./util.js";
-import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { byName } from "@cobblr/platform-contract/name-order";
+import { CategoryCreate } from "./category-fields.js";
 
 export const categoriesRouter = Router({ mergeParams: true });
-
-const CategoryCreate = z.object({
-  name: z.string().min(1).max(120),
-  color: optionalField(z.string().regex(/^#[0-9a-fA-F]{3,8}$/)),
-  parent_id: z.string().uuid().nullable().optional(),
-});
 
 categoriesRouter.get(
   "/",
@@ -24,7 +18,7 @@ categoriesRouter.get(
     const rows = await db
       .selectFrom("inventory_categories")
       .select(["id", "name", "slug", "color", "parent_id", "created_at"])
-      .orderBy("name")
+      .orderBy(byName("name"))
       .execute();
     res.json({ items: rows });
   }),

@@ -12,7 +12,8 @@
 // blur (or Enter, for one line) writes only when it changed; typing never
 // writes. The draft follows the record while the field is untouched, so an
 // action that moves the record shows here at once (#3615).
-import { useRef, type ReactNode } from "react";
+import { readTypedLink } from "@cobblr/platform-contract/typed-link";
+import { useRef, useState, type ReactNode } from "react";
 import { readLocaleNumber, writeLocaleNumber } from "@cobblr/platform-contract/locale-number";
 import { typingLocale } from "./NumberField";
 import { fieldNeed, type FieldNeed } from "./field-pack";
@@ -111,6 +112,8 @@ export function EditField({ label, value, onCommit, numeric, fractionDigits, mul
   const f = useFieldDraft(shown);
   // Escape leaves without writing; the blur it causes must not write the draft.
   const leaving = useRef(false);
+  // A link field reads what was typed as a link (#4115): "supplier.example/x" saves as https://, another scheme or words are said, kept, and not sent.
+  const [linkRefusal, setLinkRefusal] = useState<string | null>(null);
   const note = lengthNote(f.draft.length, maxLength);
   return (
     <label className="block min-w-0">
@@ -134,6 +137,17 @@ export function EditField({ label, value, onCommit, numeric, fractionDigits, mul
           // Past the limit the save would refuse it: the text stays here, said, until it fits.
           if (maxLength != null && v.length > maxLength) return;
           let typedAs = v;
+          if (type === "url") {
+            const link = readTypedLink(v);
+            if (!link.ok) {
+              setLinkRefusal(link.reason);
+              return;
+            }
+            setLinkRefusal(null);
+            v = link.url ?? "";
+            typedAs = v;
+            if (v !== e.target.value) f.setDraft(v);
+          }
           if (numeric && v.trim() !== "") {
             const read = readLocaleNumber(v, typingLocale()).value;
             // Not a number: the record's value comes back, nothing is written.
@@ -162,9 +176,14 @@ export function EditField({ label, value, onCommit, numeric, fractionDigits, mul
           }
         }}
         rows={multiline ? 3 : undefined}
-        aria-invalid={note?.over || undefined}
+        aria-invalid={linkRefusal || note?.over ? true : undefined}
         className={"input " + fieldPackControlClass + (className ? " " + className : "")}
       />
+      {linkRefusal && (
+        <span role="alert" data-testid="link-refused" className="mt-1 block text-xs text-ember-600 dark:text-ember-400">
+          {linkRefusal}
+        </span>
+      )}
       {note && (
         <span role={note.over ? "alert" : "status"} data-testid="length-note" className={"mt-1 block text-xs " + (note.over ? "text-ember-600 dark:text-ember-400" : "text-muted")}>
           {note.text}

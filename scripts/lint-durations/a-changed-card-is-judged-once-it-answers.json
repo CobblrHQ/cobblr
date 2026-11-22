@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-changed-card-is-judged-once-it-answers",
+  "run": "node scripts/lint-a-changed-card-is-judged-once-it-answers.ts",
+  "rows": [
+    "e2e"
+  ],
+  "ms": 500,
+  "recorded": "2026-11-22",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

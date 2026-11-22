@@ -19,6 +19,7 @@ import {
   hostedLookup,
   type HostedEntry,
 } from "../services/hosted-resolver.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 let registered = false;
 
@@ -100,7 +101,7 @@ export function registerCatalogsResolvers(): void {
       const offset = query.offset ?? 0;
       let q = db.selectFrom("core_catalogs_catalogs").selectAll();
       if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "description"] })!);
-      const rows = (await groupListRows(db, q.orderBy("name"), query)) ?? await q.orderBy("name").limit(limit).offset(offset).execute();
+      const rows = (await groupListRows(db, q.orderBy(byName("name")), query)) ?? await q.orderBy(byName("name")).limit(limit).offset(offset).execute();
       return { items: rows.map((r) => toCatalog(r)) };
     },
   );

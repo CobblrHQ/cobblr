@@ -29,6 +29,7 @@ import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
 import { readBound, withBound } from "../lib/floorplanGeometry";
 import { formatLength, parseLength } from "../lib/lengthUnits";
 import type { Location } from "../lib/api";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 import { textHas } from "@cobblr/platform-contract/search-text";
 
 const countOf = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -273,7 +274,7 @@ export function PlanLayoutPage() {
       .filter((r) => !inRoom.has(board.where.get(`${r.kind}:${r.id}`) ?? ""))
       .filter((r) => !needle || textHas(r.name, needle))
       .map((r) => ({ r, size: sizeOf(r) }))
-      .sort((a, b) => Number(!!b.size) - Number(!!a.size) || a.r.name.localeCompare(b.r.name))
+      .sort((a, b) => Number(!!b.size) - Number(!!a.size) || compareNames(a.r.name, b.r.name))
       .slice(0, 60);
   }, [board, placeable, q, sizeOf]);
 

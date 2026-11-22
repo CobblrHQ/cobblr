@@ -7,6 +7,7 @@ import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contra
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { byName } from "@cobblr/platform-contract/name-order";
 import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 export const recordsRouter = Router({ mergeParams: true });
@@ -42,7 +43,7 @@ recordsRouter.get(
       .selectAll()
       .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
       .where("instance", "=", instanceOf(req))
-      .orderBy("name")
+      .orderBy(byName("name"))
       .orderBy("id")
       .limit(page.limit)
       .offset(page.offset)

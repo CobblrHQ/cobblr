@@ -25,6 +25,7 @@ export function ESPHomeDevices() {
     <p className="text-sm text-muted">Use lights, sensors and switches without Home Assistant. Install an ESPHome driver on your bridge. Its native API key stays in the bridge configuration.</p>
     <form className="space-y-3 max-w-xl" onSubmit={e => { e.preventDefault(); add.mutate(); }}>
       <label className="block text-sm">Name<input className={field} value={label} onChange={e => setLabel(e.target.value)} required /></label>
+      {/* link-typed-ok: a bridge instance address checked by the browser for now; #9708 */}
       <label className="block text-sm">Bridge instance address<input className={field} value={address} onChange={e => setAddress(e.target.value)} type="url" required /></label>
       <label className="block text-sm">Bridge name<input className={field} value={bridge} onChange={e => setBridge(e.target.value)} placeholder="Leave empty for the default bridge" /></label>
       <label className="block text-sm">Bridge access token<SecretInput value={token} onChange={e => setToken(e.target.value)} placeholder="Only if this bridge instance requires one" /></label>

@@ -12,6 +12,7 @@ import { recordConsumption } from "./stock-ledger.js";
 import { stockMoved } from "./stock-moved.js";
 import { stockTrackerAllows } from "../stock-tracker.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 type Part = Pick<Selectable<InventoryDB["inventory_parts"]>, "id" | "name" | "unit" | "metadata" | "instance" | "stock_revision"> & { qty: string | number; min_qty: string | number | null };
 type Saved = Selectable<InventoryDB["inventory_stock"]>;
@@ -54,7 +55,7 @@ async function listStock(db: Kysely<InventoryDB>, asked: unknown) {
   if (q.q) query = query.where((eb) => textSearchWhere(eb, q.q, { text: ["p.name"], unreadable: undefined }));
   if (q.shape) query = query.where(sql<string>`coalesce(s.shape, case when p.metadata ? 'laser_sheet' or (p.metadata ? 'material' and p.metadata ? 'width_mm') then 'sheet' else 'count' end)`, "=", q.shape);
   const [rows, count, loaded] = await Promise.all([
-    query.orderBy("p.name").orderBy("p.id").limit(limit).offset(offset).execute(),
+    query.orderBy(byName("p.name")).orderBy("p.id").limit(limit).offset(offset).execute(),
     query.clearSelect().select(sql<string>`count(*)`.as("total")).executeTakeFirstOrThrow(),
     q.station ? db.selectFrom("inventory_stock_loaded").selectAll().where("station", "=", q.station).execute() : Promise.resolve([]),
   ]);

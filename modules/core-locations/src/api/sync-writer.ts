@@ -5,8 +5,8 @@
 // user token. Depth is recomputed from the parent and the same module events
 // fire, so hierarchy + wires + views stay consistent with the HTTP path.
 
-import { planProblem } from "@cobblr/platform-contract/plan-clearance";
-import { hasSomethingToRead } from "./util.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { LocationCreate, LocationUpdate } from "./location-fields.js";
 import { duplicateSiblingMessage, siblingNamed } from "./siblings.js";
 import { DuplicateRecordError, findRowIdByKey, imageId, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
 import { storedPicture } from "@cobblr/platform-contract/image-reference";
@@ -17,11 +17,16 @@ import { movePlace } from "./place-move.js";
 
 let registered = false;
 
-/** The same refusals as the REST route's body, thrown so the assistant hears why. */
-function refuseUnreadable(fields: Record<string, unknown>): void {
-  if (fields.name !== undefined && !hasSomethingToRead(String(fields.name))) throw new Error("A place needs a name you can read.");
-  const problem = planProblem((fields.metadata as { floorplan?: unknown } | null | undefined)?.floorplan);
-  if (problem) throw new Error(problem);
+/** What the assistant may write, minus the keys this writer reads itself:
+ *  `kind` stays lenient (normalizeKind) and a null bag means empty. */
+function bodyOf(fields: Record<string, unknown>): Record<string, unknown> {
+  const { kind: _kind, ...rest } = fields;
+  return rest.metadata === null ? { ...rest, metadata: undefined } : rest;
+}
+
+/** The page's own rules, thrown in its words so the assistant hears why. */
+function refusal(error: { issues: Parameters<typeof invalidBodyMessage>[0] }): Error {
+  return new Error(invalidBodyMessage(error.issues));
 }
 
 export function registerLocationsWriter(): void {
@@ -35,14 +40,16 @@ export function registerLocationsWriter(): void {
     findByKey: async (orgId, key, value) => findRowIdByKey(await platform().tenants.getDb(orgId), "core_locations_locations", key, value),
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
-      refuseUnreadable(fields);
+      const parsedCreate = LocationCreate.safeParse(bodyOf({ ...fields, name: fields.name ?? "Untitled" }));
+      if (!parsedCreate.success) throw refusal(parsedCreate.error);
+      const given = parsedCreate.data;
       // Same rule as the REST route, because this is the door an assistant
       // comes through. The THROW is the point: the agent loop feeds a failed
       // write back to the model, so it learns the shelf is already there and
       // says so, instead of quietly making a second one.
-      if (fields.allow_duplicate !== true) {
+      if (given.allow_duplicate !== true) {
         const parentId = asStr(fields.parent_id);
-        const name = String(fields.name ?? "Untitled");
+        const name = given.name;
         const clash = await siblingNamed(db, parentId, name);
         if (clash) {
           const place = parentId
@@ -58,15 +65,15 @@ export function registerLocationsWriter(): void {
       const inserted = await db
         .insertInto("core_locations_locations")
         .values({
-          name: String(fields.name ?? "Untitled"),
-          short_name: asStr(fields.short_name),
+          name: given.name,
+          short_name: asStr(given.short_name),
           parent_id: asStr(fields.parent_id),
           depth: await depthFor(db, asStr(fields.parent_id)),
           kind: normalizeKind(fields.kind),
           metadata: sql`${JSON.stringify(fields.metadata ?? {})}::jsonb` as never,
-          description: asStr(fields.description),
-          notes: asStr(fields.notes),
-          image_path: storedPicture(fields.image_path),
+          description: asStr(given.description),
+          notes: asStr(given.notes),
+          image_path: storedPicture(given.image_path),
         })
         .returning("id")
         .executeTakeFirstOrThrow();
@@ -95,16 +102,30 @@ export function registerLocationsWriter(): void {
           `can't set ${refused.join(", ")} on a location — ${refused.map((k) => SERVER_OWNED[k]).join("; ")}`,
         );
       }
-      refuseUnreadable(fields);
+      const parsedUpdate = LocationUpdate.safeParse(bodyOf(fields));
+      if (!parsedUpdate.success) throw refusal(parsedUpdate.error);
+      const given = parsedUpdate.data;
       const patch: Record<string, unknown> = { updated_at: new Date() };
-      if (fields.name !== undefined) patch.name = String(fields.name).trim();
-      if (fields.short_name !== undefined) patch.short_name = asStr(fields.short_name);
+      if (given.name !== undefined) patch.name = given.name;
+      if (fields.short_name !== undefined) patch.short_name = asStr(given.short_name);
       if (fields.kind !== undefined) patch.kind = normalizeKind(fields.kind);
-      if (fields.description !== undefined) patch.description = asStr(fields.description);
-      if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
-      if (fields.image_path !== undefined) patch.image_path = storedPicture(fields.image_path);
+      if (fields.description !== undefined) patch.description = asStr(given.description);
+      if (fields.notes !== undefined) patch.notes = asStr(given.notes);
+      if (fields.image_path !== undefined) patch.image_path = storedPicture(given.image_path);
       if (fields.metadata !== undefined) {
         patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
+      }
+      // A rename onto a sibling's name is the page's 409, said to the assistant.
+      if (given.name !== undefined && given.allow_duplicate !== true) {
+        const self = await db.selectFrom("core_locations_locations").select("parent_id").where("id", "=", id).executeTakeFirst();
+        const parentId = fields.parent_id !== undefined ? asStr(fields.parent_id) : (self?.parent_id ?? null);
+        const clash = await siblingNamed(db, parentId, given.name, id);
+        if (clash) {
+          const place = parentId
+            ? await db.selectFrom("core_locations_locations").select("name").where("id", "=", parentId).executeTakeFirst()
+            : null;
+          throw new DuplicateRecordError(duplicateSiblingMessage(given.name, place?.name ?? null), clash.id);
+        }
       }
       // A move goes through the one seam that refuses a loop (place-move.ts);
       // the throw reaches the assistant, which says why the room stayed put.

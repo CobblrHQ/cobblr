@@ -18,6 +18,7 @@ import type { Project } from "./api";
 import { countOf } from "@cobblr/platform-contract";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { dayLabel } from "@cobblr/platform-contract/day";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 import { textHas } from "@cobblr/platform-contract/search-text";
 
 type SavedViewLite = {
@@ -448,7 +449,7 @@ function projGroup(rows: Project[], groupBy?: string): { key: string; rows: Proj
     map.get(k)!.push(p);
   }
   return [...map.entries()]
-    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : a[0].localeCompare(b[0])))
+    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : compareNames(a[0], b[0])))
     .map(([k, r]) => ({ key: k, rows: r }));
 }
 

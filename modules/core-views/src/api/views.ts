@@ -14,6 +14,7 @@ import { ViewInputsSchema, resolveViewInputs, type ViewInput } from "@cobblr/pla
 import { sessionUser, tenantContext, tenantDb, type CoreViewsDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { resetViewToBundle } from "./reset-bundle-view.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 export const viewsRouter = Router({ mergeParams: true });
 
@@ -149,7 +150,7 @@ viewsRouter.get(
         ]),
       )
       .orderBy("entity_kind")
-      .orderBy("name");
+      .orderBy(byName("name"));
     if (kind) q = q.where("entity_kind", "=", kind);
     const items = await q.execute();
     res.json({ items });

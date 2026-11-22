@@ -13,13 +13,14 @@ import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Location } from "../../lib/api";
 import { hasOwnLayout } from "../../lib/floorplanGeometry";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 export const SPACE_PARAM = "space";
 
 /** The rooms and containers that have a plan of their own to show: top-level
  *  areas, and containers that stand alone or have their own layout. */
 export function viewableSpaces(items: readonly Location[]): { areas: Location[]; containers: Location[] } {
-  const order = (a: Location, b: Location) => (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name);
+  const order = (a: Location, b: Location) => (a.position ?? 0) - (b.position ?? 0) || compareNames(a.name, b.name);
   const areas = items.filter((l) => l.kind === "area" && !l.parent_id).sort(order);
   const containers = items.filter((l) => l.kind === "container" && (!l.parent_id || hasOwnLayout(l.metadata))).sort(order);
   return { areas, containers };

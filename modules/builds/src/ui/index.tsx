@@ -777,6 +777,7 @@ export function OperationsSection({
           }
         }}
       >
+        {/* paste-one-line-ok: a route step carries its own estimate beside it, so steps go in one at a time */}
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}

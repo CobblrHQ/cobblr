@@ -6,6 +6,7 @@ import { registerRowHistoryWriter, columnSet, countOf } from "@cobblr/platform-c
 import { sql, type Kysely } from "kysely";
 import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { BuildsDB } from "../db.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 let registered = false;
 
@@ -56,10 +57,10 @@ export function registerBuildsResolvers(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<BuildsDB>;
     let q = db.selectFrom("builds_builds").selectAll();
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "description", "notes"] })!);
-    const rows = (await groupListRows(db, q .orderBy("name", "asc"), query)) ?? await q
+    const rows = (await groupListRows(db, q .orderBy(byName("name"), "asc"), query)) ?? await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
-      .orderBy("name", "asc")
+      .orderBy(byName("name"), "asc")
       .execute();
     return { items: rows.map(buildToResolved) };
   });

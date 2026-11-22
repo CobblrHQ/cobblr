@@ -14,6 +14,7 @@
 
 import type { FeaturedBundle } from "./featured-bundles";
 import type { PlatformBundleManifest } from "./api";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 type Wire = NonNullable<PlatformBundleManifest["wires"]>[number];
 
@@ -75,5 +76,5 @@ export function worksWithSuggestions(input: {
     out.push({ bundle: b, says });
   }
   // The one that does the most on this page first.
-  return out.sort((a, b) => b.says.length - a.says.length || a.bundle.manifest.name.localeCompare(b.bundle.manifest.name));
+  return out.sort((a, b) => b.says.length - a.says.length || compareNames(a.bundle.manifest.name, b.bundle.manifest.name));
 }

@@ -11,6 +11,8 @@ import { isQuiet, quietReason, rankTags, type TagUsage } from "../relevance.js";
 import { attachTag, createTag, detachTag, ensureTag, TagNameTaken, updateTag, type Writer } from "../tag-writes.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
+import { byName } from "@cobblr/platform-contract/name-order";
+import { TagCreate, TagUpdate } from "./tag-fields.js";
 
 const writer = (req: Parameters<typeof tenantContext>[0]): Writer => ({ orgId: tenantContext(req).org.id, userId: sessionUser(req)?.id ?? null });
 
@@ -47,17 +49,6 @@ async function parentIsThere(req: Parameters<typeof tenantDb>[0], res: import("e
   res.status(400).json({ error: { code: "invalid_parent", message: "That parent tag is not here any more." } });
   return false;
 }
-
-const TagCreate = z.object({
-  name: readableNameField(60),
-  color: z.string().max(40).nullable().optional(),
-  parent_id: z.string().uuid().nullable().optional(),
-  icon: z.string().max(16).nullable().optional(),
-});
-
-// `pinned` is update-only on purpose: you pin a tag you already have and can
-// see the ranking of, never one you are in the middle of typing.
-const TagUpdate = TagCreate.partial().extend({ pinned: z.boolean().optional(), metadata: z.record(z.unknown()).optional() });
 
 const TagMerge = z.object({ into_tag_id: z.string().uuid() });
 
@@ -363,7 +354,7 @@ tagsRouter.get(
         "t.color as tag_color",
         "a.created_at as created_at",
       ])
-      .orderBy("t.name");
+      .orderBy(byName("t.name"));
     if (sourceType) q = q.where("a.source_type", "=", sourceType);
     if (sourceId) q = q.where("a.source_id", "=", sourceId);
     if (tagId) q = q.where("a.tag_id", "=", tagId);

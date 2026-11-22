@@ -16,6 +16,7 @@ import type { api } from "../lib/api";
 
 import { isScanReadyToFile, scanRowState, type ScanRowStateContext } from "@cobblr/platform-contract/scan-triage";
 import { suggestedPlace } from "../lib/sessionPlaceSuggestion";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 export interface ScanCandidateLike {
   module: string;
@@ -309,7 +310,7 @@ export function placementPreview(
   return {
     placed: [...byName.entries()]
       .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+      .sort((a, b) => b.count - a.count || compareNames(a.name, b.name)),
     unplaced,
   };
 }

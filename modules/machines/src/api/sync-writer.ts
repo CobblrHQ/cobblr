@@ -8,6 +8,8 @@
 // wires, and the instance counters stay consistent with the HTTP path.
 
 import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { MachineCreate, MachineUpdate } from "./machine-fields.js";
 import { storedPicture } from "@cobblr/platform-contract/image-reference";
 import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 import { sql, type Kysely } from "kysely";
@@ -18,6 +20,32 @@ const gone = (state: string | null | undefined) => GONE_STATES.has(String(state 
 const PRIOR_STATE = "state_before_it_left";
 
 let registered = false;
+
+/** What the page's route would be handed for these fields. The picture is read
+ *  by this writer itself, and a null for a column that cannot hold one is a
+ *  value this writer already skips (state falls back, counts are ignored). */
+function bodyOf(fields: Record<string, unknown>): Record<string, unknown> {
+  const { image_path: _picture, metadata, state, excitement, quantity, ...rest } = fields;
+  const body: Record<string, unknown> = { ...rest };
+  for (const k of ["short_name", "family", "type", "manufacturer", "serial_number", "notes", "location_id"]) {
+    if (body[k] !== undefined) body[k] = asStr(body[k]);
+  }
+  if (body.name !== undefined) body.name = String(body.name);
+  if (state !== undefined && asStr(state)) body.state = asStr(state);
+  if (asInt(excitement) !== null) body.excitement = asInt(excitement);
+  if (asInt(quantity) !== null) body.quantity = asInt(quantity);
+  if (metadata !== undefined && metadata !== null) body.metadata = metadata;
+  return body;
+}
+
+/** The fields, held to what the page's route holds a body to. Keys the schema
+ *  does not know (instance, custom fields) pass through untouched. */
+function checked(fields: Record<string, unknown>, creating: boolean): Record<string, unknown> {
+  const parsed = creating ? MachineCreate.safeParse(bodyOf(fields)) : MachineUpdate.safeParse(bodyOf(fields));
+  if (!parsed.success) throw new Error(invalidBodyMessage(parsed.error.issues));
+  const { metadata: _bag, ...given } = parsed.data;
+  return { ...fields, ...given };
+}
 
 /** What `update` and `updateIf` write for these fields. */
 function patchOf(fields: Record<string, unknown>): Record<string, unknown> {
@@ -57,27 +85,28 @@ export function registerMachinesWriter(): void {
     mergeMetadata: async (orgId, id, fields) => mergeRowMetadata(await platform().tenants.getDb(orgId), "machines_machines", id, fields),
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
+      const given = checked({ ...fields, name: fields.name ?? "Untitled" }, true);
       const inserted = await db
         .insertInto("machines_machines")
         .values({
-          name: String(fields.name ?? "Untitled"),
-          short_name: asStr(fields.short_name),
-          family: asStr(fields.family),
-          type: asStr(fields.type),
-          manufacturer: asStr(fields.manufacturer),
-          serial_number: asStr(fields.serial_number),
-          state: asStr(fields.state) ?? "functional",
-          image_path: storedPicture(fields.image_path),
-          notes: asStr(fields.notes),
+          name: String(given.name),
+          short_name: asStr(given.short_name),
+          family: asStr(given.family),
+          type: asStr(given.type),
+          manufacturer: asStr(given.manufacturer),
+          serial_number: asStr(given.serial_number),
+          state: asStr(given.state) ?? "functional",
+          image_path: storedPicture(given.image_path),
+          notes: asStr(given.notes),
           // Was missing entirely — the writer silently dropped location on
           // create/update (core-mobility return-home never worked for machines,
           // and placement's location_id sync needs it).
-          location_id: asStr(fields.location_id),
-          ...(asInt(fields.excitement) !== null ? { excitement: asInt(fields.excitement)! } : {}),
-          ...(asInt(fields.quantity) !== null ? { quantity: asInt(fields.quantity)! } : {}),
+          location_id: asStr(given.location_id),
+          ...(asInt(given.excitement) !== null ? { excitement: asInt(given.excitement)! } : {}),
+          ...(asInt(given.quantity) !== null ? { quantity: asInt(given.quantity)! } : {}),
           // Land in the requested instance (e.g. "3d-printers") so it shows under
           // that nav entry, not generic Machines. Default keeps the base instance.
-          ...(asStr(fields.instance) ? { instance: asStr(fields.instance)! } : {}),
+          ...(asStr(given.instance) ? { instance: asStr(given.instance)! } : {}),
           metadata: sql`${JSON.stringify(fields.metadata ?? {})}::jsonb` as never,
         })
         .returning("id")
@@ -94,7 +123,7 @@ export function registerMachinesWriter(): void {
 
     async update(orgId, id, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
-      await db.updateTable("machines_machines").set(patchOf(fields) as never).where("id", "=", id).execute();
+      await db.updateTable("machines_machines").set(patchOf(checked(fields, false)) as never).where("id", "=", id).execute();
       void platform().events.emit("machines.machine.updated", { orgId, machineId: id });
     },
 
@@ -102,7 +131,7 @@ export function registerMachinesWriter(): void {
 
     async updateIf(orgId, id, fields, version) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
-      const v = await updateRowAt(db, "machines_machines", id, patchOf(fields), version);
+      const v = await updateRowAt(db, "machines_machines", id, patchOf(checked(fields, false)), version);
       if (v) void platform().events.emit("machines.machine.updated", { orgId, machineId: id });
       return v;
     },

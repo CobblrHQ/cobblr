@@ -4,6 +4,7 @@ import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 import type { Kysely } from "kysely";
 import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { CoreTagsDB } from "../db.js";
+import { orderKey } from "@cobblr/platform-contract/name-order";
 
 let registered = false;
 
@@ -34,7 +35,7 @@ export function registerTagResolvers(): void {
     for (const spec of specs) {
       const desc = spec.startsWith("-");
       const col = spec.replace(/^-/, "");
-      sortedQ = sortedQ.orderBy(col as never, desc ? "desc" : "asc");
+      sortedQ = sortedQ.orderBy(orderKey(col) as never, desc ? "desc" : "asc");
     }
     const rows = (await groupListRows(db, sortedQ, query)) ?? await sortedQ.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedTag(r)) };

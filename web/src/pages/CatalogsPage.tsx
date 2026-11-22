@@ -231,6 +231,7 @@ function CreateCatalogModal({
           <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Source URL (optional)
           </span>
+          {/* link-typed-ok: the browser checks a catalog's source link for now; to read through readTypedLink, #9708 */}
           <input
             type="url"
             value={sourceUrl}

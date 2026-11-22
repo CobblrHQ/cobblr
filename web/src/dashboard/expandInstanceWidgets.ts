@@ -17,6 +17,7 @@
 
 import type { DashboardWidgetSpec } from "@cobblr/platform-web";
 import type { ModuleInstance } from "../lib/api";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 /** Stable tile id for one instance of a module. `::inst::` can't collide with a
  *  module name or another widget's id. */
@@ -58,7 +59,7 @@ export function expandInstanceWidgets(
     const ordered = [...shown].sort(
       (a, b) =>
         Number(a.is_default) - Number(b.is_default) ||
-        a.display_name.localeCompare(b.display_name),
+        compareNames(a.display_name, b.display_name),
     );
     for (const inst of ordered) {
       out.push({

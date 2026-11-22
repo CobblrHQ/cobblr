@@ -15,6 +15,7 @@ import { Modal, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web"
 import { ApiError, api, type CustomRole } from "../lib/api";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("Custom roles");
@@ -332,7 +333,7 @@ function RoleEditorModal({
       list.push(a);
       groups.set(mod, list);
     }
-    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    return [...groups.entries()].sort((a, b) => compareNames(a[0], b[0]));
   }, [actions]);
 
   function toggle(actionId: string) {

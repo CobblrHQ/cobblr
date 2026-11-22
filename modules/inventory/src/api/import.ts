@@ -20,7 +20,7 @@ import { castFieldValue } from "@cobblr/platform-contract/field-values";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 import { recordName } from "@cobblr/platform-contract/record-name";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
-import { PartCreate } from "./parts.js";
+import { PartCreate } from "./part-fields.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
 import { freeSlug } from "./category-writer.js";
 

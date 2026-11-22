@@ -13,6 +13,7 @@ import { CUSTOMER_SEARCH } from "../search-columns.js";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 
 export const customersRouter = Router({ mergeParams: true });
@@ -47,7 +48,7 @@ customersRouter.get(
         sql<string>`count(*) over()`.as(TOTAL_COLUMN),
       ]);
     if (term) q = q.where((eb) => textSearchWhere(eb, term, { ...CUSTOMER_SEARCH, unreadable: unreadableFieldsOf(req) }));
-    const rows = await q.orderBy("c.name").orderBy("c.id").limit(page.limit).offset(page.offset).execute();
+    const rows = await q.orderBy(byName("c.name")).orderBy("c.id").limit(page.limit).offset(page.offset).execute();
     const answer = pagedAnswer(rows, page);
     res.json({ ...answer, items: answer.items.map((c) => ({ ...c, order_count: Number(c.order_count ?? 0) })) });
   }),

@@ -15,6 +15,7 @@ import { canPreviewFile, CustomFieldsPanel, EntityPhoto, FilePreview, useConfirm
 import { folderPaths, formatBytes, deleteFileMessage } from "../features/core-files/fileFormat";
 import { ContributedDetailPanels } from "../panels/registry";
 import { ImageLightbox } from "../components/ImageLightbox";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 export function FileDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
@@ -186,7 +187,7 @@ export function FileDetailPage() {
             <option value="">Top level</option>
             {[...paths.entries()]
               .map(([fid, p]) => [fid, p.map((x) => x.name).join(" / ")] as const)
-              .sort((a, b) => a[1].localeCompare(b[1]))
+              .sort((a, b) => compareNames(a[1], b[1]))
               .map(([fid, label]) => (
                 <option key={fid} value={fid}>
                   {label}

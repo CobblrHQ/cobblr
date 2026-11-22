@@ -16,6 +16,7 @@ import type { Kysely } from "kysely";
 import { tenantDb, type CoreUnitsDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { BUILTIN_UNITS } from "../units-catalog.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 export const unitsRouter = Router({ mergeParams: true });
 
@@ -55,7 +56,7 @@ unitsRouter.get(
         .selectFrom("core_units_custom")
         .select(["code", "symbol", "name", "plural", "category"])
         .orderBy("category")
-        .orderBy("name")
+        .orderBy(byName("name"))
         .execute(),
       readDisplayMode(req),
     ]);

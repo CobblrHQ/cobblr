@@ -13,6 +13,7 @@ import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { byName } from "@cobblr/platform-contract/name-order";
 import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const vendorsRouter = Router({ mergeParams: true });
@@ -52,7 +53,7 @@ vendorsRouter.get(
         eb.selectFrom("purchases_orders as o").select(eb.fn.countAll().as("c"))
           .whereRef("o.vendor_id", "=", "v.id").as("order_count"),
       ])
-      .orderBy("v.name")
+      .orderBy(byName("v.name"))
       .execute();
     const orgId = tenantContext(req).org.id;
     const orders = items.length ? await orderFigures(orgId, db, await db.selectFrom("purchases_orders").selectAll().select(receiptPending().as("stock_pending")).where("instance", "=", instanceOf(req)).where("vendor_id", "in", items.map((v) => v.id)).execute()) : [];

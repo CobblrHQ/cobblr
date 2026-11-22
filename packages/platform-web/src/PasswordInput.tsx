@@ -150,6 +150,7 @@ export const SecretInput = forwardRef<HTMLInputElement, PasswordInputProps & { s
  *  it as the username half of a login and fills an email into it (#3903). */
 export const AddressInput = forwardRef<HTMLInputElement, Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & { placeholder: string }>(
   function AddressInput({ name, ...rest }, ref) {
+    // link-typed-ok: a server address the sign-in reads itself, checked by the browser for now; #9708
     return (
       <input
         {...rest}

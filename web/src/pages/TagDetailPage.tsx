@@ -20,6 +20,7 @@ import { useDetailRoute } from "../lib/useDetailRoute";
 import { EditTagModal } from "../components/EditTagModal";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { ContributedDetailPanels, ContributedTagToolbar } from "../panels/registry";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 export function TagDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -62,7 +63,7 @@ export function TagDetailPage() {
     }
     return [...by.entries()]
       .map(([kind, items]) => ({ kind, label: names.get(kind) ?? kind, owner: owners.get(kind) ?? null, items }))
-      .sort((x, y) => y.items.length - x.items.length || x.label.localeCompare(y.label));
+      .sort((x, y) => y.items.length - x.items.length || compareNames(x.label, y.label));
   }, [attached.data, kinds.data]);
 
   const refresh = () => {

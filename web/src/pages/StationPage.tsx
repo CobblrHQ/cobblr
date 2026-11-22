@@ -1531,6 +1531,7 @@ function SettingsSheet(props: {
             <p className="mt-1 text-sm text-muted">For a tablet with no scanner. Each tablet can flip its own camera.</p>
           </Field>
           <Field label="A dashboard this station opens from">
+            {/* link-typed-ok: a dashboard link checked by the browser for now; to read through readTypedLink, #9708 */}
             <input
               type="url"
               value={draft.back_url ?? ""}

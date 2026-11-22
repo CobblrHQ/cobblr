@@ -47,6 +47,7 @@ import { FeedbackCard, FEEDBACK_STATUSES, fbStatusLabel, type FeedbackSourceItem
 import { apiFeedbackSource } from "../lib/feedback-source-api";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { dayLabel } from "@cobblr/platform-contract/day";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 import { textHas } from "@cobblr/platform-contract/search-text";
 
 // The console content — one routed section at a time. The shell (AdminLayout)
@@ -275,7 +276,7 @@ function WorkspacesTab() {
     )
     .sort((a, b) =>
       sortBy === "name"
-        ? a.name.localeCompare(b.name)
+        ? compareNames(a.name, b.name)
         : sortBy === "members"
           ? b.member_count - a.member_count
           : new Date(b.last_activity_at ?? 0).getTime() - new Date(a.last_activity_at ?? 0).getTime(),

@@ -32,6 +32,7 @@ import { ApiError, api, type CustomRole, type GrantableAction, type PermissionsM
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 /** Stock roles that carry every capability without being granted anything:
  *  the admin tier, by rank — the same answer the server enforces. */
 function isImplicit(role: PermissionsMember["role"]): boolean {
@@ -169,7 +170,7 @@ export function CapabilityMatrix({
     return [...byModule.entries()]
       .map(([module, items]) => ({
         module,
-        items: items.sort((a, b) => a.label.localeCompare(b.label)),
+        items: items.sort((a, b) => compareNames(a.label, b.label)),
       }))
       .sort((a, b) => moduleLabel(a.module).localeCompare(moduleLabel(b.module)));
     // eslint-disable-next-line react-hooks/exhaustive-deps

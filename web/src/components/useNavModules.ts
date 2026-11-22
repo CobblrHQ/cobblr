@@ -24,6 +24,7 @@ import {
 import { applyNavOrder, readNavHidden, readNavOrder, readNavOverflow, readNavPinned, readNavPlacement, readNavRows, reconcileNavRows, type NavSplitRow, type NavPlacement } from "../lib/nav-order";
 import { useFeaturedBundles } from "../lib/useFeaturedBundles";
 import { inManagedAppSurface } from "../lib/managed-apps";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 /** Synthetic top-level name prefix for a user-defined heading group. */
 export const HEADING_PREFIX = "__heading__";
@@ -222,7 +223,7 @@ export function orderTops<T extends { name: string; navOrder?: number | null }>(
     if (a[1] !== null && b[1] !== null && a[1] !== b[1]) return a[1] - b[1];
     if (a[1] !== null && b[1] === null) return -1;
     if (b[1] !== null && a[1] === null) return 1;
-    return a[2].localeCompare(b[2]);
+    return compareNames(a[2], b[2]);
   };
   const keys = new Map<string, Key>();
   for (const t of rawTops) {

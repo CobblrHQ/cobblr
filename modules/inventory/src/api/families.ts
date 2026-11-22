@@ -26,6 +26,7 @@ import { instanceOf, sessionUser, tenantContext, tenantDb, type InventoryDB } fr
 import { isLowStock, onHandCount, openUnitsFor } from "../on-hand.js";
 import { canonicalColour, coloursFromName, filamentFieldsFromName, formatColour, parseColour } from "@cobblr/platform-contract/colour";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 /** Both sides of an instance-of pairing are addressed as the base part kind,
  *  whichever collection they sit in (lift-to-type and the parent picker). */
@@ -390,7 +391,7 @@ familiesRouter.get(
     // because its type fell on another page. Each half counts its total in
     // the same query, and the answer says when it stopped short.
     // list-cap-ok: the whole family in one read; past the ceiling the counts are still the totals and complete is false
-    const types = await db.selectFrom("inventory_parts").selectAll().select(sql<string>`count(*) over()`.as(TOTAL_COLUMN)).where("instance", "=", fam.parent as never).where("archived", "=", false).orderBy("name").orderBy("id").limit(FAMILY_TYPES_MAX).execute();
+    const types = await db.selectFrom("inventory_parts").selectAll().select(sql<string>`count(*) over()`.as(TOTAL_COLUMN)).where("instance", "=", fam.parent as never).where("archived", "=", false).orderBy(byName("name")).orderBy("id").limit(FAMILY_TYPES_MAX).execute();
     const things = await db.selectFrom("inventory_parts").select([...THING_COLUMNS]).select(sql<string>`count(*) over()`.as(TOTAL_COLUMN)).where("instance", "=", fam.child as never).where("archived", "=", false).orderBy("created_at").orderBy("id").limit(FAMILY_THINGS_MAX).execute();
     const byType = await childrenOf(orgId, fam, types.map((t) => t.id));
     const places = await placeNames(orgId, PART, things);

@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-typed-link-is-read-as-one",
+  "run": "node scripts/lint-a-typed-link-is-read-as-one.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 738,
+  "recorded": "2026-11-21",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -51,6 +51,7 @@ import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plura
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { fieldCurrency, formatMoney, toCents } from "@cobblr/platform-contract/money";
 import { ListNearSpellings } from "../components/ListNearSpellings";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 import { RECORD_NOTES_MAX } from "@cobblr/platform-contract/record-limits";
 import { textHas } from "@cobblr/platform-contract/search-text";
 
@@ -666,7 +667,7 @@ function groupItems(items: Asset[], key: string): { key: string; rows: Asset[] }
     map.get(v)!.push(a);
   }
   return [...map.entries()]
-    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : a[0].localeCompare(b[0])))
+    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : compareNames(a[0], b[0])))
     .map(([k, rows]) => ({ key: k, rows }));
 }
 

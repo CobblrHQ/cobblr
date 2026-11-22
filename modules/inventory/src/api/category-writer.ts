@@ -21,9 +21,26 @@ import { platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { InventoryDB } from "../db.js";
 import { slugify } from "./util.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { CategoryCreate } from "./category-fields.js";
 
 const TABLE = "inventory_categories";
 let registered = false;
+
+/** What the page's route would be handed: an empty colour or parent is none. */
+function bodyOf(fields: Record<string, unknown>): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (fields.name !== undefined) body.name = String(fields.name);
+  for (const k of ["color", "parent_id"] as const) if (fields[k] !== undefined) body[k] = asStr(fields[k]);
+  return body;
+}
+
+/** The page's own rules, thrown in its words so the assistant hears why. */
+function checked(fields: Record<string, unknown>, creating: boolean) {
+  const parsed = creating ? CategoryCreate.safeParse(bodyOf(fields)) : CategoryCreate.partial().safeParse(bodyOf(fields));
+  if (!parsed.success) throw new Error(invalidBodyMessage(parsed.error.issues));
+  return parsed.data;
+}
 
 export function registerCategoryWriter(): void {
   if (registered) return;
@@ -33,7 +50,8 @@ export function registerCategoryWriter(): void {
     table: TABLE,
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
-      const name = String(fields.name ?? "Untitled");
+      const given = checked({ ...fields, name: fields.name ?? "Untitled" }, true);
+      const name = given.name ?? "Untitled";
       const instance = asStr(fields.instance) ?? "inventory";
       const slug = await freeSlug(db, instance, name);
       const inserted = await db
@@ -42,8 +60,8 @@ export function registerCategoryWriter(): void {
           name,
           slug,
           instance,
-          color: asStr(fields.color),
-          parent_id: asStr(fields.parent_id),
+          color: asStr(given.color),
+          parent_id: asStr(given.parent_id),
         })
         .returning("id")
         .executeTakeFirstOrThrow();
@@ -52,10 +70,11 @@ export function registerCategoryWriter(): void {
 
     async update(orgId, id, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+      const given = checked(fields, false);
       const patch: Record<string, unknown> = { updated_at: new Date() };
-      if (fields.name !== undefined) patch.name = String(fields.name);
-      if (fields.color !== undefined) patch.color = asStr(fields.color);
-      if (fields.parent_id !== undefined) patch.parent_id = asStr(fields.parent_id);
+      if (given.name !== undefined) patch.name = given.name;
+      if (given.color !== undefined) patch.color = asStr(given.color);
+      if (given.parent_id !== undefined) patch.parent_id = asStr(given.parent_id);
       if (fields.instance !== undefined) {
         const i = asStr(fields.instance);
         if (i != null) patch.instance = i;

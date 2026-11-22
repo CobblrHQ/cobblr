@@ -1,4 +1,4 @@
-import { MovedUnderNote, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, MutationError, fieldNeed, useConfirm, useFieldDraft, useRecordEdits, RecordGone, isRecordGone, NumberInput } from "@cobblr/platform-web";
+import { MovedUnderNote, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, MutationError, fieldNeed, useConfirm, useFieldDraft, useRecordEdits, pastedListProps, RecordGone, isRecordGone, NumberInput } from "@cobblr/platform-web";
 // One task, whole: everything a task has, settable in one place. The row on a
 // project shows a line of it; this sheet is where the due date, the details,
 // the priority, the status and what it waits on are read and changed, and
@@ -356,7 +356,15 @@ function Checklist({ items: saved, onSave: save }: { items: ChecklistItem[]; onS
           add();
         }}
       >
-        <input aria-label="Add a step" value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a step" className="input text-sm flex-1" />
+        <input
+          aria-label="Add a step"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          // A pasted list is a step per line, its bullets gone (#4115); the checklist saves as one, so it is one change.
+          {...pastedListProps((list) => onSave([...items, ...list.map((l) => ({ id: newId(), text: l.qty ? `${l.qty} ${l.title}` : l.title, done: false }))]))}
+          placeholder="Add a step"
+          className="input text-sm flex-1"
+        />
         <button type="submit" disabled={!text.trim()} className="inline-flex items-center gap-1 rounded-md bg-slate-700 px-2 text-xs text-mortar-50 disabled:opacity-50">
           <Plus size={12} /> Add
         </button>

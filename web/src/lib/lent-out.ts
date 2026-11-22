@@ -3,6 +3,7 @@
 // the person chasing returns reads the list top-down. A day earlier than today
 // is overdue, so ordering by due day already puts the late holders first.
 import { loanOverdue } from "@cobblr/platform-contract/loan";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 export interface LentRow {
   kind: string;
@@ -23,7 +24,7 @@ export interface HolderGroup {
   rows: LentRow[];
 }
 
-const byDue = (a: LentRow, b: LentRow) => (a.due_back ?? "9999-12-31").localeCompare(b.due_back ?? "9999-12-31") || a.title.localeCompare(b.title);
+const byDue = (a: LentRow, b: LentRow) => (a.due_back ?? "9999-12-31").localeCompare(b.due_back ?? "9999-12-31") || compareNames(a.title, b.title);
 
 /** Everyone holding something, the people with something overdue first. Every row appears once. */
 export function groupLentByHolder(rows: readonly LentRow[], today: string): HolderGroup[] {
@@ -36,5 +37,5 @@ export function groupLentByHolder(rows: readonly LentRow[], today: string): Hold
     groups.set(key, g);
   }
   for (const g of groups.values()) g.rows.sort(byDue);
-  return [...groups.values()].sort((a, b) => byDue(a.rows[0]!, b.rows[0]!) || a.holder.localeCompare(b.holder));
+  return [...groups.values()].sort((a, b) => byDue(a.rows[0]!, b.rows[0]!) || compareNames(a.holder, b.holder));
 }

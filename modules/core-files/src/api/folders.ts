@@ -12,6 +12,7 @@ import { platform } from "@cobblr/platform-contract";
 import { readableNameField } from "@cobblr/platform-contract/readable-text";
 import { sessionUser, tenantContext, tenantDb, type CoreFilesDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 export const foldersRouter = Router({ mergeParams: true });
 
@@ -37,7 +38,7 @@ foldersRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const folders = await db.selectFrom("core_files_folders").select(["id", "parent_id", "name", "created_at"]).orderBy("name").execute();
+    const folders = await db.selectFrom("core_files_folders").select(["id", "parent_id", "name", "created_at"]).orderBy(byName("name")).execute();
     const counts = await db
       .selectFrom("core_files_files")
       .select(["folder_id", db.fn.countAll<string>().as("n")])

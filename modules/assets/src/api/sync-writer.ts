@@ -10,6 +10,8 @@
 // inventory's writer (see modules/inventory/src/api/sync-writer.ts).
 
 import { custodyFromLoan } from "./custody.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { AssetCreate, AssetUpdate } from "./asset-fields.js";
 import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
 import { storedPicture } from "@cobblr/platform-contract/image-reference";
 import { sql, type Kysely } from "kysely";
@@ -19,6 +21,38 @@ import { DISPOSITION_LABELS, dispositionOf } from "@cobblr/platform-contract/dis
 const PRIOR_STATE = "state_before_it_left";
 
 let registered = false;
+
+/** What the page's route would be handed for these fields: the keys this writer
+ *  reads itself (the picture, a null bag, a price it coerces) are left out or
+ *  put in the shape it already accepted, the rest goes to the schema as is. */
+function bodyOf(fields: Record<string, unknown>): Record<string, unknown> {
+  const { image_path: _picture, metadata, purchase_price_cents: price, ...rest } = fields;
+  const body: Record<string, unknown> = { ...rest };
+  for (const k of ["location_id", "type", "notes", "short_name", "warranty_until", "manufacturer", "model", "serial_number", "purchased_at", "vendor"]) {
+    if (body[k] !== undefined) body[k] = asStr(body[k]);
+  }
+  // A source that brings a timestamp for a day means that day.
+  for (const k of ["purchased_at", "warranty_until"]) {
+    const v = body[k];
+    if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)) body[k] = v.slice(0, 10);
+  }
+  if (body.name !== undefined) body.name = String(body.name);
+  if (metadata !== undefined && metadata !== null) body.metadata = metadata;
+  if (price !== undefined) {
+    const c = price === null ? null : Number(price);
+    body.purchase_price_cents = c === null || Number.isFinite(c) ? c : null;
+  }
+  return body;
+}
+
+/** The fields, held to what the page's route holds a body to. Keys the schema
+ *  does not know (instance, custom fields) pass through untouched. */
+function checked(fields: Record<string, unknown>, creating: boolean): Record<string, unknown> {
+  const parsed = creating ? AssetCreate.safeParse(bodyOf(fields)) : AssetUpdate.safeParse(bodyOf(fields));
+  if (!parsed.success) throw new Error(invalidBodyMessage(parsed.error.issues));
+  const { metadata: _bag, ...given } = parsed.data;
+  return { ...fields, ...given };
+}
 
 /** What `update` and `updateIf` write for these fields. */
 function patchOf(fields: Record<string, unknown>): Record<string, unknown> {
@@ -79,6 +113,7 @@ export function registerAssetsWriter(): void {
     loanDueField: "due_back",
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
+      const given = checked({ ...fields, name: fields.name ?? "Untitled" }, true);
       const inserted = await db
         .insertInto("assets_assets")
         .values({
@@ -87,8 +122,8 @@ export function registerAssetsWriter(): void {
           // only arrived on the SECOND run would never arrive (the hash is stored
           // after the first). `type` is the asset's category (its declared
           // categoryField), the one place the form shows it.
-          ...patchOf(fields),
-          name: String(fields.name ?? "Untitled"),
+          ...patchOf(given),
+          name: String(given.name ?? "Untitled"),
           metadata: sql`${JSON.stringify(fields.metadata ?? {})}::jsonb` as never,
         } as never)
         .returning("id")
@@ -98,7 +133,7 @@ export function registerAssetsWriter(): void {
 
     async update(orgId, id, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
-      await db.updateTable("assets_assets").set(patchOf(fields) as never).where("id", "=", id).execute();
+      await db.updateTable("assets_assets").set(patchOf(checked(fields, false)) as never).where("id", "=", id).execute();
       // No emit — see the file header.
     },
 
@@ -106,7 +141,7 @@ export function registerAssetsWriter(): void {
 
     async updateIf(orgId, id, fields, version) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
-      const v = await updateRowAt(db, "assets_assets", id, patchOf(fields), version);
+      const v = await updateRowAt(db, "assets_assets", id, patchOf(checked(fields, false)), version);
       // No emit — see the file header.
       return v;
     },

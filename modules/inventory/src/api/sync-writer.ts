@@ -19,6 +19,8 @@
 // emit if a future sync TARGET needs the downstream cascade.)
 
 import { stockUnitRefusal } from "../stock-unit.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { PartCreate, PartUpdate } from "./part-fields.js";
 import { ActionRefusal, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
 import { storedPicture } from "@cobblr/platform-contract/image-reference";
 import { sql, type Kysely } from "kysely";
@@ -27,9 +29,36 @@ import { adoptAxisValuesInto } from "./adopt-axis-values.js";
 
 let registered = false;
 
+/** What the page's route would be handed for the columns this writer writes,
+ *  each in the shape this writer already coerced it to (a count that arrives as
+ *  text is a number, an empty string is none). The picture and the metadata bag
+ *  are read by the writer itself. */
+function bodyOf(fields: Record<string, unknown>): Record<string, unknown> {
+  const has = (k: string): boolean => k in fields && fields[k] !== undefined;
+  const body: Record<string, unknown> = {};
+  if (has("name")) body.name = String(fields.name);
+  for (const k of ["description", "category_id", "location_id", "manufacturer", "supplier_url", "notes", "serial_number", "model_number", "warranty_details"]) {
+    if (has(k)) body[k] = asStr(fields[k]);
+  }
+  if (has("unit") && asStr(fields.unit) != null) body.unit = asStr(fields.unit);
+  if (has("qty") && asNum(fields.qty) != null) body.qty = Number(asNum(fields.qty));
+  for (const k of ["cost", "min_qty"]) if (has(k)) body[k] = asNum(fields[k]) == null ? null : Number(asNum(fields[k]));
+  if (has("warranty_expires")) body.warranty_expires = asDate(fields.warranty_expires);
+  for (const k of ["lifetime_warranty", "insured", "archived"]) if (has(k)) body[k] = asBool(fields[k]);
+  return body;
+}
+
+/** The fields, held to what the page's route holds a body to; what comes back
+ *  is the fields with those columns as the schema read them. */
+function checked(fields: Record<string, unknown>, creating: boolean): Record<string, unknown> {
+  const parsed = creating ? PartCreate.safeParse(bodyOf(fields)) : PartUpdate.safeParse(bodyOf(fields));
+  if (!parsed.success) throw new Error(invalidBodyMessage(parsed.error.issues));
+  return { ...fields, ...parsed.data };
+}
+
 /** What `update` and `updateIf` write for these fields. */
 async function patchOf(db: Kysely<InventoryDB>, id: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const patch: Record<string, unknown> = { updated_at: new Date(), ...nativeValues(fields) };
+  const patch: Record<string, unknown> = { updated_at: new Date(), ...nativeValues(checked(fields, false)) };
   if (typeof patch.unit === "string") {
     const refusal = await stockUnitRefusal(db, id, patch.unit);
     if (refusal) throw new ActionRefusal(refusal);
@@ -75,7 +104,7 @@ export function registerInventoryWriter(): void {
         .insertInto("inventory_parts")
         .values({
           name: String(fields.name ?? "Untitled"),
-          ...nativeValues(fields),
+          ...nativeValues(checked({ ...fields, name: fields.name ?? "Untitled" }, true)),
           metadata: sql`${JSON.stringify(fields.metadata ?? {})}::jsonb` as never,
         } as never)
         .returning("id")

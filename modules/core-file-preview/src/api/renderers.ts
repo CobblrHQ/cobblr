@@ -16,6 +16,7 @@ import { verifyEd25519 } from "@cobblr/platform-contract/signature";
 import { tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 export const renderersRouter = Router({ mergeParams: true });
 
@@ -39,7 +40,7 @@ renderersRouter.get(
     const rows = await tenantDb(req)
       .selectFrom("core_file_preview_renderers")
       .select([...COLS])
-      .orderBy("name")
+      .orderBy(byName("name"))
       .execute();
     res.json({ items: rows });
   }),

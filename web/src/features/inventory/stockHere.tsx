@@ -26,6 +26,7 @@ import type { EntityDetailPanelCtx } from "../../panels/types";
 import { InventoryApi, WhatsStillHereButton } from "@cobblr/inventory/ui";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 function fmt(n: number): string {
   return quantityNumber(n);
 }
@@ -111,7 +112,7 @@ export function StockHerePanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
     (a, b) =>
       Number(b.low) - Number(a.low) ||
       (a.expires_on ?? "9999").localeCompare(b.expires_on ?? "9999") ||
-      a.name.localeCompare(b.name),
+      compareNames(a.name, b.name),
   );
   const byCollection = new Map<string, StockPlaceRow[]>();
   for (const r of sorted) byCollection.set(r.kind, [...(byCollection.get(r.kind) ?? []), r]);

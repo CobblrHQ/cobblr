@@ -7,6 +7,7 @@ import { tenantDb, tenantContext, sessionUser } from "../../../db.js";
 import { asyncHandler, requireRole } from "../../../api/util.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { productionErrorText, productionMutation, productionControl, exportProductionReport } from "../production-actions.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 export const productionRouter = Router({ mergeParams: true });
 productionRouter.get("/:collection", asyncHandler(async (req, res) => {
  if (!requireRole(req, res, "member")) return;
@@ -16,7 +17,7 @@ productionRouter.get("/:collection", asyncHandler(async (req, res) => {
   return void res.json(pagedAnswer(rows, page));
  }
  if (collection === "jigs") {
-  const rows = await db.selectFrom("digifab_test_jigs").selectAll().select(sql<string>`count(*) over()`.as(TOTAL_COLUMN)).orderBy("name", "asc").orderBy("asset_id", "asc").limit(page.limit).offset(page.offset).execute(); return void res.json(pagedAnswer(rows, page));
+  const rows = await db.selectFrom("digifab_test_jigs").selectAll().select(sql<string>`count(*) over()`.as(TOTAL_COLUMN)).orderBy(byName("name"), "asc").orderBy("asset_id", "asc").limit(page.limit).offset(page.offset).execute(); return void res.json(pagedAnswer(rows, page));
  }
  if (collection === "units") {
   const q = z.string().max(160).parse(req.query.q ?? "");

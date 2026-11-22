@@ -11,6 +11,7 @@ import { ArmRefusal } from "./station.js";
 import { LINK_WORDS, linkLost } from "./rules.js";
 import { EdgeArm } from "./edge-arm.js";
 import { CompatibilitySchema, MaintenanceSchema, ProgramEditSchema, SetupSchema, TypedProgramSchema, supportOf } from "./model.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 type Unit = Selectable<DigifabDB["digifab_arm_units"]>;
 type Program = Selectable<DigifabDB["digifab_arm_programs"]>;
 export async function armDriver(db: Kysely<DigifabDB>, orgId: string, connectionId: string): Promise<EdgeArm> {
@@ -145,7 +146,7 @@ export async function readArm(db: Kysely<DigifabDB>, orgId: string, machineId: s
   try { state = await bridgeAnswer((async () => (await armDriver(db, orgId, unit.connection_id!)).state(unit.device_id!))()); }
   catch { connection_error = "The arm's bridge did not answer. Its state is unknown; check the arm at the cell."; }
  }
- const programs = await db.selectFrom("digifab_arm_programs").selectAll().where("machine_id", "=", machineId).orderBy("name").orderBy("first_seen_at").execute();
+ const programs = await db.selectFrom("digifab_arm_programs").selectAll().where("machine_id", "=", machineId).orderBy(byName("name")).orderBy("first_seen_at").execute();
  const compatibility = CompatibilitySchema.parse(unit.compatibility ?? {});
  const now = new Date();
  const ownership = await db.selectFrom("digifab_arm_ownership").selectAll().where("machine_id", "=", machineId).where("released_at", "is", null).where("expires_at", ">", now).executeTakeFirst();
@@ -160,5 +161,5 @@ export async function readArm(db: Kysely<DigifabDB>, orgId: string, machineId: s
 /** Every unit's program in one family, across arms: the same family is a
  *  different program on two identical arms. */
 export async function readFamily(db: Kysely<DigifabDB>, family: string) {
- return db.selectFrom("digifab_arm_programs").selectAll().where("family", "=", family).orderBy("machine_id").orderBy("name").execute();
+ return db.selectFrom("digifab_arm_programs").selectAll().where("family", "=", family).orderBy("machine_id").orderBy(byName("name")).execute();
 }

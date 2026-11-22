@@ -10,6 +10,7 @@
 // org-wide nav order becomes a requirement, promote this to a row
 // on org_modules with a `position` column and a PATCH endpoint.
 
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 const KEY = (slug: string) => `cobblr:nav-order:${slug}`;
 
 export type NavSplitRow = { key: string; label: string; members: string[] };
@@ -94,7 +95,7 @@ export function applyNavOrder<T extends { name: string }>(items: T[], order: str
     const ai = pos.has(a.name) ? pos.get(a.name)! : Number.MAX_SAFE_INTEGER;
     const bi = pos.has(b.name) ? pos.get(b.name)! : Number.MAX_SAFE_INTEGER;
     if (ai !== bi) return ai - bi;
-    return a.name.localeCompare(b.name);
+    return compareNames(a.name, b.name);
   });
 }
 

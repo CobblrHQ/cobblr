@@ -1,0 +1,10 @@
+{
+  "lint": "lint:names-sort-the-way-people-count",
+  "run": "node scripts/lint-names-sort-the-way-people-count.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 956,
+  "recorded": "2026-11-21",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

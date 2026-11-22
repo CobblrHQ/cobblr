@@ -16,6 +16,7 @@ import { patternTextMatches, snippetsFor } from "./pattern-text.js";
 import { announceUnblocked, releaseDependentsOf } from "./deps.js";
 import { registerPatternNeedsShare } from "./share-children.js";
 import { makeNextOccurrence, withdrawUntouchedOccurrence } from "./repeat.js";
+import { orderKey } from "@cobblr/platform-contract/name-order";
 
 let registered = false;
 
@@ -99,7 +100,7 @@ export function registerProjectsHandlers(): void {
     for (const spec of specs) {
       const desc = spec.startsWith("-");
       const col = spec.replace(/^-/, "");
-      q = q.orderBy(col as never, desc ? "desc" : "asc");
+      q = q.orderBy(orderKey(col) as never, desc ? "desc" : "asc");
     }
     const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     const snippets = query.q?.trim() ? await snippetsFor(db, rows, query.q) : new Map<string, string>();
@@ -191,7 +192,7 @@ export function registerProjectsHandlers(): void {
     for (const spec of specs) {
       const desc = spec.startsWith("-");
       const col = spec.replace(/^-/, "");
-      q = q.orderBy(col as never, desc ? "desc" : "asc");
+      q = q.orderBy(orderKey(col) as never, desc ? "desc" : "asc");
     }
     const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedTask(r)) };

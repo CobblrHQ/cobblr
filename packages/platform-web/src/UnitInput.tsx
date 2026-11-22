@@ -13,6 +13,7 @@
 import { useId, useMemo, useState } from "react";
 import { countWordsFor, type CountWords } from "@cobblr/platform-contract/plural";
 import { useUnits } from "./useUnits";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 interface Props {
   value: string | null | undefined;
@@ -50,7 +51,7 @@ export function UnitInput({ value, onCommit, placeholder = "unit", className, co
 
   // Sort by category then name so the dropdown reads in sensible groups.
   const options = [...units.all].sort(
-    (a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name),
+    (a, b) => a.category.localeCompare(b.category) || compareNames(a.name, b.name),
   );
 
   return (

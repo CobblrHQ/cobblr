@@ -163,6 +163,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
           <Globe size={12} /> Label base URL
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* link-typed-ok: the label base URL checked by the browser for now; to read through readTypedLink, #9708 */}
           <input
             type="url"
             inputMode="url"

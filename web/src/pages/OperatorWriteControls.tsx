@@ -71,6 +71,7 @@ export function AccountNoticeControl({ workspaces = [] }: { workspaces?: Array<{
         <label className="block">User IDs<textarea value={users} onChange={(e) => setUsers(e.target.value)} className={field} /></label>
         <label className="block">Subject<input required maxLength={200} value={subject} onChange={(e) => setSubject(e.target.value)} className={field} /></label>
         <label className="block">Message<textarea required maxLength={4000} value={message} onChange={(e) => setMessage(e.target.value)} className={field} /></label>
+        {/* link-typed-ok: an operator's link checked by the browser for now; #9708 */}
         <label className="block">Link<input type="url" value={link} onChange={(e) => setLink(e.target.value)} className={field} /></label>
         <button type="submit" className={primary} disabled={send.isPending || !valid}>Send notice</button>
       </form>

@@ -38,6 +38,18 @@ export function changesNothing(path: string): boolean {
 /** A successful write to `path` (`/orgs/<slug>/…`, absolute `/api/v1/…` or a
  *  full URL). A path outside a workspace is not one, nor one that changes
  *  nothing (changesNothing). */
+let takingBack = 0;
+/** Runs a page's own take-back (an Undo of what it just added) without a
+ *  "Moved to Recently deleted" toast per record: the page says it once. */
+export async function withoutDeletionToasts<T>(work: () => Promise<T>): Promise<T> {
+  takingBack++;
+  try {
+    return await work();
+  } finally {
+    takingBack--;
+  }
+}
+
 export function noteWorkspaceWrite(path: string, response?: Pick<Response, "headers">): void {
   let p = path;
   try {
@@ -51,7 +63,7 @@ export function noteWorkspaceWrite(path: string, response?: Pick<Response, "head
   const slug = decodeURIComponent(m[1]!);
   listeners.forEach((l) => l(slug, p));
   const id = response?.headers?.get("x-cobblr-deleted-record");
-  if (id && !/\/modules\/(core-files|core-locations|core-tags)\//.test(p)) deletedRecordListeners.forEach((listener) => listener({ slug, id }));
+  if (id && takingBack === 0 && !/\/modules\/(core-files|core-locations|core-tags)\//.test(p)) deletedRecordListeners.forEach((listener) => listener({ slug, id }));
 }
 
 /** The caches that show how much there is or where things are kept. Every

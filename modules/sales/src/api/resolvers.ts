@@ -8,6 +8,7 @@ import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } 
 import type { SalesDB } from "../db.js";
 import { CUSTOMER_SEARCH, ORDER_SEARCH } from "../search-columns.js";
 import { holdsImpossibleLine, paidAsRead } from "../reads-paid.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 let registered = false;
 
@@ -29,7 +30,7 @@ export function registerSalesResolvers(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<SalesDB>;
     let q = db.selectFrom("sales_customers").selectAll();
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { ...CUSTOMER_SEARCH, unreadable: query.unreadable })!);
-    const rows = (await groupListRows(db, q.orderBy("name"), query)) ?? await q.orderBy("name").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
+    const rows = (await groupListRows(db, q.orderBy(byName("name")), query)) ?? await q.orderBy(byName("name")).limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
     return { items: rows.map((row) => ({ kind: "sales:customer", id: row.id, title: row.name, detailUrl: `/sales/customers/${row.id}`, fields: { ...row } as Record<string, unknown> })) };
   });
 

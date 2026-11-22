@@ -15,6 +15,7 @@ import { isSafeFontUrl } from "@cobblr/platform-contract/safe-font-url";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 export const appsRouter = Router({ mergeParams: true });
 
@@ -177,7 +178,7 @@ appsRouter.get(
     const rows = (await db
       .selectFrom("core_apps_apps")
       .selectAll()
-      .orderBy("name")
+      .orderBy(byName("name"))
       .execute()) as unknown as AppRow[];
     const visible: ReturnType<typeof toMeta>[] = [];
     for (const r of rows) {

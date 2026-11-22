@@ -13,6 +13,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 import { refusalOf } from "@cobblr/platform-contract/self-call-refusal";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 export const templatesRouter = Router({ mergeParams: true });
 
@@ -82,7 +83,7 @@ templatesRouter.get(
     const kindFilter = typeof req.query.target_kind === "string" ? req.query.target_kind : null;
     let q = db.selectFrom("core_templates_templates").selectAll();
     if (kindFilter) q = q.where("target_kind", "=", kindFilter);
-    const items = await q.orderBy("target_kind").orderBy("position").orderBy("name").execute();
+    const items = await q.orderBy("target_kind").orderBy("position").orderBy(byName("name")).execute();
     res.json({ items });
   }),
 );

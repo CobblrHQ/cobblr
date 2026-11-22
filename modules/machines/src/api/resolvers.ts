@@ -5,6 +5,7 @@ import type { MachinesDB } from "../db.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 import { liftUnits, unitIdsIn, unitsSummary } from "./units.js";
+import { byName, orderKey } from "@cobblr/platform-contract/name-order";
 
 // Native columns the list resolver will order by. Anything outside this set
 // (custom metadata fields, unknown keys) is dropped by parseSort rather than
@@ -123,8 +124,8 @@ export function registerMachinesResolvers(): void {
     // fall back to name A→Z when no usable sort was given. A trailing `name`
     // tiebreak keeps ordering stable when the primary key has ties.
     const order = parseSort(query.sort, SORTABLE);
-    for (const { col, dir } of order) q = q.orderBy(col as never, dir);
-    if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
+    for (const { col, dir } of order) q = q.orderBy(orderKey(col) as never, dir);
+    if (!order.some((o) => o.col === "name")) q = q.orderBy(byName("name"), "asc");
     const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     // A unit is one of its parent's N, not a machine of its own: it leaves the
     // list and rides on its parent, so a count of records never counts it twice.

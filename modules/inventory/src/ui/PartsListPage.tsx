@@ -41,6 +41,7 @@ import { strayRecords } from "@cobblr/platform-contract/instance-for-category";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { unappliedSentence } from "@cobblr/platform-contract/view-caveats";
 import { PART_FIELD_LABELS } from "../part-field-labels";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 import { safeHref } from "@cobblr/platform-contract/safe-href";
 
 /** One of this module's lists, as `GET /instances?module=inventory` describes it. */
@@ -1812,7 +1813,7 @@ function groupItems(
     map.get(v)!.push(p);
   }
   return [...map.entries()]
-    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : a[0].localeCompare(b[0])))
+    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : compareNames(a[0], b[0])))
     .map(([k, rows]) => ({ key: k, rows }));
 }
 

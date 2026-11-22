@@ -57,6 +57,7 @@ export function BringInBackup({ slug }: { slug: string }) {
             void fromLink();
           }}
         >
+          {/* link-typed-ok: the browser checks this sandbox link for now; to read through readTypedLink, #9708 */}
           <input
             type="url"
             value={link}

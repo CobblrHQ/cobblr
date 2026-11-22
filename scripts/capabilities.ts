@@ -201,6 +201,17 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "code:name-order",
+    what: "a module orders by a name or title through byName (or orderKey for a sort a view names, nameAfter for a keyset cursor), never a bare orderBy(\"name\")",
+    why: "Postgres compared names a byte at a time, so Hex bolt M10 sat above M2 and Écrou below Flange nut on every server-paged list, and the page cannot re-sort 100 rows of thousands (#9713)",
+    owner: "packages/platform-contract/src/name-order.ts",
+    scope: ["modules/*/src/**/*.ts"],
+    detect: /orderBy\(\s*["'`]([a-z_]+\.)?(name|title|short_name|display_name)["'`]/,
+    use: '.orderBy(byName("p.name")).orderBy("p.id")  // import { byName } from "@cobblr/platform-contract/name-order"',
+    except: {},
+  },
+  {
+    kind: "owns",
     id: "code:web-link",
     what: "every link a schema takes is a web address (http or https): webLink, never a bare zod .url()",
     why: "z.string().url() takes any scheme the URL parser reads, so a part's supplier link was stored as javascript:alert(document.cookie) and kept, and anything that rendered it as a link ran script for whoever followed it (#9709)",

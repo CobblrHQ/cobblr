@@ -6,6 +6,7 @@ import type { DigifabDB } from "./db.js";
 import { materialFromFields } from "./laser-material.js";
 import { familyMaterialRefusal, familyPrinting } from "./core/families.js";
 import { materialShortages, type FloorSheet } from "./material-dispatch.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 export const Dispatch = z.object({ library_id: z.string().uuid(), quantity: z.number().int().min(1).max(10000), material: z.string().trim().min(1).max(120), thickness_mm: z.number().positive().max(1000), operations: z.record(z.enum(["cut", "score", "engrave"])), spacing_mm: z.number().min(0).max(100).default(1), kerf_mm: z.number().min(0).max(100).default(0), rotate: z.boolean().default(true), dxf_units: z.enum(["mm", "in"]).default("mm") });
 export type DispatchRequest = z.infer<typeof Dispatch>;
 // SYSTEM-READ: Internal dispatch and digest checks need the actual stock; screen reads pass their viewer.
@@ -59,7 +60,7 @@ export async function floorSnapshot(db: Kysely<DigifabDB>, orgId: string, viewer
   db.selectFrom("digifab_jobs").select(["id", "connection_id", "target_device", "target_pool", "file_ref", "metadata", "status", "progress", "eta_sec", "material_type", "material_part_id", "material_grams", "material_grams_by_tool", "priority", "error", "run_id", "created_at"]).where("status", "not in", ["completed", "cancelled", "failed"]).orderBy("priority", "desc").orderBy("created_at", "asc").execute(),
   db.selectFrom("digifab_material_dispatches").selectAll().where("status", "not in", ["dispatched", "cancelled"]).orderBy("created_at", "asc").execute(),
   db.selectFrom("digifab_laser_profiles").select(["profile", "connection_id", "remote_device_id"]).execute(),
-  db.selectFrom("digifab_library").select(["id", "name", "kind"]).where("kind", "in", ["svg", "dxf"]).orderBy("name", "asc").execute(),
+  db.selectFrom("digifab_library").select(["id", "name", "kind"]).where("kind", "in", ["svg", "dxf"]).orderBy(byName("name"), "asc").execute(),
   db.selectFrom("digifab_pools").where(poolGroupCondition()).select(["id", "name"]).execute(), db.selectFrom("digifab_pool_members").select(["pool_id", "connection_id", "remote_device_id"]).execute(),
  ]);
  const planIds = batches.flatMap(b => b.plan_ids);

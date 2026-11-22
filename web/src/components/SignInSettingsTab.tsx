@@ -150,6 +150,7 @@ export function SignInSettingsTab() {
             </label>
             <label className="sm:col-span-2">
               <span className={label}>Issuer URL</span>
+              {/* link-typed-ok: an identity provider's issuer is pasted whole from its settings; to review under #9708 */}
               <input className={input} required type="url" value={editing.form.issuer} onChange={(e) => set({ issuer: e.target.value })} placeholder="https://auth.example.com/application/o/cobblr/" />
             </label>
             <label>

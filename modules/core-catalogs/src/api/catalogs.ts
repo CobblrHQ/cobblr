@@ -14,6 +14,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { catalogResolverConfigured, datasetForKind, hostedSearch, isHostedSearchable } from "../services/hosted-resolver.js";
 import { gunzipBounded, readBodyBounded } from "../services/bounded-decompress.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
+import { byName } from "@cobblr/platform-contract/name-order";
 import { webLink } from "@cobblr/platform-contract/web-link";
 
 export const catalogsRouter = Router({ mergeParams: true });
@@ -51,7 +52,7 @@ catalogsRouter.get(
     const rows = await db
       .selectFrom("core_catalogs_catalogs")
       .selectAll()
-      .orderBy("name")
+      .orderBy(byName("name"))
       .execute();
     res.json({ items: rows });
   }),

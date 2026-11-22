@@ -23,6 +23,7 @@ import { sessionUser, tenantContext, type CoreLocationsDB } from "../db.js";
 import { deletePlace } from "./place-delete.js";
 import { sameJson } from "./same-json.js";
 import { asyncHandler, requireRole } from "./util.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 type Db = Kysely<CoreLocationsDB>;
 type Fp = Record<string, unknown>;
@@ -301,7 +302,7 @@ export async function undoImport(orgId: string, result: Pick<ImportResult, "crea
  *  with a place between keeps that place as its level). */
 export async function exportFloorplan(orgId: string, rootId: string): Promise<FloorplanFileT | null> {
   const db = (await platform().tenants.getDb(orgId)) as unknown as Db;
-  const all = await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "kind", "metadata", "position"]).orderBy("position").orderBy("name").execute();
+  const all = await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "kind", "metadata", "position"]).orderBy("position").orderBy(byName("name")).execute();
   const root = all.find((l) => l.id === rootId);
   if (!root) return null;
   const kids = (id: string) => all.filter((l) => l.parent_id === id);

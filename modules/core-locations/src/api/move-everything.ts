@@ -22,6 +22,7 @@ import type { Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
 import { deletePlace, restoreDeletedPlace } from "./place-delete.js";
 import { movePlace, PlaceMoveRefused } from "./place-move.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 const LOCATION = "core-locations:location";
 type Db = Kysely<CoreLocationsDB>;
@@ -189,7 +190,7 @@ export async function planMove(
     .where("l.id", "=", fromId)
     .executeTakeFirst();
   const places = children.length
-    ? await db.selectFrom("core_locations_locations").select("name").where("id", "in", children.map((c) => c.id)).orderBy("name").execute()
+    ? await db.selectFrom("core_locations_locations").select("name").where("id", "in", children.map((c) => c.id)).orderBy(byName("name")).execute()
     : [];
   const titles = moving.length ? await platform().entities.lookupMany(orgId, moving.map((t) => ({ kind: t.kind, id: t.id })), { system: true }).catch(() => []) : [];
   const stays = parent?.name ? `${from.name} itself stays in ${parent.name}` : `${from.name} itself stays where it is`;

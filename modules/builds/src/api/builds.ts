@@ -33,6 +33,7 @@ import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { shortageSentence } from "../shortage.js";
 import { buildUndoStep } from "../build-undo.js";
 import { moveStock, outputPartIsHere, OUTPUT_PART_GONE } from "./stock-moves.js";
+import { byName } from "@cobblr/platform-contract/name-order";
 
 export const buildsRouter = Router({ mergeParams: true });
 
@@ -141,7 +142,7 @@ buildsRouter.get(
   "/builds",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const items = await db.selectFrom("builds_builds").selectAll().orderBy("name").execute();
+    const items = await db.selectFrom("builds_builds").selectAll().orderBy(byName("name")).execute();
     res.json({ items });
   }),
 );
@@ -330,8 +331,8 @@ buildsRouter.delete(
       .innerJoin("builds_builds", "builds_builds.id", "builds_components.build_id")
       .select("builds_builds.name as name")
       .where("builds_components.sub_assembly_build_id", "=", req.params.id!)
-      .distinct()
-      .orderBy("name")
+      .groupBy("builds_builds.name")
+      .orderBy(byName("builds_builds.name"))
       .execute();
     if (usedBy.length) throw new ActionRefusal(`${usedBy.map((u) => u.name).join(", ")} ${usedBy.length === 1 ? "uses" : "use"} this as a sub-assembly. Take it off ${usedBy.length === 1 ? "that build" : "those builds"} first.`);
     await db.deleteFrom("builds_builds").where("id", "=", req.params.id!).execute();

@@ -19,6 +19,7 @@ import { deleteFileMessage, folderPaths, formatBytes } from "../features/core-fi
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImageLightbox } from "../components/ImageLightbox";
 import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto, SearchInput, usePasteImage, editOf, QueryError } from "@cobblr/platform-web";
+import { compareNames } from "@cobblr/platform-contract/name-compare";
 
 const TOP = "top";
 
@@ -185,7 +186,7 @@ export function FilesPage() {
       {[...paths.entries()]
         .filter(([id]) => id !== f.folder_id)
         .map(([id, p]) => [id, p.map((x) => x.name).join(" / ")] as const)
-        .sort((a, b) => a[1].localeCompare(b[1]))
+        .sort((a, b) => compareNames(a[1], b[1]))
         .map(([id, label]) => (
           <option key={id} value={id}>
             {label}

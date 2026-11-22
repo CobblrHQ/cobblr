@@ -3,6 +3,7 @@ import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 import { sql, type Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "./db.js";
 import type { TermRow } from "./terms-store.js";
+import { orderKey } from "@cobblr/platform-contract/name-order";
 
 const columns = columnSet<CoreMaintenanceDB["core_maintenance_entries"]>()(["name", "entity_id", "schedule_id", "term_start", "term_end", "cost_cents", "currency", "reference", "quantity", "performed_by", "performed_at"]);
 function resolved(r: TermRow): ResolvedEntity {
@@ -28,7 +29,7 @@ export function registerTermResolvers(): void {
       if (columns.has(p.col) && ["=", "!=", ">", ">=", "<", "<="].includes(p.op)) q = q.where(p.col as never, p.op as never, p.value as never);
     }
     const order = parseSort(query.sort, columns);
-    for (const { col, dir } of order) q = q.orderBy(col as never, dir);
+    for (const { col, dir } of order) q = q.orderBy(orderKey(col) as never, dir);
     if (!order.length) q = q.orderBy(sql`term_end desc nulls last`);
     q = q.orderBy("id");
     const rows = await groupListRows(db, q, query) ?? await q.limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
