@@ -28,6 +28,10 @@ export const PROVIDER_REASONS = [
    *  "high demand", a 5xx of its own. Transient by nature, so it is retried,
    *  and never told as "could not be reached": it was reached (#3819). */
   "busy",
+  /** The provider took the call and said nothing by the deadline: reached,
+   *  and too slow right now. Asking the same model again is another full
+   *  wait, so the call moves to the next model instead (#9761). */
+  "slow",
   /** The provider answered, but not in the shape the call asked for (its
    *  output schema): a local model ignoring a JSON layout (#5790). Another
    *  model may well keep to it, so the call moves on. */
@@ -73,7 +77,7 @@ export function refuseCutOff(provider: string, stoppedAtLimit: boolean, ctx: { c
 /** Reasons that say nothing about the request itself, only about this
  *  provider right now: another provider may well answer. A refusal of the
  *  content ("unknown" covers a malformed or refused request) is not one. */
-export const REASONS_ANOTHER_PROVIDER_MAY_ANSWER: readonly ProviderReason[] = ["busy", "unreachable", "quota", "invalid_key", "model_unavailable", "wrong_shape", "cut_off"];
+export const REASONS_ANOTHER_PROVIDER_MAY_ANSWER: readonly ProviderReason[] = ["busy", "slow", "unreachable", "quota", "invalid_key", "model_unavailable", "wrong_shape", "cut_off"];
 
 /** The reason on an error, or null for one that carries none (a ProviderError,
  *  or a refusal the router built from one). */
@@ -102,6 +106,7 @@ export function reasonFromResponse(status: number, body: string): ProviderReason
 
 /** The reason for a call that never got an answer. */
 export function reasonFromTransportError(err: unknown): ProviderReason {
+  if (err instanceof Error && err.name === "SlowAnswerError") return "slow";
   const msg = err instanceof Error ? `${err.name} ${err.message}` : String(err ?? "");
   if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up|aborted|timeout|timed out|did not answer within|network/i.test(msg)) return "unreachable";
   return "unknown";
@@ -175,6 +180,8 @@ export function providerSentence(
       return `${who} could not be reached. Try again shortly. Nothing was changed.`;
     case "busy":
       return `${who} is busy right now: it answered, and is turning calls away for the moment. Try again in a minute. Nothing was changed.`;
+    case "slow":
+      return `${who} is taking too long to answer right now${opts.model ? ` (${opts.model})` : ""}. Try again in a few minutes. Nothing was changed.`;
     case "wrong_shape":
       return `${who} answered, but not in the shape this job needs${opts.model ? ` (${opts.model})` : ""}, so nothing it said was kept. A stronger model, or another connection, may keep to it. Nothing was changed.`;
     case "cut_off":
@@ -191,6 +198,8 @@ export function whyItDidNotAnswer(reason: string): string {
   switch (reason) {
     case "busy":
       return "was busy";
+    case "slow":
+      return "was too slow to answer";
     case "unreachable":
       return "could not be reached";
     case "quota":

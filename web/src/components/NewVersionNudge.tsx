@@ -12,7 +12,7 @@
 // floats.
 import { useEffect, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
-import { FloatingChrome, useConfirm } from "@cobblr/platform-web";
+import { FloatingChrome, forgetCreateDrafts, useConfirm } from "@cobblr/platform-web";
 import { isSandboxSession } from "../lib/sandbox-session";
 import { healthzAtLoad, readHealthz } from "../lib/healthz";
 
@@ -72,7 +72,10 @@ export function NewVersionNudge() {
             cancelLabel: "Keep editing",
             destructive: true,
           });
-          if (discard) window.location.reload();
+          if (!discard) return;
+          // A new form keeps what is typed through a reload; discarding means it goes too (#9561).
+          forgetCreateDrafts();
+          window.location.reload();
         }}
         className="inline-flex items-center gap-1 rounded border border-white/60 px-2 py-0.5 text-xs font-semibold hover:bg-white/10"
       >

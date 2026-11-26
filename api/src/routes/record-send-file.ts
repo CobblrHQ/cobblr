@@ -10,6 +10,7 @@ import { requireRole } from "../auth/capability.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { SendError } from "../platform/record-send.js";
+import { refusalSentence } from "@cobblr/platform-contract/refusal-sentence";
 import { exportSendFile, downloadSendFile } from "../platform/record-send-file.js";
 import { importSendFile, undoSendFileImport, receiptForImport } from "../platform/record-send-import.js";
 import { confirmSendFile, restoreSendFileSource } from "../platform/record-send-file-confirm.js";
@@ -35,7 +36,7 @@ export function parseSendFile(input: unknown) {try {return readSendFile(input);}
 export const recordSendFileRouter = Router();
 const upload = uploadOne({field: "file", maxBytes: SEND_FILE_MAX_BYTES});
 const refused = (err: unknown, res: import("express").Response, next: import("express").NextFunction) => {
-  if (err instanceof SendError || err instanceof z.ZodError) {res.status(409).json({error: {code: "send_file_refused",message: err.message}}); return;}
+  if (err instanceof SendError || err instanceof z.ZodError) {res.status(409).json({error: {code: "send_file_refused",message: err instanceof z.ZodError ? refusalSentence(err) : err.message}}); return;}
   next(err);
 };
 // UI-SCREEN: /machines

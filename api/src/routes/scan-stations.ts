@@ -5,7 +5,8 @@ import { withTenant } from "../middleware/tenant.js";
 import { stationStore } from "../platform/scan-station-store.js";
 import { acknowledgeStationCommand, stationCommand, withStation, type StationCaller } from "../platform/scan-stations.js";
 import { StationRefusal } from "../platform/scan-station-engine.js";
-import { webLink } from "@cobblr/platform-contract/web-link";
+import { refusalSentence } from "@cobblr/platform-contract/refusal-sentence";
+import { stationTagPayload } from "@cobblr/platform-contract/station-tag-payload";
 
 export const scanStationsRouter = Router({ mergeParams: true });
 scanStationsRouter.use("/:slug/scan-stations", requireAuth, withTenant);
@@ -19,7 +20,7 @@ function wrap(fn: (req: Request) => Promise<unknown>) {
       res.json(await fn(req));
     } catch (error) {
       if (error instanceof z.ZodError || error instanceof StationRefusal) {
-        res.status(error instanceof z.ZodError ? 400 : 422).json({ error: { code: "station_refused", message: error.message } });
+        res.status(error instanceof z.ZodError ? 400 : 422).json({ error: { code: "station_refused", message: error instanceof z.ZodError ? refusalSentence(error) : error.message } });
       } else if ((error as { status?: number }).status === 404 || (error as { status?: number }).status === 409) {
         res.status((error as { status: number }).status).json({ error: { code: "station_refused", message: (error as Error).message } });
       } else next(error);
@@ -63,7 +64,7 @@ scanStationsRouter.post("/:slug/scan-stations/:id/commands/ack", wrap(async (req
 // AI-REACH: the NFC tag page queues the next physical tap
 // UI-SCREEN: /labels/nfc
 scanStationsRouter.post("/:slug/scan-stations/:id/commands", wrap(async (req) => {
-  const b = z.object({ type: z.enum(["write", "link"]), url: webLink().max(500) }).parse(req.body);
+  const b = z.object({ type: z.enum(["write", "link"]), url: stationTagPayload }).parse(req.body);
   return stationCommand(caller(req), id(req), b.type, b.url);
 }));
 // AI-REACH: the tag page cancels the physical tap waiting on the reader

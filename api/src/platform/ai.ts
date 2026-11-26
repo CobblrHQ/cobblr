@@ -1440,6 +1440,21 @@ const invokeRaw = async (
       continue;
     }
   }
+  // A model that took the call and said nothing by the deadline is not asked
+  // again (that is another full wait): it cools down like a busy one, and the
+  // call moves straight to the next rung (#9761). A chosen model has no rung.
+  if (failedReason === "slow") {
+    if (!resolved.chosen) {
+      const ms = noteBusy(row.id, sent, req.capability);
+      console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${sent} took the call and did not answer; cooling down for ${Math.round(ms / 60_000)} min`);
+    }
+    rung++;
+    const next = rungs[rung];
+    if (!next) break;
+    console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${sent} was too slow; asking ${next} on the same key`);
+    sent = next;
+    continue;
+  }
   if (failedReason !== "busy") break;
   const pause = rung === 0 ? busyRetryDelaysMs[attempt] : undefined;
   if (pause === undefined) {

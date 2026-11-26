@@ -1,6 +1,7 @@
 import {Router} from "express";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import {z} from "zod";
+import { refusalSentence } from "@cobblr/platform-contract/refusal-sentence";
 import {sql} from "kysely";
 import {pagedAnswer,readListPage,TOTAL_COLUMN} from "@cobblr/platform-contract/list-page";
 import {tenantDb,tenantContext,sessionUser} from "../db.js";
@@ -10,7 +11,7 @@ import {Printer,PrintRequest,PrintReport,createLargePrint,recordLargePrint,stopL
 import {refreshSupplies} from "../large-format/supplies.js";
 import {requireCutterStation} from "../cutter-station.js";
 export const largeFormatRouter=Router({mergeParams:true});
-const refuse=(res:import("express").Response,error:unknown)=>{if(!(error instanceof ReviewRequired||error instanceof z.ZodError||error instanceof Error))throw error;res.status(409).json({error:{code:"print_refused",message:error.message}});};
+const refuse=(res:import("express").Response,error:unknown)=>{if(!(error instanceof ReviewRequired||error instanceof z.ZodError||error instanceof Error))throw error;res.status(409).json({error:{code:"print_refused",message:error instanceof z.ZodError?refusalSentence(error):error.message}});};
 largeFormatRouter.get("/station",asyncHandler(async(req,res)=>{
  // ADMIN-ONLY: planning and running a large-format job is the admin tier's on the page, at every door (#5170)
  if(!(await requireCapability(req, res, "digifab:large-format")))return;

@@ -2,6 +2,15 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-11-26
+
+### Security
+- Cobb's record tools and batch edit are tested to refuse any link that runs script
+
+### Fixes
+- After a power cut, the api waits for its database to finish crash recovery however long it takes, instead of giving up after ten minutes and restarting into the same wait.
+- When the AI model a change is planned on takes the request and then says nothing for two minutes, Cobb now asks the next model on the same connection instead of failing, and the next request starts on the model that answered. When none is left, Cobb says the AI is taking too long to answer, not that it could not be reached.
+
 ## 2026-11-22
 
 ### Security

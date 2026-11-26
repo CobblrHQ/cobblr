@@ -223,6 +223,17 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "code:refusal-sentence",
+    what: "a route that refuses a request by its schema says the first issue's sentence (refusalSentence), never a ZodError's own message",
+    why: "a ZodError's message is its issues as JSON, and a station's Write File to a tag showed the whole dump in its alert when the commands route refused it (#9763)",
+    owner: "packages/platform-contract/src/refusal-sentence.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/api/**/*.ts"],
+    detect: /ZodError[^\n]*message:\s*(error|err|e)\.message/,
+    use: 'message: err instanceof z.ZodError ? refusalSentence(err) : err.message  // import { refusalSentence } from "@cobblr/platform-contract/refusal-sentence"',
+    except: {},
+  },
+  {
+    kind: "owns",
     id: "code:safe-href",
     what: "a page links a value read from a record only through safeHref, which gives undefined for anything but a web address, mailto:, tel: or a path on this site",
     why: "a link stored before the server refused other schemes (or written by an import, a share, a sync) still holds javascript: or data:, and an href straight from the record runs it for whoever taps it; the vendor site on the purchases page did (#9709)",

@@ -12,6 +12,14 @@
 // to a ceiling. Anything else (a wrong password, a database that does not
 // exist, a bad URL) is a misconfiguration and fails at once, loud and named:
 // recovery is never a reason to hide one.
+//
+// RECOVERY HAS NO CEILING (2026-11-26, the A6's power cut): the dev database
+// spent over 35 minutes in its start-up fsync (598 databases, 536,525 files)
+// answering 57P03 the whole time, and the api gave up at the 600 s ceiling
+// three times and was restarted into the same wait. 57P03 is a server that is
+// up and recovering; it ends when recovery ends. So the ceiling counts only
+// the time the database could not be reached at all (refused, not resolving),
+// and a 57P03 wait goes on, still said every ~15 s.
 
 /** Errors that mean "not up yet", never "wrong". */
 const STARTING_CODES = new Set(["57P03", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
@@ -52,6 +60,10 @@ export async function waitForDatabase(ping: () => Promise<unknown>, opts: WaitOp
   const start = now();
   let lastSaid = -Infinity;
   let delay = 250;
+  // Time the database could not be reached at all: only this counts against the ceiling.
+  let unreachable = 0;
+  let last = start;
+  let lastRecovering = false;
   for (;;) {
     try {
       await ping();
@@ -59,17 +71,25 @@ export async function waitForDatabase(ping: () => Promise<unknown>, opts: WaitOp
       return;
     } catch (err) {
       if (!isDatabaseStarting(err)) throw err;
-      const waited = now() - start;
-      if (waited >= opts.ceilingMs) {
+      const t = now();
+      if (!lastRecovering) unreachable += t - last;
+      last = t;
+      const recovering = (err as { code?: unknown }).code === "57P03";
+      lastRecovering = recovering;
+      if (!recovering && unreachable >= opts.ceilingMs) {
         throw new Error(
-          `[boot] the database was still not answering after ${Math.round(waited / 1000)}s (ceiling ${Math.round(opts.ceilingMs / 1000)}s, COBBLR_BOOT_DB_WAIT_MS): ${describe(err)}`,
+          `[boot] the database was still not answering after ${Math.round(unreachable / 1000)}s unreachable (ceiling ${Math.round(opts.ceilingMs / 1000)}s, COBBLR_BOOT_DB_WAIT_MS): ${describe(err)}`,
         );
       }
-      if (now() - lastSaid >= sayEvery) {
-        log(`[boot] waiting for the database (crash recovery / starting): ${describe(err)}`);
-        lastSaid = now();
+      if (t - lastSaid >= sayEvery) {
+        log(
+          recovering
+            ? `[boot] waiting for the database (crash recovery, no ceiling while it recovers, ${Math.round((t - start) / 1000)}s so far): ${describe(err)}`
+            : `[boot] waiting for the database (crash recovery / starting): ${describe(err)}`,
+        );
+        lastSaid = t;
       }
-      await sleep(Math.min(delay, Math.max(0, opts.ceilingMs - waited)));
+      await sleep(recovering ? delay : Math.min(delay, Math.max(0, opts.ceilingMs - unreachable)));
       delay = Math.min(delay * 2, 5_000);
     }
   }
